@@ -154,6 +154,52 @@ public class MainWindow : Window, IDisposable
 
             ImGui.EndTable();
         }
+
+        DrawPlan();
+    }
+
+    private ProductionPlan? plan;
+    private string planError = "";
+
+    private void DrawPlan()
+    {
+        ImGui.Separator();
+
+        if (ImGui.Button("Plan production"))
+        {
+            plan = null;
+            planError = "";
+
+            var recipe = plugin.RecipeProvider.GetRecipeById(gameBridge.SelectedRecipeId);
+            if (recipe == null)
+                planError = "Could not read the selected recipe.";
+            else
+                plan = DependencyResolver.Resolve(
+                    recipe.ResultItemId, batchQuantity, plugin.RecipeProvider, gameBridge.GetItemCount);
+        }
+
+        if (planError.Length > 0)
+            ImGui.TextColored(new Vector4(0.9f, 0.4f, 0.4f, 1f), planError);
+
+        if (plan == null)
+            return;
+
+        var provider = plugin.RecipeProvider;
+        ImGui.TextUnformatted($"Plan for {provider.GetItemName(plan.TargetItemId)} ×{plan.TargetQuantity}:");
+
+        if (plan.RawMaterials.Count > 0)
+        {
+            ImGui.TextUnformatted("Acquire:");
+            foreach (var material in plan.RawMaterials)
+                ImGui.BulletText($"{provider.GetItemName(material.ItemId)} ×{material.Amount}");
+        }
+
+        ImGui.TextUnformatted("Craft:");
+        foreach (var step in plan.CraftSteps)
+            ImGui.BulletText($"{provider.GetItemName(step.ItemId)} ×{step.TotalProduced} ({step.Crafts} crafts)");
+
+        if (plan.RawMaterials.Count == 0)
+            ImGui.TextColored(new Vector4(0.4f, 0.9f, 0.4f, 1f), "All raw materials on hand.");
     }
 
     private static void DrawStatus()

@@ -27,6 +27,7 @@ public sealed class Plugin : IDalamudPlugin
 
     public Configuration Configuration { get; init; }
     public IGameBridge GameBridge { get; init; }
+    public DalamudRecipeProvider RecipeProvider { get; init; } = new();
     public CraftStateMonitor CraftMonitor { get; init; }
     public ActionExecutor ActionExecutor { get; init; }
     public SolverService SolverService { get; init; }
