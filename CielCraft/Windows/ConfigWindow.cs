@@ -1,0 +1,31 @@
+using System;
+using System.Numerics;
+using Dalamud.Bindings.ImGui;
+using Dalamud.Interface.Windowing;
+
+namespace CielCraft.Windows;
+
+public class ConfigWindow : Window, IDisposable
+{
+    private readonly Configuration configuration;
+
+    public ConfigWindow(Plugin plugin) : base("CielCraft Settings##Config")
+    {
+        Size = new Vector2(360, 160);
+        SizeCondition = ImGuiCond.FirstUseEver;
+
+        configuration = plugin.Configuration;
+    }
+
+    public void Dispose() { }
+
+    public override void Draw()
+    {
+        var openOnLogin = configuration.OpenMainWindowOnLogin;
+        if (ImGui.Checkbox("Open main window on login", ref openOnLogin))
+        {
+            configuration.OpenMainWindowOnLogin = openOnLogin;
+            configuration.Save();
+        }
+    }
+}

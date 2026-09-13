@@ -1,0 +1,12 @@
+{
+  "Author": "edwingadiel",
+  "Name": "CielCraft",
+  "InternalName": "CielCraft",
+  "Punchline": "Crafting helper for FFXIV.",
+  "Description": "CielCraft is a crafting plugin for Final Fantasy XIV.",
+  "RepoUrl": "https://github.com/edwingadiel/cielcraft",
+  "Tags": [
+    "crafting",
+    "crafter"
+  ]
+}

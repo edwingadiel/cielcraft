@@ -1,0 +1,21 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CielCraft", "CielCraft\CielCraft.csproj", "{7A1B4E6F-3C2D-4B8A-9E5F-1D0C6A2B8F41}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{7A1B4E6F-3C2D-4B8A-9E5F-1D0C6A2B8F41}.Debug|x64.ActiveCfg = Debug|x64
+		{7A1B4E6F-3C2D-4B8A-9E5F-1D0C6A2B8F41}.Debug|x64.Build.0 = Debug|x64
+		{7A1B4E6F-3C2D-4B8A-9E5F-1D0C6A2B8F41}.Release|x64.ActiveCfg = Release|x64
+		{7A1B4E6F-3C2D-4B8A-9E5F-1D0C6A2B8F41}.Release|x64.Build.0 = Release|x64
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+EndGlobal

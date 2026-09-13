@@ -1,0 +1,7 @@
+<Project Sdk="Dalamud.NET.Sdk/15.0.0">
+  <PropertyGroup>
+    <Version>0.1.0.0</Version>
+    <Description>Crafting helper plugin for Final Fantasy XIV.</Description>
+    <PackageProjectUrl>https://github.com/edwingadiel/cielcraft</PackageProjectUrl>
+  </PropertyGroup>
+</Project>
