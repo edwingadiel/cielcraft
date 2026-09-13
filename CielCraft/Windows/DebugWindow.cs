@@ -36,6 +36,42 @@ public class DebugWindow : Window, IDisposable
         DrawPlayer();
         ImGui.Separator();
         DrawCraft();
+        ImGui.Separator();
+        DrawNavigation();
+    }
+
+    private Vector3 navDestination;
+
+    private void DrawNavigation()
+    {
+        ImGui.TextUnformatted("Navigation (Milestone 10)");
+
+        var nav = plugin.Navigation;
+        ImGui.BulletText($"Available: {nav.IsAvailable}   Mesh ready: {nav.IsReady}   Moving: {nav.IsMoving}");
+
+        ImGui.SetNextItemWidth(260);
+        ImGui.InputFloat3("Destination", ref navDestination);
+
+        if (ImGui.Button("Use current position"))
+        {
+            var player = gameBridge.GetPlayerState();
+            if (player != null)
+                navDestination = player.Position;
+        }
+
+        using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!nav.IsReady))
+        {
+            if (ImGui.Button("Go (walk)"))
+                nav.MoveTo(navDestination, fly: false);
+
+            ImGui.SameLine();
+            if (ImGui.Button("Go (fly)"))
+                nav.MoveTo(navDestination, fly: true);
+        }
+
+        ImGui.SameLine();
+        if (ImGui.Button("Stop##nav"))
+            nav.Stop();
     }
 
     private void DrawDependencies()
@@ -43,7 +79,8 @@ public class DebugWindow : Window, IDisposable
         ImGui.TextUnformatted("Dependencies");
         ImGui.BulletText($"Dalamud: Ready");
         ImGui.BulletText($"Raphael: {(CielCraft.Raphael.RaphaelSolver.IsAvailable ? "Ready" : "Native library missing")}");
-        ImGui.BulletText($"vnavmesh: {(Plugin.IsVNavmeshAvailable ? "Available" : "Unavailable — gathering automation disabled")}");
+        var nav = plugin.Navigation;
+        ImGui.BulletText($"vnavmesh: {(!nav.IsAvailable ? "Unavailable — gathering automation disabled" : nav.IsReady ? "Ready" : "Installed, navmesh not ready")}");
     }
 
     private void DrawPlayer()

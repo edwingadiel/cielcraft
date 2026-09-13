@@ -250,16 +250,19 @@ public class MainWindow : Window, IDisposable
         }
     }
 
-    private static void DrawStatus()
+    private void DrawStatus()
     {
         ImGui.TextUnformatted("Status");
         StatusLine("Dalamud", true, "Ready");
         var raphael = CielCraft.Raphael.RaphaelSolver.IsAvailable;
         StatusLine("Raphael", raphael, raphael ? "Ready" : "Native library missing");
 
-        var nav = Plugin.IsVNavmeshAvailable;
-        StatusLine("vnavmesh", nav, nav ? "Ready" : "Unavailable");
-        StatusLine("Gathering automation", nav, nav ? "Ready" : "Disabled (vnavmesh missing)");
+        var nav = plugin.Navigation;
+        var navText = !nav.IsAvailable ? "Unavailable"
+            : nav.IsReady ? "Ready"
+            : "Installed (navmesh not built for this zone)";
+        StatusLine("vnavmesh", nav.IsAvailable, navText);
+        StatusLine("Gathering automation", nav.IsAvailable, nav.IsAvailable ? "Ready" : "Disabled (vnavmesh missing)");
     }
 
     private static void StatusLine(string label, bool ok, string text)

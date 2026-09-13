@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using CielCraft.Core;
 using CielCraft.Crafting;
 using CielCraft.Game;
 using CielCraft.Windows;
@@ -34,6 +35,7 @@ public sealed class Plugin : IDalamudPlugin
     public CraftAutomator CraftAutomator { get; init; }
     public BatchCrafter BatchCrafter { get; init; }
     public ProductionRunner ProductionRunner { get; init; }
+    public INavigationProvider Navigation { get; init; }
 
     public readonly WindowSystem WindowSystem = new("CielCraft");
     private ConfigWindow ConfigWindow { get; init; }
@@ -54,6 +56,7 @@ public sealed class Plugin : IDalamudPlugin
         CraftAutomator = new CraftAutomator(GameBridge, CraftMonitor, ActionExecutor, Configuration);
         BatchCrafter = new BatchCrafter(GameBridge, CraftMonitor, CraftAutomator, SolverService);
         ProductionRunner = new ProductionRunner(GameBridge, BatchCrafter, RecipeProvider);
+        Navigation = new Navigation.VNavmeshProvider();
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);
