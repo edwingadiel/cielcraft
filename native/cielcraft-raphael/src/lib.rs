@@ -69,7 +69,33 @@ pub unsafe extern "C" fn raphael_solve(
     }
 }
 
-fn solve(input: &RaphaelInput) -> Option<Vec<raphael_sim::Action>> {
+/// Writes the craft's base progress/quality (gain per 100% efficiency) for
+/// the given stats and recipe. Returns 0 on success, negative on error.
+///
+/// # Safety
+/// All pointers must be valid.
+#[no_mangle]
+pub unsafe extern "C" fn raphael_base_values(
+    input: *const RaphaelInput,
+    out_base_progress: *mut u16,
+    out_base_quality: *mut u16,
+) -> i32 {
+    if input.is_null() || out_base_progress.is_null() || out_base_quality.is_null() {
+        return ERR_INVALID_ARGS;
+    }
+
+    let input = &*input;
+    match std::panic::catch_unwind(move || settings_for(input)) {
+        Ok(settings) => {
+            *out_base_progress = settings.base_progress;
+            *out_base_quality = settings.base_quality;
+            0
+        }
+        Err(_) => ERR_PANIC,
+    }
+}
+
+fn settings_for(input: &RaphaelInput) -> raphael_sim::Settings {
     let recipe = raphael_data::Recipe {
         job_id: 0,
         item_id: 0,
@@ -105,6 +131,11 @@ fn solve(input: &RaphaelInput) -> Option<Vec<raphael_sim::Action>> {
     let mut settings = get_game_settings(recipe, Some(overrides), stats, None, None);
     settings.adversarial = input.adversarial != 0;
     settings.backload_progress = input.backload_progress != 0;
+    settings
+}
+
+fn solve(input: &RaphaelInput) -> Option<Vec<raphael_sim::Action>> {
+    let mut settings = settings_for(input);
 
     let target_quality = input.target_quality.clamp(0, settings.max_quality);
     settings.max_quality = target_quality.saturating_sub(input.initial_quality);

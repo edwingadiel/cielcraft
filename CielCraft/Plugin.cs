@@ -49,7 +49,7 @@ public sealed class Plugin : IDalamudPlugin
         CraftMonitor = new CraftStateMonitor(GameBridge);
         ActionExecutor = new ActionExecutor(GameBridge, CraftMonitor);
         SolverService = new SolverService(new CielCraft.Raphael.RaphaelSolver());
-        CraftAutomator = new CraftAutomator(GameBridge, CraftMonitor, ActionExecutor);
+        CraftAutomator = new CraftAutomator(GameBridge, CraftMonitor, ActionExecutor, Configuration);
         BatchCrafter = new BatchCrafter(GameBridge, CraftMonitor, CraftAutomator, SolverService);
 
         ConfigWindow = new ConfigWindow(this);

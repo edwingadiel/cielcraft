@@ -1,0 +1,72 @@
+namespace CielCraft.Core;
+
+/// <summary>
+/// Static knowledge about the actions Raphael emits, keyed by Raphael's ids.
+/// Costs and modifiers mirror raphael-sim; unbuffed gain per action is
+/// baseValue * modifier / 100 (buffs only increase it, so estimates built on
+/// this are safe underestimates).
+/// </summary>
+public static class CraftActionData
+{
+    /// <summary>Actions that only serve quality — safe to skip once the quality target is met.</summary>
+    private static readonly HashSet<uint> QualityOnly =
+    [
+        100002, // Basic Touch
+        100004, // Standard Touch
+        100411, // Advanced Touch
+        100355, // Hasty Touch
+        100451, // Daring Touch
+        100128, // Precise Touch
+        100227, // Prudent Touch
+        100299, // Preparatory Touch
+        100435, // Trained Finesse
+        100443, // Refined Touch
+        100339, // Byregot's Blessing
+        100283, // Trained Eye
+        100387, // Reflect
+        19004,  // Innovation
+        260,    // Great Strides
+        100459, // Quick Innovation
+        100010, // Observe (only feeds touch combos)
+        100371, // Tricks of the Trade (condition-gated utility)
+    ];
+
+    public static bool IsQualityOnly(uint actionId) => QualityOnly.Contains(actionId);
+
+    public sealed record SynthesisAction(
+        uint ActionId,
+        string Name,
+        byte LevelRequirement,
+        ushort CpCost,
+        ushort DurabilityCost,
+        bool RequiresGoodCondition)
+    {
+        public int ProgressModifier(byte level) => ActionId switch
+        {
+            100001 => level < 31 ? 100 : 120,  // Basic Synthesis
+            100203 => level < 82 ? 150 : 180,  // Careful Synthesis
+            100403 => level < 86 ? 300 : 360,  // Groundwork
+            100315 => 400,                     // Intensive Synthesis
+            _ => 0,
+        };
+
+        /// <summary>Unbuffed progress gain; Groundwork is halved below its durability cost.</summary>
+        public int ProgressGain(int baseProgress, byte level, int currentDurability)
+        {
+            var modifier = ProgressModifier(level);
+            if (ActionId == 100403 && currentDurability < DurabilityCost)
+                modifier /= 2;
+
+            return baseProgress * modifier / 100;
+        }
+    }
+
+    /// <summary>Progress finishers, cheapest CP first.</summary>
+    public static readonly IReadOnlyList<SynthesisAction> Finishers =
+    [
+        new(100001, "Basic Synthesis", 1, 0, 10, RequiresGoodCondition: false),
+        new(100315, "Intensive Synthesis", 78, 6, 10, RequiresGoodCondition: true),
+        new(100203, "Careful Synthesis", 62, 7, 10, RequiresGoodCondition: false),
+        new(100403, "Groundwork", 72, 18, 20, RequiresGoodCondition: false),
+    ];
+}

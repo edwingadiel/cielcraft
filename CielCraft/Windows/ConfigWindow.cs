@@ -27,5 +27,14 @@ public class ConfigWindow : Window, IDisposable
             configuration.OpenMainWindowOnLogin = openOnLogin;
             configuration.Save();
         }
+
+        var adaptive = configuration.AdaptiveCrafting;
+        if (ImGui.Checkbox("Adaptive crafting", ref adaptive))
+        {
+            configuration.AdaptiveCrafting = adaptive;
+            configuration.Save();
+        }
+
+        ImGui.TextDisabled("Deviate from the solved rotation when the live craft state\nmakes it safe and profitable (e.g. finish early once quality caps).");
     }
 }

@@ -51,9 +51,13 @@ public sealed class RaphaelSolver : ICraftSolver
         var buffer = new uint[MaxActions];
         var result = raphael_solve(ref input, buffer, buffer.Length);
 
+        ushort baseProgress = 0, baseQuality = 0;
+        if (result >= 0)
+            raphael_base_values(ref input, ref baseProgress, ref baseQuality);
+
         return result switch
         {
-            >= 0 => new CraftSolution(buffer[..result]),
+            >= 0 => new CraftSolution(buffer[..result], BaseProgress: baseProgress, BaseQuality: baseQuality),
             -2 => CraftSolution.Failed("the solver found no solution for these parameters"),
             -3 => CraftSolution.Failed("the solver panicked"),
             -4 => CraftSolution.Failed("the solution exceeded the action buffer"),
@@ -120,4 +124,7 @@ public sealed class RaphaelSolver : ICraftSolver
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     private static extern int raphael_solve(ref RaphaelInput input, [Out] uint[] actions, int capacity);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int raphael_base_values(ref RaphaelInput input, ref ushort baseProgress, ref ushort baseQuality);
 }

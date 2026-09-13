@@ -213,7 +213,7 @@ public class DebugWindow : Window, IDisposable
                 using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!canStart))
                 {
                     if (ImGui.Button("Run rotation") && player != null)
-                        automator.Start(solution.ActionIds, player.ClassJobId);
+                        automator.Start(solution.ActionIds, player.ClassJobId, solution.BaseProgress);
                 }
 
                 break;

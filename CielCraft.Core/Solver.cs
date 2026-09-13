@@ -26,7 +26,11 @@ public sealed record CraftObjective(
 /// shared ids for buff-type actions, CRP-flavored ids for per-job craft
 /// actions (translated to the active job at execution time).
 /// </summary>
-public sealed record CraftSolution(IReadOnlyList<uint> ActionIds, string? Error = null)
+public sealed record CraftSolution(
+    IReadOnlyList<uint> ActionIds,
+    string? Error = null,
+    int BaseProgress = 0,
+    int BaseQuality = 0)
 {
     public bool Success => Error == null;
 

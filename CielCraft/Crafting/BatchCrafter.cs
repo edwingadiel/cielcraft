@@ -266,7 +266,7 @@ public sealed class BatchCrafter : IDisposable
             if (!automatorStarted && solution != null && automator.State != AutomationState.Running)
             {
                 var player = gameBridge.GetPlayerState();
-                if (player != null && automator.Start(solution.ActionIds, player.ClassJobId))
+                if (player != null && automator.Start(solution.ActionIds, player.ClassJobId, solution.BaseProgress))
                 {
                     automatorStarted = true;
                     StatusText = ProgressText();
