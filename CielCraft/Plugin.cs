@@ -33,6 +33,7 @@ public sealed class Plugin : IDalamudPlugin
     public SolverService SolverService { get; init; }
     public CraftAutomator CraftAutomator { get; init; }
     public BatchCrafter BatchCrafter { get; init; }
+    public ProductionRunner ProductionRunner { get; init; }
 
     public readonly WindowSystem WindowSystem = new("CielCraft");
     private ConfigWindow ConfigWindow { get; init; }
@@ -52,6 +53,7 @@ public sealed class Plugin : IDalamudPlugin
         SolverService = new SolverService(new CielCraft.Raphael.RaphaelSolver());
         CraftAutomator = new CraftAutomator(GameBridge, CraftMonitor, ActionExecutor, Configuration);
         BatchCrafter = new BatchCrafter(GameBridge, CraftMonitor, CraftAutomator, SolverService);
+        ProductionRunner = new ProductionRunner(GameBridge, BatchCrafter, RecipeProvider);
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);
@@ -77,6 +79,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         WindowSystem.RemoveAllWindows();
 
+        ProductionRunner.Dispose();
         BatchCrafter.Dispose();
         CraftAutomator.Dispose();
         ActionExecutor.Dispose();

@@ -52,4 +52,16 @@ public interface IGameBridge
     /// recipe id is unknown.
     /// </summary>
     IReadOnlyList<IngredientRequirement> GetRecipeRequirements(ushort recipeId);
+
+    /// <summary>ClassJob row id of the current job; 0 when not logged in.</summary>
+    uint CurrentClassJobId { get; }
+
+    /// <summary>Opens the crafting log on the given recipe.</summary>
+    void OpenRecipe(uint recipeId);
+
+    /// <summary>Closes the crafting log if it is open.</summary>
+    void CloseRecipeNote();
+
+    /// <summary>Equips the best gearset for the job. False when none exists.</summary>
+    bool EquipGearsetForJob(uint classJobId);
 }

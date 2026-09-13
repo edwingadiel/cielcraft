@@ -36,7 +36,13 @@ public sealed class DalamudRecipeProvider : IRecipeProvider
                     ingredients.Add((itemId, amount));
             }
 
-            info = new RecipeInfo(recipeId, row.ItemResult.RowId, Math.Max((int)row.AmountResult, 1), ingredients);
+            // CraftType rows 0..7 map to ClassJob rows 8..15 (CRP..CUL).
+            info = new RecipeInfo(
+                recipeId,
+                row.ItemResult.RowId,
+                Math.Max((int)row.AmountResult, 1),
+                ingredients,
+                ClassJobId: row.CraftType.RowId + 8);
         }
 
         byRecipeId[recipeId] = info;

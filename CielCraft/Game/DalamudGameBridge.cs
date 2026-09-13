@@ -143,6 +143,53 @@ public sealed class DalamudGameBridge : IGameBridge
         return requirements;
     }
 
+    public uint CurrentClassJobId => Plugin.ObjectTable.LocalPlayer?.ClassJob.RowId ?? 0;
+
+    public unsafe void OpenRecipe(uint recipeId)
+    {
+        var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentRecipeNote.Instance();
+        if (agent != null)
+            agent->OpenRecipeByRecipeId(recipeId);
+    }
+
+    public unsafe void CloseRecipeNote()
+    {
+        var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentRecipeNote.Instance();
+        if (agent != null && agent->AgentInterface.IsAgentActive())
+            agent->AgentInterface.Hide();
+    }
+
+    public unsafe bool EquipGearsetForJob(uint classJobId)
+    {
+        var module = FFXIVClientStructs.FFXIV.Client.UI.Misc.RaptureGearsetModule.Instance();
+        if (module == null)
+            return false;
+
+        var best = -1;
+        short bestItemLevel = -1;
+        for (var i = 0; i < 100; i++)
+        {
+            if (!module->IsValidGearset(i))
+                continue;
+
+            var gearset = module->GetGearset(i);
+            if (gearset == null || gearset->ClassJob != classJobId)
+                continue;
+
+            if (gearset->ItemLevel > bestItemLevel)
+            {
+                best = i;
+                bestItemLevel = gearset->ItemLevel;
+            }
+        }
+
+        if (best < 0)
+            return false;
+
+        module->EquipGearset(best, 0);
+        return true;
+    }
+
     private static unsafe FFXIVClientStructs.FFXIV.Client.UI.AddonRecipeNote* GetRecipeNote()
     {
         var ptr = Plugin.GameGui.GetAddonByName("RecipeNote");

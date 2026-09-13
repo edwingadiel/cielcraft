@@ -200,6 +200,54 @@ public class MainWindow : Window, IDisposable
 
         if (plan.RawMaterials.Count == 0)
             ImGui.TextColored(new Vector4(0.4f, 0.9f, 0.4f, 1f), "All raw materials on hand.");
+
+        DrawProduction();
+    }
+
+    private void DrawProduction()
+    {
+        var runner = plugin.ProductionRunner;
+
+        switch (runner.State)
+        {
+            case Crafting.ProductionState.PreparingStep:
+            case Crafting.ProductionState.RunningBatch:
+                if (ImGui.Button("Pause##production"))
+                    runner.Pause("paused by user");
+                ImGui.SameLine();
+                if (ImGui.Button("Stop##production"))
+                    runner.Stop();
+                break;
+
+            case Crafting.ProductionState.Paused:
+                if (ImGui.Button("Resume##production"))
+                    runner.Resume();
+                ImGui.SameLine();
+                if (ImGui.Button("Stop##production"))
+                    runner.Stop();
+                break;
+
+            default:
+                var canRun = plan != null
+                             && plan.RawMaterials.Count == 0
+                             && CielCraft.Raphael.RaphaelSolver.IsAvailable
+                             && plugin.BatchCrafter.State is Crafting.BatchState.Idle
+                                 or Crafting.BatchState.Completed or Crafting.BatchState.Failed;
+
+                using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!canRun))
+                {
+                    if (ImGui.Button("Run plan") && plan != null)
+                        runner.Start(plan);
+                }
+
+                break;
+        }
+
+        if (runner.State != Crafting.ProductionState.Idle || runner.TotalSteps > 0)
+        {
+            ImGui.TextUnformatted($"Production: step {Math.Min(runner.CompletedSteps + 1, Math.Max(runner.TotalSteps, 1))}/{runner.TotalSteps}   State: {runner.State}");
+            ImGui.TextUnformatted(runner.StatusText);
+        }
     }
 
     private static void DrawStatus()
