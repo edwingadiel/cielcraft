@@ -1,0 +1,19 @@
+[package]
+name = "cielcraft-raphael"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0"
+description = "C ABI wrapper around the Raphael FFXIV crafting solver for CielCraft"
+
+[lib]
+crate-type = ["cdylib"]
+
+# Pinned to a specific raphael-rs commit for reproducible solves.
+[dependencies]
+raphael-sim = { git = "https://github.com/KonaeAkira/raphael-rs", rev = "def2860e5a2de4023fddc48e130f2d9b4b94710c" }
+raphael-solver = { git = "https://github.com/KonaeAkira/raphael-rs", rev = "def2860e5a2de4023fddc48e130f2d9b4b94710c" }
+raphael-data = { git = "https://github.com/KonaeAkira/raphael-rs", rev = "def2860e5a2de4023fddc48e130f2d9b4b94710c" }
+
+[profile.release]
+opt-level = 3
+lto = "thin"

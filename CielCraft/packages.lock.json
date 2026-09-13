@@ -16,6 +16,12 @@
       },
       "cielcraft.core": {
         "type": "Project"
+      },
+      "cielcraft.raphael": {
+        "type": "Project",
+        "dependencies": {
+          "CielCraft.Core": "[1.0.0, )"
+        }
       }
     }
   }

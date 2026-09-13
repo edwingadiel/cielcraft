@@ -8,5 +8,12 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../CielCraft.Core/CielCraft.Core.csproj" />
+    <ProjectReference Include="../CielCraft.Raphael/CielCraft.Raphael.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Native Raphael solver, built by CI (or locally with cargo) before the plugin build. -->
+    <None Include="../native/cielcraft-raphael/target/release/cielcraft_raphael.dll"
+          Condition="Exists('../native/cielcraft-raphael/target/release/cielcraft_raphael.dll')"
+          CopyToOutputDirectory="PreserveNewest" Link="cielcraft_raphael.dll" />
   </ItemGroup>
 </Project>

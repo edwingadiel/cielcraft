@@ -42,7 +42,7 @@ public class DebugWindow : Window, IDisposable
     {
         ImGui.TextUnformatted("Dependencies");
         ImGui.BulletText($"Dalamud: Ready");
-        ImGui.BulletText($"Raphael: Not integrated (Milestone 3)");
+        ImGui.BulletText($"Raphael: {(CielCraft.Raphael.RaphaelSolver.IsAvailable ? "Ready" : "Native library missing")}");
         ImGui.BulletText($"vnavmesh: {(Plugin.IsVNavmeshAvailable ? "Available" : "Unavailable — gathering automation disabled")}");
     }
 
@@ -112,6 +112,9 @@ public class DebugWindow : Window, IDisposable
         ImGui.BulletText($"Last result: {executor.LastResult}");
 
         ImGui.Separator();
+        DrawSolver(player, actionId != null);
+
+        ImGui.Separator();
         ImGui.TextUnformatted("Recent craft events");
 
         if (ImGui.BeginChild("##craftEvents", new Vector2(0, 150), true))
@@ -122,6 +125,57 @@ public class DebugWindow : Window, IDisposable
 
             for (var i = events.Count - 1; i >= 0; i--)
                 ImGui.TextUnformatted(events[i]);
+        }
+
+        ImGui.EndChild();
+    }
+
+    private void DrawSolver(PlayerSnapshot? player, bool onCrafterJob)
+    {
+        ImGui.TextUnformatted("Raphael solver (Milestone 3)");
+
+        var solverService = plugin.SolverService;
+        var craft = craftMonitor.Current;
+        var canSolve = CielCraft.Raphael.RaphaelSolver.IsAvailable
+                       && craft != null && player != null && onCrafterJob
+                       && solverService.Status != Crafting.SolverStatus.Solving;
+
+        using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!canSolve))
+        {
+            if (ImGui.Button("Solve current craft") && craft != null && player != null)
+            {
+                var setup = new CraftSetup(
+                    RecipeLevel: craft.RecipeLevel,
+                    MaxProgress: (ushort)craft.MaxProgress,
+                    MaxQuality: (ushort)craft.MaxQuality,
+                    MaxDurability: (ushort)craft.MaxDurability,
+                    IsExpert: false,
+                    Craftsmanship: (ushort)player.Craftsmanship,
+                    Control: (ushort)player.Control,
+                    Cp: (ushort)player.MaxCp,
+                    Level: (byte)player.Level,
+                    Manipulation: player.Level >= 65,
+                    HeartAndSoul: false,
+                    QuickInnovation: false);
+
+                var objective = new CraftObjective(
+                    TargetQuality: (ushort)craft.MaxQuality,
+                    InitialQuality: (ushort)craft.Quality);
+
+                solverService.BeginSolve(setup, objective);
+            }
+        }
+
+        ImGui.BulletText($"Status: {solverService.StatusText}");
+
+        var solution = solverService.Solution;
+        if (solution is not { Success: true })
+            return;
+
+        if (ImGui.BeginChild("##raphaelSolution", new Vector2(0, 150), true))
+        {
+            for (var i = 0; i < solution.ActionIds.Count; i++)
+                ImGui.TextUnformatted($"{i + 1,2}. {CielCraft.Raphael.RaphaelActionNames.NameOf(solution.ActionIds[i])}");
         }
 
         ImGui.EndChild();

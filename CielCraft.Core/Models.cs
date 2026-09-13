@@ -33,6 +33,7 @@ public enum CraftCondition
 
 /// <summary>Live state of the craft in progress (spec §10). Null when not crafting.</summary>
 public sealed record CraftSnapshot(
+    ushort RecipeLevel,
     int Step,
     int Progress,
     int MaxProgress,

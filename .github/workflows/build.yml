@@ -7,7 +7,28 @@ on:
   workflow_dispatch:
 
 jobs:
+  native:
+    name: Native solver (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/cielcraft-raphael
+
+      - name: Build cielcraft-raphael
+        run: cargo build --release --manifest-path native/cielcraft-raphael/Cargo.toml
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: raphael-native-windows
+          path: native/cielcraft-raphael/target/release/cielcraft_raphael.dll
+          if-no-files-found: error
+
   build:
+    name: Plugin + tests
+    needs: native
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -15,6 +36,19 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/cielcraft-raphael
+
+      - name: Build native solver for tests (Linux)
+        run: cargo build --release --manifest-path native/cielcraft-raphael/Cargo.toml
+
+      - name: Fetch Windows solver DLL
+        uses: actions/download-artifact@v4
+        with:
+          name: raphael-native-windows
+          path: native/cielcraft-raphael/target/release/
 
       - name: Download Dalamud
         run: |

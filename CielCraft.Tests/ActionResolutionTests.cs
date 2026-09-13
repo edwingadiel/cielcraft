@@ -10,6 +10,7 @@ public class ActionResolutionTests
 
     private static CraftSnapshot Snapshot(int step, int progress = 0, int durability = 40) =>
         new(
+            RecipeLevel: 1,
             Step: step,
             Progress: progress,
             MaxProgress: 100,

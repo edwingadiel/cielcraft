@@ -44,7 +44,8 @@ public class MainWindow : Window, IDisposable
     {
         ImGui.TextUnformatted("Status");
         StatusLine("Dalamud", true, "Ready");
-        StatusLine("Raphael", false, "Not integrated (Milestone 3)");
+        var raphael = CielCraft.Raphael.RaphaelSolver.IsAvailable;
+        StatusLine("Raphael", raphael, raphael ? "Ready" : "Native library missing");
 
         var nav = Plugin.IsVNavmeshAvailable;
         StatusLine("vnavmesh", nav, nav ? "Ready" : "Unavailable");

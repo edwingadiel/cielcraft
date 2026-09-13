@@ -12,5 +12,15 @@
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../CielCraft.Core/CielCraft.Core.csproj" />
+    <ProjectReference Include="../CielCraft.Raphael/CielCraft.Raphael.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Host-platform native solver, if built locally (cargo release build in native/cielcraft-raphael). -->
+    <None Include="../native/cielcraft-raphael/target/release/libcielcraft_raphael.dylib"
+          Condition="Exists('../native/cielcraft-raphael/target/release/libcielcraft_raphael.dylib')"
+          CopyToOutputDirectory="PreserveNewest" Link="libcielcraft_raphael.dylib" />
+    <None Include="../native/cielcraft-raphael/target/release/libcielcraft_raphael.so"
+          Condition="Exists('../native/cielcraft-raphael/target/release/libcielcraft_raphael.so')"
+          CopyToOutputDirectory="PreserveNewest" Link="libcielcraft_raphael.so" />
   </ItemGroup>
 </Project>

@@ -11,3 +11,6 @@ obj/
 # OS
 .DS_Store
 Thumbs.db
+
+# Rust build output
+native/cielcraft-raphael/target/

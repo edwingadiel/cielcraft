@@ -29,6 +29,7 @@ public sealed class Plugin : IDalamudPlugin
     public IGameBridge GameBridge { get; init; }
     public CraftStateMonitor CraftMonitor { get; init; }
     public ActionExecutor ActionExecutor { get; init; }
+    public SolverService SolverService { get; init; }
 
     public readonly WindowSystem WindowSystem = new("CielCraft");
     private ConfigWindow ConfigWindow { get; init; }
@@ -45,6 +46,7 @@ public sealed class Plugin : IDalamudPlugin
         GameBridge = new DalamudGameBridge();
         CraftMonitor = new CraftStateMonitor(GameBridge);
         ActionExecutor = new ActionExecutor(GameBridge, CraftMonitor);
+        SolverService = new SolverService(new CielCraft.Raphael.RaphaelSolver());
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);

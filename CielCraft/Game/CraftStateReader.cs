@@ -30,6 +30,7 @@ internal static unsafe class CraftStateReader
         var player = Plugin.ObjectTable.LocalPlayer;
 
         return new CraftSnapshot(
+            RecipeLevel: handler != null ? handler->RecipeLevelTable : (ushort)0,
             Step: step,
             Progress: ParseInt(addon->CurrentProgress),
             MaxProgress: ParseInt(addon->MaxProgress),
