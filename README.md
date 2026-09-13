@@ -17,9 +17,10 @@ Requires the .NET SDK and the Dalamud dev assemblies.
 
 - On a machine with XIVLauncher installed, Dalamud is found automatically via the default dev path.
 - Otherwise, download the [Dalamud distrib](https://goatcorp.github.io/dalamud-distrib/latest.zip), extract it, and point `DALAMUD_HOME` at the extracted folder.
+- Building on macOS/Linux works too (`EnableWindowsTargeting` is set in the csproj); e.g. with Homebrew's `dotnet` and the distrib extracted to `~/Library/Application Support/CielCraftDev/Dalamud`:
 
 ```
-dotnet build
+DALAMUD_HOME="$HOME/Library/Application Support/CielCraftDev/Dalamud" dotnet build
 ```
 
 The packaged plugin ends up in `CielCraft/bin/x64/Debug/CielCraft` (via DalamudPackager).
