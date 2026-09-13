@@ -43,8 +43,7 @@ public sealed class DalamudGameBridge : IGameBridge
         if (actionManager == null)
             return false;
 
-        return actionManager->GetActionStatus(
-            FFXIVClientStructs.FFXIV.Client.Game.ActionType.CraftAction, craftActionId) == 0;
+        return actionManager->GetActionStatus(TypeFor(craftActionId), craftActionId) == 0;
     }
 
     public unsafe bool ExecuteCraftAction(uint craftActionId)
@@ -53,9 +52,15 @@ public sealed class DalamudGameBridge : IGameBridge
         if (actionManager == null)
             return false;
 
-        return actionManager->UseAction(
-            FFXIVClientStructs.FFXIV.Client.Game.ActionType.CraftAction, craftActionId);
+        return actionManager->UseAction(TypeFor(craftActionId), craftActionId);
     }
+
+    // Craft actions occupy ids >= 100000; crafting buffs (Veneration, Great
+    // Strides, Manipulation, ...) are ordinary shared actions below that.
+    private static FFXIVClientStructs.FFXIV.Client.Game.ActionType TypeFor(uint actionId) =>
+        actionId >= 100000
+            ? FFXIVClientStructs.FFXIV.Client.Game.ActionType.CraftAction
+            : FFXIVClientStructs.FFXIV.Client.Game.ActionType.Action;
 
     private static unsafe uint GetAttribute(int baseParamId)
     {

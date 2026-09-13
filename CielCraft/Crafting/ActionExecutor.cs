@@ -31,6 +31,9 @@ public sealed class ActionExecutor : IDisposable
     /// <summary>Human-readable result of the last request, for the debug UI.</summary>
     public string LastResult { get; private set; } = "No action executed yet.";
 
+    /// <summary>Raised on the framework thread when a requested action resolves.</summary>
+    public event Action<ActionOutcome>? ActionResolved;
+
     public ActionExecutor(IGameBridge gameBridge, CraftStateMonitor craftMonitor)
     {
         this.gameBridge = gameBridge;
@@ -108,5 +111,7 @@ public sealed class ActionExecutor : IDisposable
         Plugin.Log.Information($"[Craft] {LastResult}");
         State = ExecutorState.Idle;
         baseline = null;
+
+        ActionResolved?.Invoke(outcome);
     }
 }

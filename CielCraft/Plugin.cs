@@ -30,6 +30,7 @@ public sealed class Plugin : IDalamudPlugin
     public CraftStateMonitor CraftMonitor { get; init; }
     public ActionExecutor ActionExecutor { get; init; }
     public SolverService SolverService { get; init; }
+    public CraftAutomator CraftAutomator { get; init; }
 
     public readonly WindowSystem WindowSystem = new("CielCraft");
     private ConfigWindow ConfigWindow { get; init; }
@@ -47,6 +48,7 @@ public sealed class Plugin : IDalamudPlugin
         CraftMonitor = new CraftStateMonitor(GameBridge);
         ActionExecutor = new ActionExecutor(GameBridge, CraftMonitor);
         SolverService = new SolverService(new CielCraft.Raphael.RaphaelSolver());
+        CraftAutomator = new CraftAutomator(GameBridge, CraftMonitor, ActionExecutor);
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);
@@ -72,6 +74,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         WindowSystem.RemoveAllWindows();
 
+        CraftAutomator.Dispose();
         ActionExecutor.Dispose();
         CraftMonitor.Dispose();
 

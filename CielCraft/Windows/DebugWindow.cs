@@ -179,5 +179,50 @@ public class DebugWindow : Window, IDisposable
         }
 
         ImGui.EndChild();
+
+        ImGui.Separator();
+        DrawAutomation(player, solution);
+    }
+
+    private void DrawAutomation(PlayerSnapshot? player, CraftSolution solution)
+    {
+        ImGui.TextUnformatted("Auto craft (Milestone 4)");
+
+        var automator = plugin.CraftAutomator;
+
+        switch (automator.State)
+        {
+            case Crafting.AutomationState.Running:
+                if (ImGui.Button("Pause"))
+                    automator.Pause("paused by user");
+                ImGui.SameLine();
+                if (ImGui.Button("Stop"))
+                    automator.Stop();
+                break;
+
+            case Crafting.AutomationState.Paused:
+                if (ImGui.Button("Resume"))
+                    automator.Resume();
+                ImGui.SameLine();
+                if (ImGui.Button("Stop"))
+                    automator.Stop();
+                break;
+
+            default:
+                var canStart = player != null && gameBridge.IsCrafting;
+                using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!canStart))
+                {
+                    if (ImGui.Button("Run rotation") && player != null)
+                        automator.Start(solution.ActionIds, player.ClassJobId);
+                }
+
+                break;
+        }
+
+        ImGui.BulletText($"State: {automator.State} ({automator.CompletedActions}/{automator.TotalActions})");
+        ImGui.BulletText($"Status: {automator.StatusText}");
+
+        if (automator.NextRaphaelAction is { } next)
+            ImGui.BulletText($"Next action: {CielCraft.Raphael.RaphaelActionNames.NameOf(next)}");
     }
 }
