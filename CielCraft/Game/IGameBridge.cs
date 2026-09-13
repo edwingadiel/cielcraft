@@ -1,3 +1,5 @@
+using CielCraft.Core;
+
 namespace CielCraft.Game;
 
 /// <summary>
@@ -22,4 +24,10 @@ public interface IGameBridge
 
     /// <summary>Null when no craft is active.</summary>
     CraftSnapshot? GetCraftState();
+
+    /// <summary>True when the game reports the craft action as currently usable (CP, state, availability).</summary>
+    bool IsCraftActionReady(uint craftActionId);
+
+    /// <summary>Requests execution of a craft action. True if the game accepted the request.</summary>
+    bool ExecuteCraftAction(uint craftActionId);
 }

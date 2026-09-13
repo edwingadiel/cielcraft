@@ -1,3 +1,4 @@
+using CielCraft.Core;
 using Dalamud.Game.ClientState.Conditions;
 
 namespace CielCraft.Game;
@@ -35,6 +36,26 @@ public sealed class DalamudGameBridge : IGameBridge
     }
 
     public CraftSnapshot? GetCraftState() => CraftStateReader.Read();
+
+    public unsafe bool IsCraftActionReady(uint craftActionId)
+    {
+        var actionManager = FFXIVClientStructs.FFXIV.Client.Game.ActionManager.Instance();
+        if (actionManager == null)
+            return false;
+
+        return actionManager->GetActionStatus(
+            FFXIVClientStructs.FFXIV.Client.Game.ActionType.CraftAction, craftActionId) == 0;
+    }
+
+    public unsafe bool ExecuteCraftAction(uint craftActionId)
+    {
+        var actionManager = FFXIVClientStructs.FFXIV.Client.Game.ActionManager.Instance();
+        if (actionManager == null)
+            return false;
+
+        return actionManager->UseAction(
+            FFXIVClientStructs.FFXIV.Client.Game.ActionType.CraftAction, craftActionId);
+    }
 
     private static unsafe uint GetAttribute(int baseParamId)
     {

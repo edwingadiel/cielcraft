@@ -6,4 +6,7 @@
     <!-- Allows compiling the Windows-targeted plugin on macOS/Linux dev machines. -->
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
   </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../CielCraft.Core/CielCraft.Core.csproj" />
+  </ItemGroup>
 </Project>

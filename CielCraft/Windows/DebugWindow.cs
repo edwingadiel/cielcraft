@@ -1,5 +1,6 @@
 using System;
 using System.Numerics;
+using CielCraft.Core;
 using CielCraft.Game;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
@@ -9,6 +10,7 @@ namespace CielCraft.Windows;
 /// <summary>Developer window showing live game/plugin state (spec §46).</summary>
 public class DebugWindow : Window, IDisposable
 {
+    private readonly Plugin plugin;
     private readonly IGameBridge gameBridge;
     private readonly CraftStateMonitor craftMonitor;
 
@@ -20,6 +22,7 @@ public class DebugWindow : Window, IDisposable
             MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
         };
 
+        this.plugin = plugin;
         gameBridge = plugin.GameBridge;
         craftMonitor = plugin.CraftMonitor;
     }
@@ -90,6 +93,23 @@ public class DebugWindow : Window, IDisposable
             ImGui.BulletText($"CP: {craft.CurrentCp} / {craft.MaxCp}");
             ImGui.BulletText($"Condition: {craft.Condition}");
         }
+
+        ImGui.Separator();
+        ImGui.TextUnformatted("Action execution (Milestone 2)");
+
+        var executor = plugin.ActionExecutor;
+        var player = gameBridge.GetPlayerState();
+        var actionId = player != null ? CraftActionIds.BasicSynthesis(player.ClassJobId) : null;
+
+        using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(
+                   actionId == null || !gameBridge.IsCrafting || executor.State != Crafting.ExecutorState.Idle))
+        {
+            if (ImGui.Button("Execute Basic Synthesis") && actionId != null)
+                executor.TryExecute(actionId.Value);
+        }
+
+        ImGui.BulletText($"Executor: {executor.State}");
+        ImGui.BulletText($"Last result: {executor.LastResult}");
 
         ImGui.Separator();
         ImGui.TextUnformatted("Recent craft events");

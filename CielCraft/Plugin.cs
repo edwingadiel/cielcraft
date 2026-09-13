@@ -1,5 +1,6 @@
 using System;
 using System.Linq;
+using CielCraft.Crafting;
 using CielCraft.Game;
 using CielCraft.Windows;
 using Dalamud.Game.Command;
@@ -27,6 +28,7 @@ public sealed class Plugin : IDalamudPlugin
     public Configuration Configuration { get; init; }
     public IGameBridge GameBridge { get; init; }
     public CraftStateMonitor CraftMonitor { get; init; }
+    public ActionExecutor ActionExecutor { get; init; }
 
     public readonly WindowSystem WindowSystem = new("CielCraft");
     private ConfigWindow ConfigWindow { get; init; }
@@ -42,6 +44,7 @@ public sealed class Plugin : IDalamudPlugin
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         GameBridge = new DalamudGameBridge();
         CraftMonitor = new CraftStateMonitor(GameBridge);
+        ActionExecutor = new ActionExecutor(GameBridge, CraftMonitor);
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);
@@ -67,6 +70,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         WindowSystem.RemoveAllWindows();
 
+        ActionExecutor.Dispose();
         CraftMonitor.Dispose();
 
         ConfigWindow.Dispose();

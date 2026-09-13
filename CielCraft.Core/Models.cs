@@ -1,6 +1,6 @@
 using System.Numerics;
 
-namespace CielCraft.Game;
+namespace CielCraft.Core;
 
 /// <summary>Snapshot of the logged-in character, read once per frame at most.</summary>
 public sealed record PlayerSnapshot(
