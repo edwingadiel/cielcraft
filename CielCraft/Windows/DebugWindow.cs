@@ -10,6 +10,7 @@ namespace CielCraft.Windows;
 public class DebugWindow : Window, IDisposable
 {
     private readonly IGameBridge gameBridge;
+    private readonly CraftStateMonitor craftMonitor;
 
     public DebugWindow(Plugin plugin) : base("CielCraft Debug##Debug")
     {
@@ -20,6 +21,7 @@ public class DebugWindow : Window, IDisposable
         };
 
         gameBridge = plugin.GameBridge;
+        craftMonitor = plugin.CraftMonitor;
     }
 
     public void Dispose() { }
@@ -74,18 +76,34 @@ public class DebugWindow : Window, IDisposable
         ImGui.BulletText($"Crafting active: {gameBridge.IsCrafting}");
         ImGui.BulletText($"Gathering active: {gameBridge.IsGathering}");
 
-        var craft = gameBridge.GetCraftState();
+        var craft = craftMonitor.Current;
         if (craft == null)
         {
-            ImGui.BulletText("Craft state: n/a (reader lands in Milestone 1)");
-            return;
+            ImGui.BulletText("Craft state: n/a (no active synthesis)");
+        }
+        else
+        {
+            ImGui.BulletText($"Step: {craft.Step}");
+            ImGui.BulletText($"Progress: {craft.Progress} / {craft.MaxProgress}");
+            ImGui.BulletText($"Quality: {craft.Quality} / {craft.MaxQuality}");
+            ImGui.BulletText($"Durability: {craft.Durability} / {craft.MaxDurability}");
+            ImGui.BulletText($"CP: {craft.CurrentCp} / {craft.MaxCp}");
+            ImGui.BulletText($"Condition: {craft.Condition}");
         }
 
-        ImGui.BulletText($"Step: {craft.Step}");
-        ImGui.BulletText($"Progress: {craft.Progress} / {craft.MaxProgress}");
-        ImGui.BulletText($"Quality: {craft.Quality} / {craft.MaxQuality}");
-        ImGui.BulletText($"Durability: {craft.Durability} / {craft.MaxDurability}");
-        ImGui.BulletText($"CP: {craft.CurrentCp} / {craft.MaxCp}");
-        ImGui.BulletText($"Condition: {craft.Condition}");
+        ImGui.Separator();
+        ImGui.TextUnformatted("Recent craft events");
+
+        if (ImGui.BeginChild("##craftEvents", new Vector2(0, 150), true))
+        {
+            var events = craftMonitor.RecentEvents;
+            if (events.Count == 0)
+                ImGui.TextUnformatted("None yet.");
+
+            for (var i = events.Count - 1; i >= 0; i--)
+                ImGui.TextUnformatted(events[i]);
+        }
+
+        ImGui.EndChild();
     }
 }

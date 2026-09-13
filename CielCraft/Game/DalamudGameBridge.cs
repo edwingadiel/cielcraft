@@ -34,13 +34,7 @@ public sealed class DalamudGameBridge : IGameBridge
             Control: GetAttribute(71));
     }
 
-    public CraftSnapshot? GetCraftState()
-    {
-        // Milestone 1: numeric craft state (progress/quality/durability/step/condition)
-        // will be read from the game once the reader is implemented. Until then this
-        // only reports whether a craft is active.
-        return null;
-    }
+    public CraftSnapshot? GetCraftState() => CraftStateReader.Read();
 
     private static unsafe uint GetAttribute(int baseParamId)
     {
