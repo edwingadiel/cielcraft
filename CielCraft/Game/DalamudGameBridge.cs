@@ -40,6 +40,62 @@ public sealed class DalamudGameBridge : IGameBridge
 
     public GatheringSnapshot? GetGatheringState() => GatheringStateReader.Read();
 
+    public bool IsGatheringActionInProgress => Plugin.Condition[ConditionFlag.ExecutingGatheringAction];
+
+    public GatheringNodeSnapshot? FindNearestGatheringNode()
+    {
+        var player = Plugin.ObjectTable.LocalPlayer;
+        if (player == null)
+            return null;
+
+        GatheringNodeSnapshot? nearest = null;
+        foreach (var obj in Plugin.ObjectTable)
+        {
+            if (obj.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.GatheringPoint || !obj.IsTargetable)
+                continue;
+
+            var distance = System.Numerics.Vector3.Distance(player.Position, obj.Position);
+            if (nearest == null || distance < nearest.Distance)
+                nearest = new GatheringNodeSnapshot(obj.GameObjectId, obj.Name.TextValue, obj.Position, distance);
+        }
+
+        return nearest;
+    }
+
+    public unsafe bool InteractWithObject(ulong objectId)
+    {
+        var obj = Plugin.ObjectTable.SearchById(objectId);
+        if (obj == null || !obj.IsTargetable)
+            return false;
+
+        Plugin.TargetManager.Target = obj;
+        FFXIVClientStructs.FFXIV.Client.Game.Control.TargetSystem.Instance()->InteractWithObject(
+            (FFXIVClientStructs.FFXIV.Client.Game.Object.GameObject*)obj.Address, false);
+        return true;
+    }
+
+    public unsafe bool GatherSlot(int slotIndex)
+    {
+        var addonPtr = Plugin.GameGui.GetAddonByName("Gathering");
+        if (addonPtr.IsNull || !addonPtr.IsVisible)
+            return false;
+
+        var addon = (FFXIVClientStructs.FFXIV.Client.UI.AddonGathering*)addonPtr.Address;
+        if (slotIndex < 0 || slotIndex >= addon->GatheredItemComponentCheckbox.Length)
+            return false;
+
+        var checkbox = addon->GatheredItemComponentCheckbox[slotIndex].Value;
+        if (checkbox == null || !checkbox->IsEnabled || !checkbox->AtkResNode->IsVisible())
+            return false;
+
+        // Replay the checkbox's own click event back into the addon.
+        var node = checkbox->OwnerNode;
+        var evt = node->AtkResNode.AtkEventManager.Event;
+        var data = default(FFXIVClientStructs.FFXIV.Component.GUI.AtkEventData);
+        addon->AtkUnitBase.ReceiveEvent(evt->State.EventType, (int)evt->Param, evt, &data);
+        return true;
+    }
+
     public unsafe bool IsCraftActionReady(uint craftActionId)
     {
         var actionManager = FFXIVClientStructs.FFXIV.Client.Game.ActionManager.Instance();

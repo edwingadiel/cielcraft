@@ -20,6 +20,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static ICondition Condition { get; private set; } = null!;
     [PluginService] internal static IObjectTable ObjectTable { get; private set; } = null!;
     [PluginService] internal static IGameGui GameGui { get; private set; } = null!;
+    [PluginService] internal static Dalamud.Plugin.Services.ITargetManager TargetManager { get; private set; } = null!;
     [PluginService] internal static IFramework Framework { get; private set; } = null!;
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
@@ -36,6 +37,7 @@ public sealed class Plugin : IDalamudPlugin
     public BatchCrafter BatchCrafter { get; init; }
     public ProductionRunner ProductionRunner { get; init; }
     public INavigationProvider Navigation { get; init; }
+    public Gathering.GatheringController GatheringController { get; init; }
 
     public readonly WindowSystem WindowSystem = new("CielCraft");
     private ConfigWindow ConfigWindow { get; init; }
@@ -57,6 +59,7 @@ public sealed class Plugin : IDalamudPlugin
         BatchCrafter = new BatchCrafter(GameBridge, CraftMonitor, CraftAutomator, SolverService);
         ProductionRunner = new ProductionRunner(GameBridge, BatchCrafter, RecipeProvider);
         Navigation = new Navigation.VNavmeshProvider();
+        GatheringController = new Gathering.GatheringController(GameBridge, Navigation);
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);
@@ -82,6 +85,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         WindowSystem.RemoveAllWindows();
 
+        GatheringController.Dispose();
         ProductionRunner.Dispose();
         BatchCrafter.Dispose();
         CraftAutomator.Dispose();

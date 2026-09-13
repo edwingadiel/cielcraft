@@ -31,6 +31,9 @@ public enum CraftCondition
     GoodOmen,
 }
 
+/// <summary>A gathering point in the world.</summary>
+public sealed record GatheringNodeSnapshot(ulong ObjectId, string Name, Vector3 Position, float Distance);
+
 /// <summary>One selectable item slot of an open gathering node.</summary>
 public sealed record GatheringItemSlot(int Index, uint ItemId, bool Enabled);
 

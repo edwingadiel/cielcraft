@@ -29,6 +29,18 @@ public interface IGameBridge
     /// <summary>Null when no gathering node is open.</summary>
     GatheringSnapshot? GetGatheringState();
 
+    /// <summary>True while a gather swing/action is animating.</summary>
+    bool IsGatheringActionInProgress { get; }
+
+    /// <summary>Nearest targetable gathering point, or null.</summary>
+    GatheringNodeSnapshot? FindNearestGatheringNode();
+
+    /// <summary>Targets and interacts with the object. False when it is gone.</summary>
+    bool InteractWithObject(ulong objectId);
+
+    /// <summary>Clicks an item slot in the open gathering window. False when not clickable.</summary>
+    bool GatherSlot(int slotIndex);
+
     /// <summary>True when the game reports the craft action as currently usable (CP, state, availability).</summary>
     bool IsCraftActionReady(uint craftActionId);
 

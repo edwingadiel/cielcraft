@@ -39,6 +39,8 @@ public class DebugWindow : Window, IDisposable
         ImGui.Separator();
         DrawGathering();
         ImGui.Separator();
+        DrawGatherAutomation();
+        ImGui.Separator();
         DrawNavigation();
     }
 
@@ -63,6 +65,49 @@ public class DebugWindow : Window, IDisposable
                 $"    [{slot.Index}] {plugin.RecipeProvider.GetItemName(slot.ItemId)} (id {slot.ItemId})" +
                 (slot.Enabled ? "" : " — not gatherable"));
         }
+    }
+
+    private int gatherItemId;
+
+    private void DrawGatherAutomation()
+    {
+        ImGui.TextUnformatted("Auto-gather (Milestone 12)");
+
+        var controller = plugin.GatheringController;
+
+        switch (controller.State)
+        {
+            case Gathering.GatheringState.MovingToNode:
+            case Gathering.GatheringState.Interacting:
+            case Gathering.GatheringState.GatheringNode:
+                if (ImGui.Button("Pause##gather"))
+                    controller.Pause("paused by user");
+                ImGui.SameLine();
+                if (ImGui.Button("Stop##gather"))
+                    controller.Stop();
+                break;
+
+            case Gathering.GatheringState.Paused:
+                if (ImGui.Button("Resume##gather"))
+                    controller.Resume();
+                ImGui.SameLine();
+                if (ImGui.Button("Stop##gather"))
+                    controller.Stop();
+                break;
+
+            default:
+                ImGui.SetNextItemWidth(120);
+                ImGui.InputInt("Item id (0 = first)", ref gatherItemId);
+                if (gatherItemId < 0)
+                    gatherItemId = 0;
+
+                if (ImGui.Button("Gather nearest node"))
+                    controller.Start((uint)gatherItemId);
+                break;
+        }
+
+        ImGui.BulletText($"State: {controller.State}");
+        ImGui.BulletText($"Status: {controller.StatusText}");
     }
 
     private Vector3 navDestination;
