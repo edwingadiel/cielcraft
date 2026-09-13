@@ -1,7 +1,17 @@
 using System.Collections.Generic;
+using System.Numerics;
 using Lumina.Excel.Sheets;
 
 namespace CielCraft.Game;
+
+/// <summary>Where an item can be gathered: territory plus approximate node-area center (spec §33/§35).</summary>
+public sealed record GatheringLocation(
+    uint ItemId,
+    uint JobId,
+    byte GatheringLevel,
+    uint TerritoryId,
+    Vector2 Position,
+    float Radius);
 
 /// <summary>
 /// Which gathering job collects an item, from game data (spec §33): the
@@ -14,12 +24,20 @@ public sealed class GatheringDatabase
     public const uint BotanistJobId = 17;
 
     private Dictionary<uint, uint>? itemToJob;
+    private Dictionary<uint, GatheringLocation>? itemToLocation;
 
     /// <summary>ClassJob row id (16 = MIN, 17 = BTN) that gathers the item; null when not gatherable.</summary>
     public uint? GetGatheringJob(uint itemId)
     {
         EnsureIndex();
         return itemToJob!.TryGetValue(itemId, out var job) ? job : null;
+    }
+
+    /// <summary>Lowest-level known node area for the item; null when unknown.</summary>
+    public GatheringLocation? FindLocation(uint itemId)
+    {
+        EnsureIndex();
+        return itemToLocation!.GetValueOrDefault(itemId);
     }
 
     private void EnsureIndex()
@@ -36,7 +54,9 @@ public sealed class GatheringDatabase
                 gatheringItemToItem[row.RowId] = realItem;
         }
 
+        // GatheringPointBase row -> (job, level, item ids).
         itemToJob = new Dictionary<uint, uint>();
+        var baseInfo = new Dictionary<uint, (uint Job, byte Level, List<uint> Items)>();
         foreach (var point in Plugin.DataManager.GetExcelSheet<GatheringPointBase>())
         {
             // GatheringType: 0 Mining / 1 Quarrying (MIN), 2 Logging / 3 Harvesting (BTN).
@@ -49,10 +69,41 @@ public sealed class GatheringDatabase
             if (job == 0)
                 continue;
 
+            var items = new List<uint>();
             foreach (var entry in point.Item)
             {
                 if (entry.RowId != 0 && gatheringItemToItem.TryGetValue(entry.RowId, out var itemId))
+                {
+                    items.Add(itemId);
                     itemToJob.TryAdd(itemId, job);
+                }
+            }
+
+            if (items.Count > 0)
+                baseInfo[point.RowId] = (job, point.GatheringLevel, items);
+        }
+
+        // GatheringPoint gives the territory; ExportedGatheringPoint (keyed by
+        // the base row) gives approximate world X/Z and radius.
+        itemToLocation = new Dictionary<uint, GatheringLocation>();
+        var exported = Plugin.DataManager.GetExcelSheet<ExportedGatheringPoint>();
+        foreach (var point in Plugin.DataManager.GetExcelSheet<GatheringPoint>())
+        {
+            var baseId = point.GatheringPointBase.RowId;
+            var territory = point.TerritoryType.RowId;
+            if (territory <= 1 || !baseInfo.TryGetValue(baseId, out var info))
+                continue;
+
+            if (!exported.TryGetRow(baseId, out var coords) || (coords.X == 0 && coords.Y == 0))
+                continue;
+
+            var location = new GatheringLocation(
+                0, info.Job, info.Level, territory, new Vector2(coords.X, coords.Y), coords.Radius);
+
+            foreach (var itemId in info.Items)
+            {
+                if (!itemToLocation.TryGetValue(itemId, out var existing) || info.Level < existing.GatheringLevel)
+                    itemToLocation[itemId] = location with { ItemId = itemId };
             }
         }
     }

@@ -10,6 +10,8 @@ public enum ProductionState
 {
     Idle,
     PreparingGather,
+    Teleporting,
+    MovingToArea,
     RunningGather,
     PreparingStep,
     RunningBatch,
@@ -21,13 +23,17 @@ public enum ProductionState
 /// <summary>
 /// Executes a ProductionPlan's craft steps in dependency order (spec §62):
 /// per step, switch to the recipe's job (via gearsets) when needed, open the
-/// recipe in the crafting log, run a verified batch, then move on. Requires
-/// all raw materials on hand — gathering arrives in later milestones.
+/// recipe in the crafting log, run a verified batch, then move on. Missing
+/// raw materials are gathered first (spec §67), teleporting to the material's
+/// node territory and traveling to the node area when needed (spec §68).
 /// </summary>
 public sealed class ProductionRunner : IDisposable
 {
     private static readonly TimeSpan PrepareTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan TeleportTimeout = TimeSpan.FromSeconds(90);
+    private static readonly TimeSpan AreaTimeout = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(2);
+    private const float NodeAreaArrivalRange = 60f;
 
     private readonly IGameBridge gameBridge;
     private readonly BatchCrafter batchCrafter;
@@ -38,11 +44,15 @@ public sealed class ProductionRunner : IDisposable
 
     private ProductionPlan? plan;
     private int stepIndex;
-    private readonly List<(uint ItemId, int Amount, uint JobId)> gatherQueue = [];
+    private readonly List<GatherTask> gatherQueue = [];
     private int gatherIndex;
     private DateTime phaseStartedAt;
     private DateTime lastAttemptAt;
     private bool gearsetRequested;
+    private bool sawLoadingScreen;
+    private System.Numerics.Vector3? areaDestination;
+
+    private sealed record GatherTask(uint ItemId, int Amount, uint JobId, uint TerritoryId, System.Numerics.Vector2 AreaPosition);
 
     public ProductionState State { get; private set; } = ProductionState.Idle;
     public string StatusText { get; private set; } = "Idle.";
@@ -109,7 +119,15 @@ public sealed class ProductionRunner : IDisposable
                     return false;
                 }
 
-                gatherQueue.Add((material.ItemId, material.Amount, job.Value));
+                // Known node area enables cross-territory travel (spec §68);
+                // without one, gathering is attempted in the current zone.
+                var location = gatheringDatabase.FindLocation(material.ItemId);
+                gatherQueue.Add(new GatherTask(
+                    material.ItemId,
+                    material.Amount,
+                    location?.JobId ?? job.Value,
+                    location?.TerritoryId ?? 0,
+                    location?.Position ?? default));
             }
         }
 
@@ -137,8 +155,12 @@ public sealed class ProductionRunner : IDisposable
         else if (State == ProductionState.RunningGather)
             gatheringLoop.Pause("production paused");
 
+        if (State is ProductionState.MovingToArea)
+            navigation.Stop();
+
         if (State is ProductionState.PreparingStep or ProductionState.RunningBatch
-            or ProductionState.PreparingGather or ProductionState.RunningGather)
+            or ProductionState.PreparingGather or ProductionState.RunningGather
+            or ProductionState.Teleporting or ProductionState.MovingToArea)
             Transition(ProductionState.Paused, $"Paused: {reason}.");
     }
 
@@ -173,6 +195,7 @@ public sealed class ProductionRunner : IDisposable
     {
         batchCrafter.Stop();
         gatheringLoop.Stop();
+        navigation.Stop();
         if (State is not (ProductionState.Idle or ProductionState.Completed or ProductionState.Failed))
             Transition(ProductionState.Idle, $"Stopped by user at step {stepIndex + 1}/{TotalSteps}.");
     }
@@ -183,6 +206,12 @@ public sealed class ProductionRunner : IDisposable
         {
             case ProductionState.PreparingGather:
                 TickPreparingGather();
+                break;
+            case ProductionState.Teleporting:
+                TickTeleporting();
+                break;
+            case ProductionState.MovingToArea:
+                TickMovingToArea();
                 break;
             case ProductionState.RunningGather:
                 TickRunningGather();
@@ -198,11 +227,11 @@ public sealed class ProductionRunner : IDisposable
 
     private void TickPreparingGather()
     {
-        var (itemId, amount, jobId) = gatherQueue[gatherIndex];
+        var task = gatherQueue[gatherIndex];
 
         if (DateTime.UtcNow - phaseStartedAt > PrepareTimeout)
         {
-            Fail($"could not prepare gathering for {recipeProvider.GetItemName(itemId)}" +
+            Fail($"could not prepare gathering for {recipeProvider.GetItemName(task.ItemId)}" +
                  (gearsetRequested ? " — is there a MIN/BTN gearset?" : ""));
             return;
         }
@@ -210,7 +239,7 @@ public sealed class ProductionRunner : IDisposable
         if (gameBridge.IsCrafting)
             return;
 
-        if (gameBridge.CurrentClassJobId != jobId)
+        if (gameBridge.CurrentClassJobId != task.JobId)
         {
             if (gameBridge.IsPreparingToCraft || gameBridge.SelectedRecipeId != 0)
             {
@@ -221,19 +250,119 @@ public sealed class ProductionRunner : IDisposable
             Throttled(() =>
             {
                 gearsetRequested = true;
-                if (!gameBridge.EquipGearsetForJob(jobId))
-                    Fail($"no gearset found for gathering job {jobId}");
+                if (!gameBridge.EquipGearsetForJob(task.JobId))
+                    Fail($"no gearset found for gathering job {task.JobId}");
             });
             return;
         }
 
-        if (gatheringLoop.Start(itemId, amount))
+        // Wrong zone: teleport there first (spec §68).
+        if (task.TerritoryId != 0 && gameBridge.CurrentTerritoryId != task.TerritoryId)
+        {
+            Throttled(() =>
+            {
+                sawLoadingScreen = false;
+                if (gameBridge.TeleportToTerritory(task.TerritoryId))
+                {
+                    EnterPhase(ProductionState.Teleporting, GatherText("Teleporting for"));
+                }
+                else
+                {
+                    Fail($"no attuned aetheryte in territory {task.TerritoryId} " +
+                         $"for {recipeProvider.GetItemName(task.ItemId)}");
+                }
+            });
+            return;
+        }
+
+        // Right zone but the node area may be far: approach it until nodes
+        // appear in the object table.
+        if (task.AreaPosition != default
+            && gameBridge.FindNearestGatheringNode() == null)
+        {
+            areaDestination = null;
+            EnterPhase(ProductionState.MovingToArea, GatherText("Traveling to the node area for"));
+            return;
+        }
+
+        if (gatheringLoop.Start(task.ItemId, task.Amount))
         {
             Plugin.Log.Information(
                 $"[Production] Gather task {gatherIndex + 1}/{gatherQueue.Count}: " +
-                $"{recipeProvider.GetItemName(itemId)} ×{amount}.");
+                $"{recipeProvider.GetItemName(task.ItemId)} ×{task.Amount}.");
             Transition(ProductionState.RunningGather, GatherText("Gathering"));
         }
+    }
+
+    private void TickTeleporting()
+    {
+        var task = gatherQueue[gatherIndex];
+
+        if (DateTime.UtcNow - phaseStartedAt > TeleportTimeout)
+        {
+            Fail("teleport did not complete (cast interrupted or loading took too long)");
+            return;
+        }
+
+        if (gameBridge.IsBetweenAreas)
+        {
+            sawLoadingScreen = true;
+            return;
+        }
+
+        if (sawLoadingScreen
+            && gameBridge.CurrentTerritoryId == task.TerritoryId
+            && gameBridge.GetPlayerState() != null)
+        {
+            EnterPreparing();
+            Transition(ProductionState.PreparingGather, GatherText("Arrived; preparing to gather"));
+        }
+    }
+
+    private void TickMovingToArea()
+    {
+        var task = gatherQueue[gatherIndex];
+
+        if (DateTime.UtcNow - phaseStartedAt > AreaTimeout)
+        {
+            Fail("could not reach the node area in time");
+            return;
+        }
+
+        // A targetable node in the object table means we are close enough.
+        if (gameBridge.FindNearestGatheringNode() != null)
+        {
+            navigation.Stop();
+            EnterPreparing();
+            Transition(ProductionState.PreparingGather, GatherText("Node area reached; preparing to gather"));
+            return;
+        }
+
+        if (!navigation.IsReady)
+            return; // navmesh still building after the zone change
+
+        var player = gameBridge.GetPlayerState();
+        if (player == null)
+            return;
+
+        if (areaDestination == null)
+        {
+            // The exported node-area position is X/Z only; project it onto the navmesh.
+            var approximate = new System.Numerics.Vector3(task.AreaPosition.X, player.Position.Y, task.AreaPosition.Y);
+            areaDestination = navigation.FindNearestMeshPoint(approximate, 40f, 500f);
+            if (areaDestination == null)
+            {
+                Fail($"could not project the node area ({task.AreaPosition.X:F0}, {task.AreaPosition.Y:F0}) onto the navmesh");
+                return;
+            }
+        }
+
+        var distance = System.Numerics.Vector3.Distance(player.Position, areaDestination.Value);
+        if (distance <= NodeAreaArrivalRange)
+            return; // nodes should appear as they spawn into the object table
+
+        if (!navigation.IsMoving)
+            Throttled(() => navigation.MoveCloseTo(areaDestination.Value, 10f, fly: false));
     }
 
     private void TickRunningGather()
@@ -265,8 +394,8 @@ public sealed class ProductionRunner : IDisposable
 
     private string GatherText(string verb)
     {
-        var (itemId, amount, _) = gatherQueue[gatherIndex];
-        return $"{verb} {gatherIndex + 1}/{gatherQueue.Count}: {recipeProvider.GetItemName(itemId)} ×{amount}.";
+        var task = gatherQueue[gatherIndex];
+        return $"{verb} {gatherIndex + 1}/{gatherQueue.Count}: {recipeProvider.GetItemName(task.ItemId)} ×{task.Amount}.";
     }
 
     private void TickPreparing()
@@ -355,6 +484,12 @@ public sealed class ProductionRunner : IDisposable
                 Transition(ProductionState.Paused, "Paused: the batch was stopped.");
                 break;
         }
+    }
+
+    private void EnterPhase(ProductionState state, string statusText)
+    {
+        EnterPreparing();
+        Transition(state, statusText);
     }
 
     private void EnterPreparing()

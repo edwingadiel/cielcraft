@@ -79,4 +79,13 @@ public interface IGameBridge
 
     /// <summary>Equips the best gearset for the job. False when none exists.</summary>
     bool EquipGearsetForJob(uint classJobId);
+
+    /// <summary>Current territory row id.</summary>
+    uint CurrentTerritoryId { get; }
+
+    /// <summary>True during zone transitions/loading screens.</summary>
+    bool IsBetweenAreas { get; }
+
+    /// <summary>Teleports to an attuned aetheryte in the territory. False when none is attuned.</summary>
+    bool TeleportToTerritory(uint territoryId);
 }

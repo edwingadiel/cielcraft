@@ -252,6 +252,29 @@ public sealed class DalamudGameBridge : IGameBridge
         return true;
     }
 
+    public uint CurrentTerritoryId => Plugin.ClientState.TerritoryType;
+
+    public bool IsBetweenAreas =>
+        Plugin.Condition[ConditionFlag.BetweenAreas] || Plugin.Condition[ConditionFlag.BetweenAreas51];
+
+    public unsafe bool TeleportToTerritory(uint territoryId)
+    {
+        foreach (var entry in Plugin.AetheryteList)
+        {
+            if (entry.TerritoryId != territoryId)
+                continue;
+
+            var telepo = FFXIVClientStructs.FFXIV.Client.Game.UI.Telepo.Instance();
+            if (telepo == null)
+                return false;
+
+            Plugin.Log.Information($"[Travel] Teleporting to aetheryte {entry.AetheryteId} (territory {territoryId}).");
+            return telepo->Teleport(entry.AetheryteId, entry.SubIndex);
+        }
+
+        return false;
+    }
+
     private static unsafe FFXIVClientStructs.FFXIV.Client.UI.AddonRecipeNote* GetRecipeNote()
     {
         var ptr = Plugin.GameGui.GetAddonByName("RecipeNote");

@@ -18,6 +18,7 @@ public sealed class VNavmeshProvider : INavigationProvider
     private readonly ICallGateSubscriber<bool> pathfindInProgress;
     private readonly ICallGateSubscriber<bool> pathIsRunning;
     private readonly ICallGateSubscriber<object> pathStop;
+    private readonly ICallGateSubscriber<Vector3, float, float, Vector3?> nearestPoint;
 
     public VNavmeshProvider()
     {
@@ -28,6 +29,7 @@ public sealed class VNavmeshProvider : INavigationProvider
         pathfindInProgress = ipc.GetIpcSubscriber<bool>("vnavmesh.SimpleMove.PathfindInProgress");
         pathIsRunning = ipc.GetIpcSubscriber<bool>("vnavmesh.Path.IsRunning");
         pathStop = ipc.GetIpcSubscriber<object>("vnavmesh.Path.Stop");
+        nearestPoint = ipc.GetIpcSubscriber<Vector3, float, float, Vector3?>("vnavmesh.Query.Mesh.NearestPoint");
     }
 
     public bool IsAvailable => Plugin.IsVNavmeshAvailable && Try(() => { navIsReady.InvokeFunc(); return true; });
@@ -58,6 +60,18 @@ public sealed class VNavmeshProvider : INavigationProvider
             return true;
         });
         Plugin.Log.Information("[Navigation] Stop requested.");
+    }
+
+    public Vector3? FindNearestMeshPoint(Vector3 approximate, float halfExtentXZ, float halfExtentY)
+    {
+        try
+        {
+            return nearestPoint.InvokeFunc(approximate, halfExtentXZ, halfExtentY);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     private static bool Try(Func<bool> call)

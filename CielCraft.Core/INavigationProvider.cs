@@ -25,4 +25,10 @@ public interface INavigationProvider
     bool MoveCloseTo(Vector3 destination, float tolerance, bool fly);
 
     void Stop();
+
+    /// <summary>
+    /// Nearest point on the navmesh to an approximate position (e.g. a node
+    /// area whose height is unknown); null when none is found.
+    /// </summary>
+    Vector3? FindNearestMeshPoint(Vector3 approximate, float halfExtentXZ, float halfExtentY);
 }
