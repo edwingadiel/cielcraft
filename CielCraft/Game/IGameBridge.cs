@@ -32,8 +32,8 @@ public interface IGameBridge
     /// <summary>True while a gather swing/action is animating.</summary>
     bool IsGatheringActionInProgress { get; }
 
-    /// <summary>Nearest targetable gathering point, or null.</summary>
-    GatheringNodeSnapshot? FindNearestGatheringNode();
+    /// <summary>Nearest targetable gathering point not in the excluded set, or null.</summary>
+    GatheringNodeSnapshot? FindNearestGatheringNode(IReadOnlyCollection<ulong>? excludedObjectIds = null);
 
     /// <summary>Targets and interacts with the object. False when it is gone.</summary>
     bool InteractWithObject(ulong objectId);

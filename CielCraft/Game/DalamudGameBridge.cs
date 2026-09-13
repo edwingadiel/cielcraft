@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Linq;
 using CielCraft.Core;
 using Dalamud.Game.ClientState.Conditions;
 
@@ -42,7 +43,7 @@ public sealed class DalamudGameBridge : IGameBridge
 
     public bool IsGatheringActionInProgress => Plugin.Condition[ConditionFlag.ExecutingGatheringAction];
 
-    public GatheringNodeSnapshot? FindNearestGatheringNode()
+    public GatheringNodeSnapshot? FindNearestGatheringNode(IReadOnlyCollection<ulong>? excludedObjectIds = null)
     {
         var player = Plugin.ObjectTable.LocalPlayer;
         if (player == null)
@@ -52,6 +53,9 @@ public sealed class DalamudGameBridge : IGameBridge
         foreach (var obj in Plugin.ObjectTable)
         {
             if (obj.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.GatheringPoint || !obj.IsTargetable)
+                continue;
+
+            if (excludedObjectIds != null && excludedObjectIds.Contains(obj.GameObjectId))
                 continue;
 
             var distance = System.Numerics.Vector3.Distance(player.Position, obj.Position);

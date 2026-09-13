@@ -38,6 +38,7 @@ public sealed class Plugin : IDalamudPlugin
     public ProductionRunner ProductionRunner { get; init; }
     public INavigationProvider Navigation { get; init; }
     public Gathering.GatheringController GatheringController { get; init; }
+    public Gathering.GatheringLoop GatheringLoop { get; init; }
 
     public readonly WindowSystem WindowSystem = new("CielCraft");
     private ConfigWindow ConfigWindow { get; init; }
@@ -60,6 +61,7 @@ public sealed class Plugin : IDalamudPlugin
         ProductionRunner = new ProductionRunner(GameBridge, BatchCrafter, RecipeProvider);
         Navigation = new Navigation.VNavmeshProvider();
         GatheringController = new Gathering.GatheringController(GameBridge, Navigation);
+        GatheringLoop = new Gathering.GatheringLoop(GameBridge, GatheringController);
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);
@@ -85,6 +87,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         WindowSystem.RemoveAllWindows();
 
+        GatheringLoop.Dispose();
         GatheringController.Dispose();
         ProductionRunner.Dispose();
         BatchCrafter.Dispose();

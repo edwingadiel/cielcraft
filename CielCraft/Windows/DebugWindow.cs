@@ -68,46 +68,78 @@ public class DebugWindow : Window, IDisposable
     }
 
     private int gatherItemId;
+    private int gatherQuantity = 1;
 
     private void DrawGatherAutomation()
     {
-        ImGui.TextUnformatted("Auto-gather (Milestone 12)");
+        ImGui.TextUnformatted("Auto-gather (Milestones 12–13)");
 
         var controller = plugin.GatheringController;
+        var loop = plugin.GatheringLoop;
+        var loopActive = loop.State is Gathering.GatheringLoopState.Running or Gathering.GatheringLoopState.Paused;
+        var nodeActive = controller.State is Gathering.GatheringState.MovingToNode
+            or Gathering.GatheringState.Interacting or Gathering.GatheringState.GatheringNode
+            or Gathering.GatheringState.Paused;
 
-        switch (controller.State)
+        if (loopActive)
         {
-            case Gathering.GatheringState.MovingToNode:
-            case Gathering.GatheringState.Interacting:
-            case Gathering.GatheringState.GatheringNode:
+            if (loop.State == Gathering.GatheringLoopState.Running)
+            {
                 if (ImGui.Button("Pause##gather"))
-                    controller.Pause("paused by user");
-                ImGui.SameLine();
-                if (ImGui.Button("Stop##gather"))
-                    controller.Stop();
-                break;
+                    loop.Pause("paused by user");
+            }
+            else if (ImGui.Button("Resume##gather"))
+            {
+                loop.Resume();
+            }
 
-            case Gathering.GatheringState.Paused:
+            ImGui.SameLine();
+            if (ImGui.Button("Stop##gather"))
+                loop.Stop();
+        }
+        else if (nodeActive)
+        {
+            if (controller.State == Gathering.GatheringState.Paused)
+            {
                 if (ImGui.Button("Resume##gather"))
                     controller.Resume();
-                ImGui.SameLine();
-                if (ImGui.Button("Stop##gather"))
-                    controller.Stop();
-                break;
+            }
+            else if (ImGui.Button("Pause##gather"))
+            {
+                controller.Pause("paused by user");
+            }
 
-            default:
-                ImGui.SetNextItemWidth(120);
-                ImGui.InputInt("Item id (0 = first)", ref gatherItemId);
-                if (gatherItemId < 0)
-                    gatherItemId = 0;
+            ImGui.SameLine();
+            if (ImGui.Button("Stop##gather"))
+                controller.Stop();
+        }
+        else
+        {
+            ImGui.SetNextItemWidth(120);
+            ImGui.InputInt("Item id (0 = first)", ref gatherItemId);
+            if (gatherItemId < 0)
+                gatherItemId = 0;
 
-                if (ImGui.Button("Gather nearest node"))
-                    controller.Start((uint)gatherItemId);
-                break;
+            ImGui.SetNextItemWidth(120);
+            ImGui.InputInt("Quantity", ref gatherQuantity);
+            gatherQuantity = Math.Clamp(gatherQuantity, 1, 9999);
+
+            if (ImGui.Button("Gather nearest node"))
+                controller.Start((uint)gatherItemId);
+
+            ImGui.SameLine();
+            using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(gatherItemId == 0))
+            {
+                if (ImGui.Button($"Gather ×{gatherQuantity}"))
+                    loop.Start((uint)gatherItemId, gatherQuantity);
+            }
+
+            if (gatherItemId == 0)
+                ImGui.TextDisabled("The loop needs a specific item id (see the open-node list above).");
         }
 
-        ImGui.BulletText($"State: {controller.State}");
-        ImGui.BulletText($"Status: {controller.StatusText}");
+        ImGui.BulletText($"Loop: {loop.State} ({loop.Gathered}/{loop.TargetQuantity}) — {loop.StatusText}");
+        ImGui.BulletText($"Node run: {controller.State} — {controller.StatusText}");
     }
 
     private Vector3 navDestination;

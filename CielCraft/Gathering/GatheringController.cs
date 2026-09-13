@@ -59,8 +59,11 @@ public sealed class GatheringController : IDisposable
         Plugin.Framework.Update -= OnUpdate;
     }
 
+    /// <summary>Object id of the node this run targeted; 0 before the first run.</summary>
+    public ulong LastNodeId { get; private set; }
+
     /// <summary>Gathers the nearest node. itemId 0 = first gatherable slot.</summary>
-    public bool Start(uint itemId)
+    public bool Start(uint itemId, System.Collections.Generic.IReadOnlyCollection<ulong>? excludedNodes = null)
     {
         if (State is GatheringState.MovingToNode or GatheringState.Interacting or GatheringState.GatheringNode)
             return false;
@@ -71,7 +74,7 @@ public sealed class GatheringController : IDisposable
             return false;
         }
 
-        node = gameBridge.FindNearestGatheringNode();
+        node = gameBridge.FindNearestGatheringNode(excludedNodes);
         if (node == null)
         {
             Transition(GatheringState.Idle, "No targetable gathering node nearby.");
@@ -84,6 +87,7 @@ public sealed class GatheringController : IDisposable
             return false;
         }
 
+        LastNodeId = node.ObjectId;
         requestedItemId = itemId;
         chosenItemId = 0;
         chosenSlot = -1;
