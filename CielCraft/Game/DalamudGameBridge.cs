@@ -38,6 +38,8 @@ public sealed class DalamudGameBridge : IGameBridge
 
     public CraftSnapshot? GetCraftState() => CraftStateReader.Read();
 
+    public GatheringSnapshot? GetGatheringState() => GatheringStateReader.Read();
+
     public unsafe bool IsCraftActionReady(uint craftActionId)
     {
         var actionManager = FFXIVClientStructs.FFXIV.Client.Game.ActionManager.Instance();

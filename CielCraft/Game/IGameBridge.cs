@@ -26,6 +26,9 @@ public interface IGameBridge
     /// <summary>Null when no craft is active.</summary>
     CraftSnapshot? GetCraftState();
 
+    /// <summary>Null when no gathering node is open.</summary>
+    GatheringSnapshot? GetGatheringState();
+
     /// <summary>True when the game reports the craft action as currently usable (CP, state, availability).</summary>
     bool IsCraftActionReady(uint craftActionId);
 

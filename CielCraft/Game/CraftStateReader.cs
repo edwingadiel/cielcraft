@@ -24,7 +24,7 @@ internal static unsafe class CraftStateReader
 
         var handler = EventFramework.Instance()->GetCraftEventHandler();
 
-        var step = handler != null ? handler->StepNumber : ParseInt(addon->StepNumber);
+        var step = handler != null ? handler->StepNumber : AtkTextParser.ParseInt(addon->StepNumber);
         var condition = handler != null ? MapCondition(handler->Condition) : Core.CraftCondition.Unknown;
 
         var player = Plugin.ObjectTable.LocalPlayer;
@@ -32,43 +32,17 @@ internal static unsafe class CraftStateReader
         return new CraftSnapshot(
             RecipeLevel: handler != null ? handler->RecipeLevelTable : (ushort)0,
             Step: step,
-            Progress: ParseInt(addon->CurrentProgress),
-            MaxProgress: ParseInt(addon->MaxProgress),
-            Quality: ParseInt(addon->CurrentQuality),
-            MaxQuality: ParseInt(addon->MaxQuality),
-            Durability: ParseInt(addon->CurrentDurability),
-            MaxDurability: ParseInt(addon->StartingDurability),
+            Progress: AtkTextParser.ParseInt(addon->CurrentProgress),
+            MaxProgress: AtkTextParser.ParseInt(addon->MaxProgress),
+            Quality: AtkTextParser.ParseInt(addon->CurrentQuality),
+            MaxQuality: AtkTextParser.ParseInt(addon->MaxQuality),
+            Durability: AtkTextParser.ParseInt(addon->CurrentDurability),
+            MaxDurability: AtkTextParser.ParseInt(addon->StartingDurability),
             CurrentCp: player?.CurrentCp ?? 0,
             MaxCp: player?.MaxCp ?? 0,
             Condition: condition);
     }
 
-    private static int ParseInt(AtkTextNode* node)
-    {
-        if (node == null)
-            return 0;
-
-        var text = node->NodeText.ToString();
-        var value = 0;
-        var seenDigit = false;
-
-        foreach (var c in text)
-        {
-            if (c is >= '0' and <= '9')
-            {
-                value = value * 10 + (c - '0');
-                seenDigit = true;
-            }
-            else if (seenDigit)
-            {
-                // Stop at the first non-digit after the number so trailing
-                // annotations (e.g. "%" or a second number) are ignored.
-                break;
-            }
-        }
-
-        return value;
-    }
 
     private static Core.CraftCondition MapCondition(FFXIVClientStructs.FFXIV.Client.Game.Event.CraftCondition condition) =>
         condition switch

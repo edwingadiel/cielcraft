@@ -37,7 +37,32 @@ public class DebugWindow : Window, IDisposable
         ImGui.Separator();
         DrawCraft();
         ImGui.Separator();
+        DrawGathering();
+        ImGui.Separator();
         DrawNavigation();
+    }
+
+    private void DrawGathering()
+    {
+        ImGui.TextUnformatted("Gathering (Milestone 11)");
+
+        var gathering = gameBridge.GetGatheringState();
+        if (gathering == null)
+        {
+            ImGui.BulletText("No gathering node open.");
+            return;
+        }
+
+        ImGui.BulletText($"Integrity: {gathering.IntegrityRemaining} / {gathering.IntegrityTotal}");
+        ImGui.BulletText($"GP: {gathering.CurrentGp} / {gathering.MaxGp}");
+        ImGui.BulletText($"Items ({gathering.Items.Count}):");
+
+        foreach (var slot in gathering.Items)
+        {
+            ImGui.TextUnformatted(
+                $"    [{slot.Index}] {plugin.RecipeProvider.GetItemName(slot.ItemId)} (id {slot.ItemId})" +
+                (slot.Enabled ? "" : " — not gatherable"));
+        }
     }
 
     private Vector3 navDestination;

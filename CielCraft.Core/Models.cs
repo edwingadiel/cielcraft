@@ -31,6 +31,17 @@ public enum CraftCondition
     GoodOmen,
 }
 
+/// <summary>One selectable item slot of an open gathering node.</summary>
+public sealed record GatheringItemSlot(int Index, uint ItemId, bool Enabled);
+
+/// <summary>Live state of an open gathering node (spec §64). Null when none is open.</summary>
+public sealed record GatheringSnapshot(
+    int IntegrityRemaining,
+    int IntegrityTotal,
+    uint CurrentGp,
+    uint MaxGp,
+    IReadOnlyList<GatheringItemSlot> Items);
+
 /// <summary>Live state of the craft in progress (spec §10). Null when not crafting.</summary>
 public sealed record CraftSnapshot(
     ushort RecipeLevel,
