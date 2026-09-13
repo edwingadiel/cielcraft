@@ -229,10 +229,13 @@ public class MainWindow : Window, IDisposable
 
             default:
                 var canRun = plan != null
-                             && plan.RawMaterials.Count == 0
+                             && (plan.RawMaterials.Count == 0 || plugin.Navigation.IsAvailable)
                              && CielCraft.Raphael.RaphaelSolver.IsAvailable
                              && plugin.BatchCrafter.State is Crafting.BatchState.Idle
                                  or Crafting.BatchState.Completed or Crafting.BatchState.Failed;
+
+                if (plan is { RawMaterials.Count: > 0 })
+                    ImGui.TextDisabled("Missing raw materials will be gathered first (MIN/BTN, current zone).");
 
                 using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!canRun))
                 {

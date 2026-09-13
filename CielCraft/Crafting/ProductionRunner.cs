@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using CielCraft.Core;
 using CielCraft.Game;
 using Dalamud.Plugin.Services;
@@ -8,6 +9,8 @@ namespace CielCraft.Crafting;
 public enum ProductionState
 {
     Idle,
+    PreparingGather,
+    RunningGather,
     PreparingStep,
     RunningBatch,
     Paused,
@@ -29,9 +32,14 @@ public sealed class ProductionRunner : IDisposable
     private readonly IGameBridge gameBridge;
     private readonly BatchCrafter batchCrafter;
     private readonly DalamudRecipeProvider recipeProvider;
+    private readonly Gathering.GatheringLoop gatheringLoop;
+    private readonly GatheringDatabase gatheringDatabase;
+    private readonly INavigationProvider navigation;
 
     private ProductionPlan? plan;
     private int stepIndex;
+    private readonly List<(uint ItemId, int Amount, uint JobId)> gatherQueue = [];
+    private int gatherIndex;
     private DateTime phaseStartedAt;
     private DateTime lastAttemptAt;
     private bool gearsetRequested;
@@ -41,11 +49,20 @@ public sealed class ProductionRunner : IDisposable
     public int CompletedSteps => stepIndex;
     public int TotalSteps => plan?.CraftSteps.Count ?? 0;
 
-    public ProductionRunner(IGameBridge gameBridge, BatchCrafter batchCrafter, DalamudRecipeProvider recipeProvider)
+    public ProductionRunner(
+        IGameBridge gameBridge,
+        BatchCrafter batchCrafter,
+        DalamudRecipeProvider recipeProvider,
+        Gathering.GatheringLoop gatheringLoop,
+        GatheringDatabase gatheringDatabase,
+        INavigationProvider navigation)
     {
         this.gameBridge = gameBridge;
         this.batchCrafter = batchCrafter;
         this.recipeProvider = recipeProvider;
+        this.gatheringLoop = gatheringLoop;
+        this.gatheringDatabase = gatheringDatabase;
+        this.navigation = navigation;
 
         Plugin.Framework.Update += OnUpdate;
     }
@@ -66,12 +83,34 @@ public sealed class ProductionRunner : IDisposable
             return false;
         }
 
+        // Missing raw materials become gather tasks (spec §67) when they are
+        // gatherable and navigation is up; otherwise starting is refused.
+        gatherQueue.Clear();
+        gatherIndex = 0;
         if (productionPlan.RawMaterials.Count > 0)
         {
-            Transition(
-                ProductionState.Idle,
-                $"Cannot start: {productionPlan.RawMaterials.Count} raw material(s) missing — gather them first.");
-            return false;
+            if (!navigation.IsAvailable)
+            {
+                Transition(
+                    ProductionState.Idle,
+                    "Cannot start: raw materials are missing and vnavmesh is unavailable for gathering.");
+                return false;
+            }
+
+            foreach (var material in productionPlan.RawMaterials)
+            {
+                var job = gatheringDatabase.GetGatheringJob(material.ItemId);
+                if (job == null)
+                {
+                    Transition(
+                        ProductionState.Idle,
+                        $"Cannot start: {recipeProvider.GetItemName(material.ItemId)} ×{material.Amount} " +
+                        "is missing and not gatherable by MIN/BTN.");
+                    return false;
+                }
+
+                gatherQueue.Add((material.ItemId, material.Amount, job.Value));
+            }
         }
 
         if (gameBridge.IsCrafting)
@@ -83,7 +122,11 @@ public sealed class ProductionRunner : IDisposable
         plan = productionPlan;
         stepIndex = 0;
         EnterPreparing();
-        Transition(ProductionState.PreparingStep, StepText("Preparing"));
+
+        if (gatherQueue.Count > 0)
+            Transition(ProductionState.PreparingGather, GatherText("Preparing to gather"));
+        else
+            Transition(ProductionState.PreparingStep, StepText("Preparing"));
         return true;
     }
 
@@ -91,8 +134,11 @@ public sealed class ProductionRunner : IDisposable
     {
         if (State == ProductionState.RunningBatch)
             batchCrafter.Pause("production paused");
+        else if (State == ProductionState.RunningGather)
+            gatheringLoop.Pause("production paused");
 
-        if (State is ProductionState.PreparingStep or ProductionState.RunningBatch)
+        if (State is ProductionState.PreparingStep or ProductionState.RunningBatch
+            or ProductionState.PreparingGather or ProductionState.RunningGather)
             Transition(ProductionState.Paused, $"Paused: {reason}.");
     }
 
@@ -101,10 +147,20 @@ public sealed class ProductionRunner : IDisposable
         if (State != ProductionState.Paused)
             return;
 
-        if (batchCrafter.State == BatchState.Paused)
+        if (gatheringLoop.State == Gathering.GatheringLoopState.Paused)
+        {
+            gatheringLoop.Resume();
+            Transition(ProductionState.RunningGather, GatherText("Gathering"));
+        }
+        else if (batchCrafter.State == BatchState.Paused)
         {
             batchCrafter.Resume();
             Transition(ProductionState.RunningBatch, StepText("Crafting"));
+        }
+        else if (gatherIndex < gatherQueue.Count)
+        {
+            EnterPreparing();
+            Transition(ProductionState.PreparingGather, GatherText("Preparing to gather"));
         }
         else
         {
@@ -116,6 +172,7 @@ public sealed class ProductionRunner : IDisposable
     public void Stop()
     {
         batchCrafter.Stop();
+        gatheringLoop.Stop();
         if (State is not (ProductionState.Idle or ProductionState.Completed or ProductionState.Failed))
             Transition(ProductionState.Idle, $"Stopped by user at step {stepIndex + 1}/{TotalSteps}.");
     }
@@ -124,6 +181,12 @@ public sealed class ProductionRunner : IDisposable
     {
         switch (State)
         {
+            case ProductionState.PreparingGather:
+                TickPreparingGather();
+                break;
+            case ProductionState.RunningGather:
+                TickRunningGather();
+                break;
             case ProductionState.PreparingStep:
                 TickPreparing();
                 break;
@@ -131,6 +194,79 @@ public sealed class ProductionRunner : IDisposable
                 TickRunning();
                 break;
         }
+    }
+
+    private void TickPreparingGather()
+    {
+        var (itemId, amount, jobId) = gatherQueue[gatherIndex];
+
+        if (DateTime.UtcNow - phaseStartedAt > PrepareTimeout)
+        {
+            Fail($"could not prepare gathering for {recipeProvider.GetItemName(itemId)}" +
+                 (gearsetRequested ? " — is there a MIN/BTN gearset?" : ""));
+            return;
+        }
+
+        if (gameBridge.IsCrafting)
+            return;
+
+        if (gameBridge.CurrentClassJobId != jobId)
+        {
+            if (gameBridge.IsPreparingToCraft || gameBridge.SelectedRecipeId != 0)
+            {
+                Throttled(gameBridge.CloseRecipeNote);
+                return;
+            }
+
+            Throttled(() =>
+            {
+                gearsetRequested = true;
+                if (!gameBridge.EquipGearsetForJob(jobId))
+                    Fail($"no gearset found for gathering job {jobId}");
+            });
+            return;
+        }
+
+        if (gatheringLoop.Start(itemId, amount))
+        {
+            Plugin.Log.Information(
+                $"[Production] Gather task {gatherIndex + 1}/{gatherQueue.Count}: " +
+                $"{recipeProvider.GetItemName(itemId)} ×{amount}.");
+            Transition(ProductionState.RunningGather, GatherText("Gathering"));
+        }
+    }
+
+    private void TickRunningGather()
+    {
+        switch (gatheringLoop.State)
+        {
+            case Gathering.GatheringLoopState.Completed:
+                gatherIndex++;
+                EnterPreparing();
+                if (gatherIndex >= gatherQueue.Count)
+                    Transition(ProductionState.PreparingStep, StepText("Preparing"));
+                else
+                    Transition(ProductionState.PreparingGather, GatherText("Preparing to gather"));
+                break;
+
+            case Gathering.GatheringLoopState.Paused:
+                Transition(ProductionState.Paused, $"Paused: {gatheringLoop.StatusText}");
+                break;
+
+            case Gathering.GatheringLoopState.Failed:
+                Fail($"gathering failed ({gatheringLoop.StatusText})");
+                break;
+
+            case Gathering.GatheringLoopState.Idle:
+                Transition(ProductionState.Paused, "Paused: the gathering loop was stopped.");
+                break;
+        }
+    }
+
+    private string GatherText(string verb)
+    {
+        var (itemId, amount, _) = gatherQueue[gatherIndex];
+        return $"{verb} {gatherIndex + 1}/{gatherQueue.Count}: {recipeProvider.GetItemName(itemId)} ×{amount}.";
     }
 
     private void TickPreparing()

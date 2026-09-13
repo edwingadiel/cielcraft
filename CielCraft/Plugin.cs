@@ -30,6 +30,7 @@ public sealed class Plugin : IDalamudPlugin
     public Configuration Configuration { get; init; }
     public IGameBridge GameBridge { get; init; }
     public DalamudRecipeProvider RecipeProvider { get; init; } = new();
+    public GatheringDatabase GatheringDatabase { get; init; } = new();
     public CraftStateMonitor CraftMonitor { get; init; }
     public ActionExecutor ActionExecutor { get; init; }
     public SolverService SolverService { get; init; }
@@ -58,10 +59,11 @@ public sealed class Plugin : IDalamudPlugin
         SolverService = new SolverService(new CielCraft.Raphael.RaphaelSolver());
         CraftAutomator = new CraftAutomator(GameBridge, CraftMonitor, ActionExecutor, Configuration);
         BatchCrafter = new BatchCrafter(GameBridge, CraftMonitor, CraftAutomator, SolverService);
-        ProductionRunner = new ProductionRunner(GameBridge, BatchCrafter, RecipeProvider);
         Navigation = new Navigation.VNavmeshProvider();
         GatheringController = new Gathering.GatheringController(GameBridge, Navigation);
         GatheringLoop = new Gathering.GatheringLoop(GameBridge, GatheringController);
+        ProductionRunner = new ProductionRunner(
+            GameBridge, BatchCrafter, RecipeProvider, GatheringLoop, GatheringDatabase, Navigation);
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);
