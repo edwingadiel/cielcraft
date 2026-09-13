@@ -87,6 +87,21 @@ public sealed class BatchCrafter : IDisposable
             return false;
         }
 
+        // Inventory awareness (spec §60): refuse quantities the materials
+        // cannot cover instead of failing mid-batch.
+        if (!freshCraft)
+        {
+            var requirements = gameBridge.GetRecipeRequirements(gameBridge.SelectedRecipeId);
+            var craftable = InventoryMath.CraftableCount(requirements);
+            if (requirements.Count > 0 && craftable < quantity)
+            {
+                Transition(
+                    BatchState.Idle,
+                    $"Cannot start: materials cover only {craftable} of {quantity} crafts.");
+                return false;
+            }
+        }
+
         targetQuantity = quantity;
         CompletedCrafts = 0;
         recipeId = gameBridge.IsCrafting ? (ushort)0 : gameBridge.SelectedRecipeId;

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using CielCraft.Core;
 
 namespace CielCraft.Game;
@@ -45,4 +46,10 @@ public interface IGameBridge
 
     /// <summary>Total NQ+HQ count of the item in the player inventory.</summary>
     int GetItemCount(uint itemId);
+
+    /// <summary>
+    /// Ingredient lines of a recipe with live inventory counts; empty when the
+    /// recipe id is unknown.
+    /// </summary>
+    IReadOnlyList<IngredientRequirement> GetRecipeRequirements(ushort recipeId);
 }

@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
+using CielCraft.Core;
 using CielCraft.Game;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
@@ -26,6 +28,10 @@ public class MainWindow : Window, IDisposable
     public void Dispose() { }
 
     private int batchQuantity = 1;
+
+    private DateTime requirementsRefreshedAt = DateTime.MinValue;
+    private ushort requirementsRecipeId;
+    private IReadOnlyList<IngredientRequirement> requirements = [];
 
     public override void Draw()
     {
@@ -93,6 +99,61 @@ public class MainWindow : Window, IDisposable
 
         ImGui.TextUnformatted($"Progress: {batch.CompletedCrafts}/{batch.TargetQuantity}   State: {batch.State}");
         ImGui.TextUnformatted(batch.StatusText);
+
+        DrawMaterials();
+    }
+
+    private void DrawMaterials()
+    {
+        var recipeId = gameBridge.SelectedRecipeId;
+        if (recipeId == 0)
+        {
+            requirements = [];
+            return;
+        }
+
+        // Inventory and recipe data are stable enough to refresh once a second.
+        if (recipeId != requirementsRecipeId || DateTime.UtcNow - requirementsRefreshedAt > TimeSpan.FromSeconds(1))
+        {
+            requirements = gameBridge.GetRecipeRequirements(recipeId);
+            requirementsRecipeId = recipeId;
+            requirementsRefreshedAt = DateTime.UtcNow;
+        }
+
+        if (requirements.Count == 0)
+            return;
+
+        ImGui.Separator();
+        ImGui.TextUnformatted($"Materials (craftable now: {InventoryMath.CraftableCount(requirements)})");
+
+        if (ImGui.BeginTable("##materials", 4))
+        {
+            ImGui.TableSetupColumn("Ingredient");
+            ImGui.TableSetupColumn("Need", ImGuiTableColumnFlags.WidthFixed, 60);
+            ImGui.TableSetupColumn("Owned", ImGuiTableColumnFlags.WidthFixed, 60);
+            ImGui.TableSetupColumn("Missing", ImGuiTableColumnFlags.WidthFixed, 60);
+            ImGui.TableHeadersRow();
+
+            foreach (var requirement in requirements)
+            {
+                ImGui.TableNextRow();
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(requirement.Name);
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted($"{requirement.RequiredFor(batchQuantity)}");
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted($"{requirement.Owned}");
+                ImGui.TableNextColumn();
+
+                var missing = requirement.MissingFor(batchQuantity);
+                if (missing > 0)
+                    ImGui.TextColored(new Vector4(0.9f, 0.4f, 0.4f, 1f), $"{missing}");
+                else
+                    ImGui.TextUnformatted("0");
+            }
+
+            ImGui.EndTable();
+        }
     }
 
     private static void DrawStatus()

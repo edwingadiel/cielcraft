@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using CielCraft.Core;
 using Dalamud.Game.ClientState.Conditions;
 
@@ -117,6 +118,29 @@ public sealed class DalamudGameBridge : IGameBridge
 
         return inventory->GetInventoryItemCount(itemId, false)
                + inventory->GetInventoryItemCount(itemId, true);
+    }
+
+    public IReadOnlyList<IngredientRequirement> GetRecipeRequirements(ushort recipeId)
+    {
+        var recipes = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Recipe>();
+        if (!recipes.TryGetRow(recipeId, out var recipe))
+            return [];
+
+        var items = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>();
+        var requirements = new List<IngredientRequirement>();
+
+        for (var i = 0; i < recipe.Ingredient.Count; i++)
+        {
+            var itemId = recipe.Ingredient[i].RowId;
+            var amount = (int)recipe.AmountIngredient[i];
+            if (itemId == 0 || amount <= 0)
+                continue;
+
+            var name = items.TryGetRow(itemId, out var item) ? item.Name.ExtractText() : $"Item {itemId}";
+            requirements.Add(new IngredientRequirement(itemId, name, amount, GetItemCount(itemId)));
+        }
+
+        return requirements;
     }
 
     private static unsafe FFXIVClientStructs.FFXIV.Client.UI.AddonRecipeNote* GetRecipeNote()
