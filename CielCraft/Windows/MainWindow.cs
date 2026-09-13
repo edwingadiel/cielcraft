@@ -25,11 +25,15 @@ public class MainWindow : Window, IDisposable
 
     public void Dispose() { }
 
+    private int batchQuantity = 1;
+
     public override void Draw()
     {
         DrawStatus();
         ImGui.Separator();
         DrawCharacter();
+        ImGui.Separator();
+        DrawBatch();
         ImGui.Separator();
 
         if (ImGui.Button("Debug"))
@@ -38,6 +42,57 @@ public class MainWindow : Window, IDisposable
         ImGui.SameLine();
         if (ImGui.Button("Settings"))
             plugin.ToggleConfigUi();
+    }
+
+    private void DrawBatch()
+    {
+        ImGui.TextUnformatted("Batch craft");
+
+        var batch = plugin.BatchCrafter;
+
+        switch (batch.State)
+        {
+            case Crafting.BatchState.Solving:
+            case Crafting.BatchState.StartingCraft:
+            case Crafting.BatchState.Crafting:
+                if (ImGui.Button("Pause"))
+                    batch.Pause("paused by user");
+                ImGui.SameLine();
+                if (ImGui.Button("Stop"))
+                    batch.Stop();
+                break;
+
+            case Crafting.BatchState.Paused:
+                if (ImGui.Button("Resume"))
+                    batch.Resume();
+                ImGui.SameLine();
+                if (ImGui.Button("Stop"))
+                    batch.Stop();
+                break;
+
+            default:
+                ImGui.SetNextItemWidth(100);
+                if (ImGui.InputInt("Quantity", ref batchQuantity))
+                    batchQuantity = Math.Clamp(batchQuantity, 1, 999);
+
+                var canStart = CielCraft.Raphael.RaphaelSolver.IsAvailable
+                               && (gameBridge.IsReadyToStartCraft
+                                   || (gameBridge.IsCrafting && plugin.CraftMonitor.Current is { Step: <= 1, Quality: 0 }));
+
+                using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!canStart))
+                {
+                    if (ImGui.Button("Start batch"))
+                        batch.Start(batchQuantity);
+                }
+
+                if (!canStart)
+                    ImGui.TextDisabled("Select a recipe in the crafting log to enable.");
+
+                break;
+        }
+
+        ImGui.TextUnformatted($"Progress: {batch.CompletedCrafts}/{batch.TargetQuantity}   State: {batch.State}");
+        ImGui.TextUnformatted(batch.StatusText);
     }
 
     private static void DrawStatus()

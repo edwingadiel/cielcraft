@@ -30,4 +30,19 @@ public interface IGameBridge
 
     /// <summary>Requests execution of a craft action. True if the game accepted the request.</summary>
     bool ExecuteCraftAction(uint craftActionId);
+
+    /// <summary>True when the crafting log is open with a recipe selected and Synthesize is pressable.</summary>
+    bool IsReadyToStartCraft { get; }
+
+    /// <summary>Recipe currently selected in the crafting log; 0 when none.</summary>
+    ushort SelectedRecipeId { get; }
+
+    /// <summary>Presses Synthesize on the open crafting log. True if the request was issued.</summary>
+    bool StartSynthesis();
+
+    /// <summary>Result item id and per-craft yield of the active craft; null when not crafting.</summary>
+    (uint ItemId, int Amount)? CurrentCraftResult { get; }
+
+    /// <summary>Total NQ+HQ count of the item in the player inventory.</summary>
+    int GetItemCount(uint itemId);
 }

@@ -62,6 +62,72 @@ public sealed class DalamudGameBridge : IGameBridge
             ? FFXIVClientStructs.FFXIV.Client.Game.ActionType.CraftAction
             : FFXIVClientStructs.FFXIV.Client.Game.ActionType.Action;
 
+    public unsafe bool IsReadyToStartCraft
+    {
+        get
+        {
+            var addon = GetRecipeNote();
+            return addon != null
+                   && SelectedRecipeId != 0
+                   && addon->SynthesizeButton != null
+                   && addon->SynthesizeButton->IsEnabled;
+        }
+    }
+
+    public unsafe ushort SelectedRecipeId
+    {
+        get
+        {
+            var recipeNote = FFXIVClientStructs.FFXIV.Client.Game.UI.RecipeNote.Instance();
+            return recipeNote != null ? recipeNote->ActiveCraftRecipeId : (ushort)0;
+        }
+    }
+
+    public unsafe bool StartSynthesis()
+    {
+        if (!IsReadyToStartCraft)
+            return false;
+
+        // Callback value 8 is the crafting log's Synthesize command.
+        var addon = GetRecipeNote();
+        addon->AtkUnitBase.FireCallbackInt(8);
+        return true;
+    }
+
+    public unsafe (uint ItemId, int Amount)? CurrentCraftResult
+    {
+        get
+        {
+            if (!IsCrafting)
+                return null;
+
+            var handler = FFXIVClientStructs.FFXIV.Client.Game.Event.EventFramework.Instance()->GetCraftEventHandler();
+            if (handler == null || handler->ItemResult <= 0)
+                return null;
+
+            return ((uint)handler->ItemResult, handler->AmountResult);
+        }
+    }
+
+    public unsafe int GetItemCount(uint itemId)
+    {
+        var inventory = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+        if (inventory == null)
+            return 0;
+
+        return inventory->GetInventoryItemCount(itemId, false)
+               + inventory->GetInventoryItemCount(itemId, true);
+    }
+
+    private static unsafe FFXIVClientStructs.FFXIV.Client.UI.AddonRecipeNote* GetRecipeNote()
+    {
+        var ptr = Plugin.GameGui.GetAddonByName("RecipeNote");
+        if (ptr.IsNull || !ptr.IsVisible)
+            return null;
+
+        return (FFXIVClientStructs.FFXIV.Client.UI.AddonRecipeNote*)ptr.Address;
+    }
+
     private static unsafe uint GetAttribute(int baseParamId)
     {
         var playerState = FFXIVClientStructs.FFXIV.Client.Game.UI.PlayerState.Instance();
