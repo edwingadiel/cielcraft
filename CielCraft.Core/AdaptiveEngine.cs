@@ -34,6 +34,23 @@ public static class AdaptiveEngine
         var target = targetQuality > 0 ? Math.Min(targetQuality, state.MaxQuality) : state.MaxQuality;
         var qualityCapped = state.Quality >= target;
 
+        // Rule 0: Excellent is always followed by Poor, and Poor halves quality
+        // gains. When the planned action on a Poor step is a quality action,
+        // spend the step on Observe so it lands on a Normal step instead — but
+        // only when CP and durability can absorb the extra step, since every
+        // buff window shifts by one.
+        if (state.Condition == CraftCondition.Poor
+            && !qualityCapped
+            && remainingPlan.Count > 0
+            && CraftActionData.AffectsQuality(remainingPlan[0])
+            && CanAffordObserve(state, remainingPlan))
+        {
+            return new AdaptiveDecision(
+                CraftActionData.Observe,
+                ConsumeFromPlan: 0,
+                "Poor condition — observing so the planned quality action lands on a normal step");
+        }
+
         if (!qualityCapped || baseProgress <= 0)
             return FollowPlan(remainingPlan);
 
@@ -82,6 +99,56 @@ public static class AdaptiveEngine
             state.Durability,
             veneration: state.HasBuff(CraftBuffIds.Veneration),
             muscleMemory: state.HasBuff(CraftBuffIds.MuscleMemory));
+
+    /// <summary>
+    /// The rest of the plan still fits after inserting an Observe step: CP for
+    /// everything including Observe, and durability walked action by action
+    /// with Waste Not halving costs and Manipulation restoring 5 per step for
+    /// as long as they last (Trained Perfection is ignored, which only makes
+    /// the check stricter).
+    /// </summary>
+    private static bool CanAffordObserve(CraftSnapshot state, IReadOnlyList<uint> remainingPlan)
+    {
+        var cpNeeded = CraftActionData.CpCost(CraftActionData.Observe);
+        foreach (var action in remainingPlan)
+            cpNeeded += CraftActionData.CpCost(action);
+        if (state.CurrentCp < cpNeeded)
+            return false;
+
+        var durability = state.Durability;
+        var wasteNot = Math.Max(
+            state.FindBuff(CraftBuffIds.WasteNot)?.RemainingSteps ?? 0,
+            state.FindBuff(CraftBuffIds.WasteNot2)?.RemainingSteps ?? 0);
+        var manipulation = state.FindBuff(CraftBuffIds.Manipulation)?.RemainingSteps ?? 0;
+
+        StepDurability(ref durability, ref wasteNot, ref manipulation, cost: 0, state.MaxDurability); // Observe
+
+        foreach (var action in remainingPlan)
+        {
+            if (durability <= 0)
+                return false;
+
+            var cost = CraftActionData.DurabilityCost(action);
+            if (wasteNot > 0)
+                cost /= 2;
+            StepDurability(ref durability, ref wasteNot, ref manipulation, cost, state.MaxDurability);
+        }
+
+        return true;
+    }
+
+    private static void StepDurability(ref int durability, ref int wasteNot, ref int manipulation, int cost, int maxDurability)
+    {
+        durability -= cost;
+        if (wasteNot > 0)
+            wasteNot--;
+        if (manipulation > 0)
+        {
+            manipulation--;
+            if (durability > 0)
+                durability = Math.Min(durability + 5, maxDurability);
+        }
+    }
 
     private static AdaptiveDecision? FollowPlan(IReadOnlyList<uint> remainingPlan) =>
         remainingPlan.Count > 0 ? new AdaptiveDecision(remainingPlan[0], 1, null) : null;

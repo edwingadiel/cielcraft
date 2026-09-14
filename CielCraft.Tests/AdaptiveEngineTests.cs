@@ -153,4 +153,77 @@ public class AdaptiveEngineTests
         Assert.Equal(600, action.ProgressGain(BaseProgress, Level, 40, muscleMemory: true));
         Assert.Equal(750, action.ProgressGain(BaseProgress, Level, 40, veneration: true, muscleMemory: true));
     }
+
+    private const uint Observe = 100010;
+
+    [Fact]
+    public void ObservesOnPoorWhenTheNextQualityActionStillFitsAfterwards()
+    {
+        var decision = AdaptiveEngine.Decide(
+            Snapshot(progress: 0, quality: 500, durability: 40, cp: 300, condition: CraftCondition.Poor),
+            [PreparatoryTouch, ByregotsBlessing, CarefulSynthesis],
+            BaseProgress, Level);
+
+        Assert.NotNull(decision);
+        Assert.Equal(Observe, decision.ActionId);
+        Assert.Equal(0, decision.ConsumeFromPlan);
+        Assert.NotNull(decision.DeviationReason);
+    }
+
+    [Fact]
+    public void FollowsPlanOnPoorWhenDurabilityCannotAbsorbAnExtraStep()
+    {
+        // 30 durability: Preparatory (20) + Byregot (10) leaves nothing for Careful Synthesis.
+        var decision = AdaptiveEngine.Decide(
+            Snapshot(progress: 0, quality: 500, durability: 30, cp: 300, condition: CraftCondition.Poor),
+            [PreparatoryTouch, ByregotsBlessing, CarefulSynthesis],
+            BaseProgress, Level);
+
+        Assert.NotNull(decision);
+        Assert.Equal(PreparatoryTouch, decision.ActionId);
+    }
+
+    [Fact]
+    public void FollowsPlanOnPoorWhenCpCannotCoverObserve()
+    {
+        // Plan needs 40 + 24 + 7 = 71 CP; Observe would make it 78.
+        var decision = AdaptiveEngine.Decide(
+            Snapshot(progress: 0, quality: 500, durability: 40, cp: 75, condition: CraftCondition.Poor),
+            [PreparatoryTouch, ByregotsBlessing, CarefulSynthesis],
+            BaseProgress, Level);
+
+        Assert.NotNull(decision);
+        Assert.Equal(PreparatoryTouch, decision.ActionId);
+    }
+
+    [Fact]
+    public void FollowsPlanOnPoorWhenTheNextActionDoesNotTouchQuality()
+    {
+        var decision = AdaptiveEngine.Decide(
+            Snapshot(progress: 0, quality: 500, condition: CraftCondition.Poor),
+            [Veneration, PreparatoryTouch],
+            BaseProgress, Level);
+
+        Assert.NotNull(decision);
+        Assert.Equal(Veneration, decision.ActionId);
+    }
+
+    [Fact]
+    public void ManipulationAndWasteNotCountTowardDurabilityWhenObserving()
+    {
+        // 25 durability would not cover Preparatory (20) + Byregot (10) + Careful (10),
+        // but Waste Not halves the costs and Manipulation gives 5 back per step.
+        var snapshot = Snapshot(progress: 0, quality: 500, durability: 25, cp: 300, condition: CraftCondition.Poor) with
+        {
+            Buffs = [new CraftBuff(CraftBuffIds.WasteNot2, 0, 6), new CraftBuff(CraftBuffIds.Manipulation, 0, 6)],
+        };
+
+        var decision = AdaptiveEngine.Decide(
+            snapshot,
+            [PreparatoryTouch, ByregotsBlessing, CarefulSynthesis],
+            BaseProgress, Level);
+
+        Assert.NotNull(decision);
+        Assert.Equal(Observe, decision.ActionId);
+    }
 }

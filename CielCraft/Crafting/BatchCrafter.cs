@@ -496,8 +496,12 @@ public sealed class BatchCrafter : IDisposable
                 return;
             }
 
-            // Maintenance may have closed the crafting log; reopen our recipe.
-            if (!gameBridge.IsReadyToStartCraft && recipeId != 0
+            // Maintenance may have closed the crafting log; reopen our recipe —
+            // but only when the window is actually gone. Right after a craft the
+            // log is briefly "not ready" while it reopens on its own, and
+            // reopening it through the agent drops the crafting stance and
+            // re-enters it, which looks nothing like a person crafting again.
+            if (!gameBridge.IsAddonVisible("RecipeNote") && recipeId != 0
                 && DateTime.UtcNow - lastRecipeOpenAttempt > TimeSpan.FromSeconds(2))
             {
                 lastRecipeOpenAttempt = DateTime.UtcNow;

@@ -31,4 +31,10 @@ public interface INavigationProvider
     /// area whose height is unknown); null when none is found.
     /// </summary>
     Vector3? FindNearestMeshPoint(Vector3 approximate, float halfExtentXZ, float halfExtentY);
+
+    /// <summary>
+    /// A walkable floor point near the position (a flight can end there and
+    /// the character can dismount); null when none is found.
+    /// </summary>
+    Vector3? FindPointOnFloor(Vector3 near, float halfExtentXZ);
 }

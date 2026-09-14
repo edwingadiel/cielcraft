@@ -19,6 +19,7 @@ public sealed class VNavmeshProvider : INavigationProvider
     private readonly ICallGateSubscriber<bool> pathIsRunning;
     private readonly ICallGateSubscriber<object> pathStop;
     private readonly ICallGateSubscriber<Vector3, float, float, Vector3?> nearestPoint;
+    private readonly ICallGateSubscriber<Vector3, bool, float, Vector3?> pointOnFloor;
 
     public VNavmeshProvider()
     {
@@ -30,6 +31,7 @@ public sealed class VNavmeshProvider : INavigationProvider
         pathIsRunning = ipc.GetIpcSubscriber<bool>("vnavmesh.Path.IsRunning");
         pathStop = ipc.GetIpcSubscriber<object>("vnavmesh.Path.Stop");
         nearestPoint = ipc.GetIpcSubscriber<Vector3, float, float, Vector3?>("vnavmesh.Query.Mesh.NearestPoint");
+        pointOnFloor = ipc.GetIpcSubscriber<Vector3, bool, float, Vector3?>("vnavmesh.Query.Mesh.PointOnFloor");
     }
 
     public bool IsAvailable => Plugin.IsVNavmeshAvailable && Try(() => { navIsReady.InvokeFunc(); return true; });
@@ -67,6 +69,19 @@ public sealed class VNavmeshProvider : INavigationProvider
         try
         {
             return nearestPoint.InvokeFunc(approximate, halfExtentXZ, halfExtentY);
+        }
+        catch (Exception)
+        {
+            return null;
+        }
+    }
+
+    public Vector3? FindPointOnFloor(Vector3 near, float halfExtentXZ)
+    {
+        try
+        {
+            // allowUnlandable: false — we want somewhere the mount can actually set down.
+            return pointOnFloor.InvokeFunc(near, false, halfExtentXZ);
         }
         catch (Exception)
         {
