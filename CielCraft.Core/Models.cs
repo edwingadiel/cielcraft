@@ -72,6 +72,16 @@ public static class CraftBuffIds
     ];
 }
 
+/// <summary>Live state of an open collectable gathering window. Null when none.</summary>
+public sealed record CollectableGatheringSnapshot(
+    int Collectability,
+    int CollectabilityMax,
+    int IntegrityRemaining,
+    int IntegrityTotal,
+    int LowThreshold,
+    int MidThreshold,
+    int HighThreshold);
+
 /// <summary>Live state of the craft in progress (spec §10). Null when not crafting.</summary>
 public sealed record CraftSnapshot(
     ushort RecipeLevel,
@@ -87,6 +97,9 @@ public sealed record CraftSnapshot(
     CraftCondition Condition)
 {
     public IReadOnlyList<CraftBuff> Buffs { get; init; } = [];
+
+    /// <summary>Minimum quality for collectable recipes; 0 otherwise.</summary>
+    public int RequiredQuality { get; init; }
 
     public bool HasBuff(uint statusId)
     {

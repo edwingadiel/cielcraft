@@ -45,6 +45,7 @@ internal static unsafe class CraftStateReader
             Condition: condition)
         {
             Buffs = ReadBuffs(),
+            RequiredQuality = handler != null ? (int)handler->RequiredQuality : 0,
         };
     }
 

@@ -11,6 +11,7 @@ public enum GatheringState
     MovingToNode,
     Interacting,
     GatheringNode,
+    CollectableNode,
     Paused,
     Completed,
     Failed,
@@ -74,7 +75,8 @@ public sealed class GatheringController : IDisposable
     /// <summary>Gathers the nearest node. itemId 0 = first gatherable slot; needed caps GP spending decisions.</summary>
     public bool Start(uint itemId, System.Collections.Generic.IReadOnlyCollection<ulong>? excludedNodes = null, int needed = int.MaxValue)
     {
-        if (State is GatheringState.MovingToNode or GatheringState.Interacting or GatheringState.GatheringNode)
+        if (State is GatheringState.MovingToNode or GatheringState.Interacting
+            or GatheringState.GatheringNode or GatheringState.CollectableNode)
             return false;
 
         if (gameBridge.IsCrafting)
@@ -99,6 +101,8 @@ public sealed class GatheringController : IDisposable
         LastNodeId = node.ObjectId;
         requestedItemId = itemId;
         neededCount = needed;
+        collectablesTaken = 0;
+        pendingCollectAction = null;
         yieldBuffUsed = false;
         buffsBroken = false;
         pendingBuff = null;
@@ -118,7 +122,8 @@ public sealed class GatheringController : IDisposable
 
     public void Pause(string reason)
     {
-        if (State is GatheringState.MovingToNode or GatheringState.Interacting or GatheringState.GatheringNode)
+        if (State is GatheringState.MovingToNode or GatheringState.Interacting
+            or GatheringState.GatheringNode or GatheringState.CollectableNode)
         {
             navigation.Stop();
             Transition(GatheringState.Paused, $"Paused: {reason}.");
@@ -158,7 +163,90 @@ public sealed class GatheringController : IDisposable
             case GatheringState.GatheringNode:
                 TickGathering();
                 break;
+            case GatheringState.CollectableNode:
+                TickCollectable();
+                break;
         }
+    }
+
+    private (int Collectability, int Integrity, DateTime At)? pendingCollectAction;
+    private int collectablesTaken;
+
+    /// <summary>
+    /// Collectable node rotation (roadmap 4.3): Meticulous until the highest
+    /// reachable threshold, Collect when reached — or on the last attempt at
+    /// any threshold. Observed transitions: collectability change for
+    /// appraisals, integrity drop for Collect.
+    /// </summary>
+    private void TickCollectable()
+    {
+        var snap = gameBridge.GetCollectableGatheringState();
+        if (snap == null)
+        {
+            // Back to the item window (more attempts) or the node closed.
+            if (gameBridge.GetGatheringState() != null)
+            {
+                pendingCollectAction = null;
+                EnterPhase(GatheringState.GatheringNode, "Collectable window closed; node still open.");
+            }
+            else
+            {
+                FinishNode();
+            }
+
+            return;
+        }
+
+        if (pendingCollectAction is { } pending)
+        {
+            if (snap.Collectability != pending.Collectability || snap.IntegrityRemaining < pending.Integrity)
+            {
+                if (snap.IntegrityRemaining < pending.Integrity)
+                    collectablesTaken++;
+
+                pendingCollectAction = null;
+                StatusText = $"Collectable: {snap.Collectability}/{snap.CollectabilityMax}, " +
+                             $"integrity {snap.IntegrityRemaining}/{snap.IntegrityTotal}, taken {collectablesTaken}.";
+            }
+            else if (DateTime.UtcNow - pending.At > SwingTimeout)
+            {
+                Pause("collectable action did not resolve in time");
+            }
+
+            return;
+        }
+
+        if (gameBridge.IsGatheringActionInProgress)
+            return;
+
+        var jobId = gameBridge.GetPlayerState()?.ClassJobId ?? 0;
+        if (jobId is not (Core.GatheringActions.MinerJobId or Core.GatheringActions.BotanistJobId))
+        {
+            Fail("not on a gathering job at a collectable node");
+            return;
+        }
+
+        // Highest defined threshold is the goal; settle for any reached
+        // threshold on the final attempt rather than wasting it.
+        var goal = snap.HighThreshold > 0 ? snap.HighThreshold
+            : snap.MidThreshold > 0 ? snap.MidThreshold
+            : snap.LowThreshold;
+        var minimum = snap.LowThreshold > 0 ? snap.LowThreshold : goal;
+
+        var shouldCollect = snap.Collectability >= goal
+                            || (snap.IntegrityRemaining <= 1 && snap.Collectability >= minimum);
+
+        var actionId = shouldCollect
+            ? Core.GatheringActions.Collect(jobId)
+            : Core.GatheringActions.Meticulous(jobId);
+
+        Throttled(() =>
+        {
+            if (gameBridge.IsCraftActionReady(actionId) && gameBridge.ExecuteCraftAction(actionId))
+                pendingCollectAction = (snap.Collectability, snap.IntegrityRemaining, DateTime.UtcNow);
+            else if (!shouldCollect)
+                Pause("the appraisal action is not usable (GP or level)");
+        });
     }
 
     private void TickMoving()
@@ -239,6 +327,13 @@ public sealed class GatheringController : IDisposable
 
     private void TickGathering()
     {
+        if (gameBridge.GetCollectableGatheringState() != null)
+        {
+            pendingCollectAction = null;
+            EnterPhase(GatheringState.CollectableNode, "Collectable window open; appraising.");
+            return;
+        }
+
         var gathering = gameBridge.GetGatheringState();
 
         if (gathering == null)
@@ -417,6 +512,8 @@ public sealed class GatheringController : IDisposable
         var gained = gameBridge.GetItemCount(chosenItemId) - baselineCount;
         if (gained > 0)
             Transition(GatheringState.Completed, $"Completed: +{gained} of item {chosenItemId} in {gatherSwings} swings.");
+        else if (collectablesTaken > 0)
+            Transition(GatheringState.Completed, $"Completed: {collectablesTaken} collectable(s) taken.");
         else
             Fail($"node finished but inventory did not increase (swings: {gatherSwings})");
     }

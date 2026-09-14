@@ -11,12 +11,42 @@ public sealed class DalamudRecipeProvider : IRecipeProvider
 {
     private readonly Dictionary<uint, RecipeInfo?> byRecipeId = new();
     private readonly Dictionary<uint, string> names = new();
-    private Dictionary<uint, uint>? itemToRecipeId;
+    private Dictionary<uint, List<uint>>? itemToRecipeIds;
+    private readonly Func<uint> currentJob;
+    private readonly Func<uint, bool> hasGearsetForJob;
+
+    public DalamudRecipeProvider(Func<uint>? currentJobProvider = null, Func<uint, bool>? gearsetLookup = null)
+    {
+        currentJob = currentJobProvider ?? (() => 0);
+        hasGearsetForJob = gearsetLookup ?? (_ => false);
+    }
 
     public RecipeInfo? FindRecipeForItem(uint itemId)
     {
         EnsureIndex();
-        return itemToRecipeId!.TryGetValue(itemId, out var recipeId) ? GetRecipeById(recipeId) : null;
+        if (!itemToRecipeIds!.TryGetValue(itemId, out var recipeIds))
+            return null;
+
+        // Multi-job items (roadmap 4.5): prefer the current job, then a job
+        // with a gearset, then the lowest recipe id.
+        RecipeInfo? best = null;
+        var bestRank = int.MaxValue;
+        var job = currentJob();
+        foreach (var recipeId in recipeIds)
+        {
+            var info = GetRecipeById(recipeId);
+            if (info == null)
+                continue;
+
+            var rank = info.ClassJobId == job ? 0 : hasGearsetForJob(info.ClassJobId) ? 1 : 2;
+            if (rank < bestRank)
+            {
+                best = info;
+                bestRank = rank;
+            }
+        }
+
+        return best;
     }
 
     public RecipeInfo? GetRecipeById(uint recipeId)
@@ -42,7 +72,9 @@ public sealed class DalamudRecipeProvider : IRecipeProvider
                 row.ItemResult.RowId,
                 Math.Max((int)row.AmountResult, 1),
                 ingredients,
-                ClassJobId: row.CraftType.RowId + 8);
+                ClassJobId: row.CraftType.RowId + 8,
+                IsExpert: row.IsExpert,
+                RequiredQuality: row.RequiredQuality);
         }
 
         byRecipeId[recipeId] = info;
@@ -71,8 +103,9 @@ public sealed class DalamudRecipeProvider : IRecipeProvider
             return [];
 
         var results = new List<(uint RecipeId, uint ItemId, string Name)>();
-        foreach (var (itemId, recipeId) in itemToRecipeId!)
+        foreach (var (itemId, recipeIds) in itemToRecipeIds!)
         {
+            var recipeId = recipeIds[0];
             var name = GetItemName(itemId);
             if (!name.Contains(needle, StringComparison.OrdinalIgnoreCase))
                 continue;
@@ -96,18 +129,23 @@ public sealed class DalamudRecipeProvider : IRecipeProvider
         return results.Count > maxResults ? results.GetRange(0, maxResults) : results;
     }
 
-    /// <summary>Item-to-recipe index, built once; the lowest recipe id wins for multi-recipe items.</summary>
+    /// <summary>Item-to-recipe index, built once; all recipes per item are kept.</summary>
     private void EnsureIndex()
     {
-        if (itemToRecipeId != null)
+        if (itemToRecipeIds != null)
             return;
 
-        itemToRecipeId = new Dictionary<uint, uint>();
+        itemToRecipeIds = new Dictionary<uint, List<uint>>();
         foreach (var row in Plugin.DataManager.GetExcelSheet<Recipe>())
         {
             var resultId = row.ItemResult.RowId;
-            if (resultId != 0 && !itemToRecipeId.ContainsKey(resultId))
-                itemToRecipeId[resultId] = row.RowId;
+            if (resultId == 0)
+                continue;
+
+            if (!itemToRecipeIds.TryGetValue(resultId, out var list))
+                itemToRecipeIds[resultId] = list = [];
+
+            list.Add(row.RowId);
         }
     }
 }

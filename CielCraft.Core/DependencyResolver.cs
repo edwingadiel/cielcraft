@@ -6,7 +6,9 @@ public sealed record RecipeInfo(
     uint ResultItemId,
     int ResultAmount,
     IReadOnlyList<(uint ItemId, int Amount)> Ingredients,
-    uint ClassJobId = 0);
+    uint ClassJobId = 0,
+    bool IsExpert = false,
+    uint RequiredQuality = 0);
 
 /// <summary>Recipe lookup boundary (spec §6): game data in the plugin, fakes in tests.</summary>
 public interface IRecipeProvider

@@ -21,4 +21,10 @@ public static class GatheringActions
 
     /// <summary>Cordial item ids, strongest first (Hi-Cordial, Cordial, Watered Cordial).</summary>
     public static readonly uint[] Cordials = [12669, 6141, 16911];
+
+    /// <summary>Meticulous Prospecting / Brazen Woodsman family: the reliable collectability action.</summary>
+    public static uint Meticulous(uint jobId) => jobId == MinerJobId ? 22184u : 22188u;
+
+    /// <summary>Collect (takes the collectable at its current rating).</summary>
+    public static uint Collect(uint jobId) => jobId == MinerJobId ? 240u : 815u;
 }

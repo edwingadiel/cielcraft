@@ -329,12 +329,14 @@ public sealed class BatchCrafter : IDisposable
             var heartAndSoul = IsSpecialistActionReady(100419, jobId);
             var quickInnovation = IsSpecialistActionReady(100459, jobId);
 
+            var recipeInfo = recipeId != 0 ? recipeProvider.GetRecipeById(recipeId) : null;
+
             var setup = new CraftSetup(
                 RecipeLevel: craft.RecipeLevel,
                 MaxProgress: (ushort)craft.MaxProgress,
                 MaxQuality: (ushort)craft.MaxQuality,
                 MaxDurability: (ushort)craft.MaxDurability,
-                IsExpert: false,
+                IsExpert: recipeInfo?.IsExpert ?? false,
                 Craftsmanship: (ushort)player.Craftsmanship,
                 Control: (ushort)player.Control,
                 Cp: (ushort)player.MaxCp,
@@ -344,8 +346,10 @@ public sealed class BatchCrafter : IDisposable
                 QuickInnovation: quickInnovation);
 
             solvedSetup = setup;
+            // Collectables (roadmap 4.1): never solve below the recipe's
+            // required quality.
             solveTargetQuality = Math.Max(
-                (int)craft.Quality,
+                Math.Max((int)craft.Quality, craft.RequiredQuality),
                 craft.MaxQuality * Math.Clamp(configuration.TargetQualityPercent, 1, 100) / 100);
 
             if (midSolve)

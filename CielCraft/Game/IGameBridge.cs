@@ -123,4 +123,13 @@ public interface IGameBridge
 
     /// <summary>Toggles quick gathering off on the open node.</summary>
     void DisableQuickGathering();
+
+    /// <summary>Live state of the collectable gathering window; null when closed.</summary>
+    CollectableGatheringSnapshot? GetCollectableGatheringState();
+
+    /// <summary>A gearset exists for the job.</summary>
+    bool HasGearsetForJob(uint classJobId);
+
+    /// <summary>Item count across saddlebags and cached retainer pages (read-only awareness).</summary>
+    int GetStoredItemCount(uint itemId);
 }

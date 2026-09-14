@@ -30,7 +30,7 @@ public sealed class Plugin : IDalamudPlugin
 
     public Configuration Configuration { get; init; }
     public IGameBridge GameBridge { get; init; }
-    public DalamudRecipeProvider RecipeProvider { get; init; } = new();
+    public DalamudRecipeProvider RecipeProvider { get; init; }
     public GatheringDatabase GatheringDatabase { get; init; } = new();
     public CraftStateMonitor CraftMonitor { get; init; }
     public ActionExecutor ActionExecutor { get; init; }
@@ -55,6 +55,8 @@ public sealed class Plugin : IDalamudPlugin
     {
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         GameBridge = new DalamudGameBridge();
+        RecipeProvider = new DalamudRecipeProvider(
+            () => GameBridge.CurrentClassJobId, jobId => GameBridge.HasGearsetForJob(jobId));
         CraftMonitor = new CraftStateMonitor(GameBridge);
         ActionExecutor = new ActionExecutor(GameBridge, CraftMonitor);
         SolverService = new SolverService(new CielCraft.Raphael.RaphaelSolver());

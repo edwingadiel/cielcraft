@@ -80,7 +80,7 @@ public class DebugWindow : Window, IDisposable
         var loopActive = loop.State is Gathering.GatheringLoopState.Running or Gathering.GatheringLoopState.Paused;
         var nodeActive = controller.State is Gathering.GatheringState.MovingToNode
             or Gathering.GatheringState.Interacting or Gathering.GatheringState.GatheringNode
-            or Gathering.GatheringState.Paused;
+            or Gathering.GatheringState.CollectableNode or Gathering.GatheringState.Paused;
 
         if (loopActive)
         {

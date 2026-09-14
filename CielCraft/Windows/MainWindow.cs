@@ -38,6 +38,7 @@ public class MainWindow : Window, IDisposable
     private DateTime requirementsRefreshedAt = DateTime.MinValue;
     private ushort requirementsRecipeId;
     private IReadOnlyList<IngredientRequirement> requirements = [];
+    private readonly Dictionary<uint, int> storedCounts = new();
 
     public override void Draw()
     {
@@ -158,6 +159,14 @@ public class MainWindow : Window, IDisposable
         if (recipeId != requirementsRecipeId || DateTime.UtcNow - requirementsRefreshedAt > TimeSpan.FromSeconds(1))
         {
             requirements = gameBridge.GetRecipeRequirements(recipeId);
+            storedCounts.Clear();
+            foreach (var requirement in requirements)
+            {
+                var stored = gameBridge.GetStoredItemCount(requirement.ItemId);
+                if (stored > 0)
+                    storedCounts[requirement.ItemId] = stored;
+            }
+
             requirementsRecipeId = recipeId;
             requirementsRefreshedAt = DateTime.UtcNow;
         }
@@ -184,7 +193,9 @@ public class MainWindow : Window, IDisposable
                 ImGui.TableNextColumn();
                 ImGui.TextUnformatted($"{requirement.RequiredFor(batchQuantity)}");
                 ImGui.TableNextColumn();
-                ImGui.TextUnformatted($"{requirement.Owned}");
+                ImGui.TextUnformatted(storedCounts.TryGetValue(requirement.ItemId, out var stored)
+                    ? $"{requirement.Owned} (+{stored})"
+                    : $"{requirement.Owned}");
                 ImGui.TableNextColumn();
 
                 var missing = requirement.MissingFor(batchQuantity);

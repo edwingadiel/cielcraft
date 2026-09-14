@@ -143,6 +143,7 @@ public sealed class GatheringLoop : IDisposable
             case GatheringState.MovingToNode:
             case GatheringState.Interacting:
             case GatheringState.GatheringNode:
+            case GatheringState.CollectableNode:
                 return; // a node run is in progress
 
             case GatheringState.Paused:

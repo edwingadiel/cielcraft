@@ -394,6 +394,88 @@ public sealed class DalamudGameBridge : IGameBridge
         addon->AtkUnitBase.ReceiveEvent(evt->State.EventType, (int)evt->Param, evt, &data);
     }
 
+    public unsafe CollectableGatheringSnapshot? GetCollectableGatheringState()
+    {
+        var ptr = Plugin.GameGui.GetAddonByName("GatheringMasterpiece");
+        if (ptr.IsNull || !ptr.IsVisible)
+            return null;
+
+        var addon = (FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)ptr.Address;
+        return new CollectableGatheringSnapshot(
+            Collectability: ReadAtkInt(addon, 13),
+            CollectabilityMax: ReadAtkInt(addon, 14),
+            IntegrityRemaining: ReadAtkInt(addon, 62),
+            IntegrityTotal: ReadAtkInt(addon, 63),
+            LowThreshold: ReadAtkInt(addon, 65),
+            MidThreshold: ReadAtkInt(addon, 66),
+            HighThreshold: ReadAtkInt(addon, 67));
+    }
+
+    private static unsafe int ReadAtkInt(FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase* addon, int index)
+    {
+        if (index >= addon->AtkValuesCount)
+            return 0;
+
+        var value = addon->AtkValues[index];
+        return value.Type switch
+        {
+            FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int => value.Int,
+            FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.UInt => (int)value.UInt,
+            _ => 0,
+        };
+    }
+
+    public unsafe bool HasGearsetForJob(uint classJobId)
+    {
+        var module = FFXIVClientStructs.FFXIV.Client.UI.Misc.RaptureGearsetModule.Instance();
+        if (module == null)
+            return false;
+
+        for (var i = 0; i < 100; i++)
+        {
+            if (!module->IsValidGearset(i))
+                continue;
+
+            var gearset = module->GetGearset(i);
+            if (gearset != null && gearset->ClassJob == classJobId)
+                return true;
+        }
+
+        return false;
+    }
+
+    public unsafe int GetStoredItemCount(uint itemId)
+    {
+        var inventory = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+        if (inventory == null)
+            return 0;
+
+        FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] containers =
+        [
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.SaddleBag1,
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.SaddleBag2,
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.PremiumSaddleBag1,
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.PremiumSaddleBag2,
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage1,
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage2,
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage3,
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage4,
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage5,
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage6,
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage7,
+        ];
+
+        var total = 0;
+        foreach (var container in containers)
+        {
+            // Unvisited containers are simply not loaded and count as zero.
+            total += inventory->GetItemCountInContainer(itemId, container, false);
+            total += inventory->GetItemCountInContainer(itemId, container, true);
+        }
+
+        return total;
+    }
+
     private static unsafe FFXIVClientStructs.FFXIV.Client.UI.AddonGathering* GetGatheringAddon()
     {
         var ptr = Plugin.GameGui.GetAddonByName("Gathering");

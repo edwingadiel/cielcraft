@@ -44,11 +44,11 @@ This tracks the remaining work toward 1.0. Sizes: S / M / L.
 
 ## Phase 4 — Advanced content
 
-- [ ] 4.1 Collectable crafting (M)
-- [ ] 4.2 Expert recipes (M, after 3.2)
-- [ ] 4.3 Collectable gathering (M)
-- [ ] 4.4 Retainer/saddlebag inventory awareness, read-only first (spec §22) (M)
-- [ ] 4.5 Multi-recipe/job choice per item (S)
+- [x] 4.1 Collectable crafting (M)
+- [x] 4.2 Expert recipes (M, after 3.2)
+- [x] 4.3 Collectable gathering (M)
+- [x] 4.4 Retainer/saddlebag inventory awareness, read-only first (spec §22) (M)
+- [x] 4.5 Multi-recipe/job choice per item (S)
 - [ ] 4.6 Zones without aetherytes (travel graph) (L, low priority)
 
 ## Phase 5 — Engineering health
