@@ -24,11 +24,11 @@ This tracks the remaining work toward 1.0. Sizes: S / M / L.
 
 ## Phase 2 — Smarter gathering (spec §37)
 
-- [ ] 2.1 GP yield/boon/+attempt actions (King's Yield, Blessed Harvest, Solid Reason,
+- [x] 2.1 GP yield/boon/+attempt actions (King's Yield, Blessed Harvest, Solid Reason,
   Ageless Words) (M)
-- [ ] 2.2 Cordials between nodes (S)
-- [ ] 2.3 Quick-gathering checkbox handling (S)
-- [ ] 2.4 Node routing: nearest-neighbor chains, multiple areas per item (M)
+- [x] 2.2 Cordials between nodes (S)
+- [x] 2.3 Quick-gathering checkbox handling (S)
+- [x] 2.4 Node routing: nearest-neighbor chains, multiple areas per item (M)
 - [ ] 2.5 City aethernet shards (S, low priority)
 
 ## Phase 3 — Smarter crafting

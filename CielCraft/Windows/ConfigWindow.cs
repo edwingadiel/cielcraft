@@ -45,5 +45,19 @@ public class ConfigWindow : Window, IDisposable
         }
 
         ImGui.TextDisabled("Bulk-produce intermediate materials with quick synthesis\n(much faster; intermediates come out normal quality).");
+
+        var buffs = configuration.UseGatheringBuffs;
+        if (ImGui.Checkbox("Gathering yield/integrity actions", ref buffs))
+        {
+            configuration.UseGatheringBuffs = buffs;
+            configuration.Save();
+        }
+
+        var cordials = configuration.UseCordials;
+        if (ImGui.Checkbox("Drink cordials between nodes", ref cordials))
+        {
+            configuration.UseCordials = cordials;
+            configuration.Save();
+        }
     }
 }

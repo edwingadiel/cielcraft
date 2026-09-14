@@ -13,7 +13,9 @@ public sealed record PlayerSnapshot(
     uint CurrentCp,
     uint MaxCp,
     uint Craftsmanship,
-    uint Control);
+    uint Control,
+    uint CurrentGp = 0,
+    uint MaxGp = 0);
 
 /// <summary>FFXIV crafting conditions (spec §10).</summary>
 public enum CraftCondition

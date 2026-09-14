@@ -61,8 +61,8 @@ public sealed class Plugin : IDalamudPlugin
         CraftAutomator = new CraftAutomator(GameBridge, CraftMonitor, ActionExecutor, Configuration);
         BatchCrafter = new BatchCrafter(GameBridge, CraftMonitor, CraftAutomator, SolverService, RecipeProvider);
         Navigation = new Navigation.VNavmeshProvider();
-        GatheringController = new Gathering.GatheringController(GameBridge, Navigation);
-        GatheringLoop = new Gathering.GatheringLoop(GameBridge, GatheringController);
+        GatheringController = new Gathering.GatheringController(GameBridge, Navigation, Configuration);
+        GatheringLoop = new Gathering.GatheringLoop(GameBridge, GatheringController, Navigation, Configuration);
         ProductionRunner = new ProductionRunner(
             GameBridge, BatchCrafter, RecipeProvider, GatheringLoop, GatheringDatabase, Navigation, Configuration);
 

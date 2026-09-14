@@ -274,7 +274,7 @@ public sealed class ProductionRunner : IDisposable
             return;
         }
 
-        if (gatheringLoop.Start(task.ItemId, task.Amount))
+        if (gatheringLoop.Start(task.ItemId, task.Amount, areaDestination))
         {
             Plugin.Log.Information(
                 $"[Production] Gather task {gatherIndex + 1}/{gatherQueue.Count}: " +

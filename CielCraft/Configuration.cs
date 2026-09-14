@@ -16,5 +16,11 @@ public class Configuration : IPluginConfiguration
     /// <summary>Use quick synthesis for intermediate production steps (NQ output).</summary>
     public bool QuickSynthIntermediates { get; set; } = true;
 
+    /// <summary>Spend GP on yield and integrity actions while gathering (spec §37).</summary>
+    public bool UseGatheringBuffs { get; set; } = true;
+
+    /// <summary>Drink cordials between nodes when GP is low.</summary>
+    public bool UseCordials { get; set; } = true;
+
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 }

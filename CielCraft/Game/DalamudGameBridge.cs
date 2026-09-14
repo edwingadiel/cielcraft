@@ -34,7 +34,9 @@ public sealed class DalamudGameBridge : IGameBridge
             CurrentCp: player.CurrentCp,
             MaxCp: player.MaxCp,
             Craftsmanship: GetAttribute(70),
-            Control: GetAttribute(71));
+            Control: GetAttribute(71),
+            CurrentGp: player.CurrentGp,
+            MaxGp: player.MaxGp);
     }
 
     public CraftSnapshot? GetCraftState() => CraftStateReader.Read();
@@ -351,6 +353,54 @@ public sealed class DalamudGameBridge : IGameBridge
         var ptr = Plugin.GameGui.GetAddonByName("SynthesisSimple");
         if (!ptr.IsNull && ptr.IsVisible)
             ((FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)ptr.Address)->FireCallbackInt(-1);
+    }
+
+    public unsafe bool UseItem(uint itemId)
+    {
+        var actionManager = FFXIVClientStructs.FFXIV.Client.Game.ActionManager.Instance();
+        if (actionManager == null)
+            return false;
+
+        if (actionManager->GetActionStatus(FFXIVClientStructs.FFXIV.Client.Game.ActionType.Item, itemId) != 0)
+            return false;
+
+        return actionManager->UseAction(
+            FFXIVClientStructs.FFXIV.Client.Game.ActionType.Item, itemId, 0xE0000000, 65535);
+    }
+
+    public unsafe bool IsQuickGatheringEnabled
+    {
+        get
+        {
+            var addon = GetGatheringAddon();
+            return addon != null
+                   && addon->QuickGatheringComponentCheckBox != null
+                   && addon->QuickGatheringComponentCheckBox->IsChecked;
+        }
+    }
+
+    public unsafe void DisableQuickGathering()
+    {
+        var addon = GetGatheringAddon();
+        if (addon == null || addon->QuickGatheringComponentCheckBox == null
+            || !addon->QuickGatheringComponentCheckBox->IsChecked)
+            return;
+
+        // Replay the checkbox's own click event to toggle it off.
+        var checkbox = addon->QuickGatheringComponentCheckBox;
+        var node = checkbox->OwnerNode;
+        var evt = node->AtkResNode.AtkEventManager.Event;
+        var data = default(FFXIVClientStructs.FFXIV.Component.GUI.AtkEventData);
+        addon->AtkUnitBase.ReceiveEvent(evt->State.EventType, (int)evt->Param, evt, &data);
+    }
+
+    private static unsafe FFXIVClientStructs.FFXIV.Client.UI.AddonGathering* GetGatheringAddon()
+    {
+        var ptr = Plugin.GameGui.GetAddonByName("Gathering");
+        if (ptr.IsNull || !ptr.IsVisible)
+            return null;
+
+        return (FFXIVClientStructs.FFXIV.Client.UI.AddonGathering*)ptr.Address;
     }
 
     private static unsafe FFXIVClientStructs.FFXIV.Client.UI.AddonRecipeNote* GetRecipeNote()

@@ -114,4 +114,13 @@ public interface IGameBridge
 
     /// <summary>Cancels a quick synthesis in progress.</summary>
     void CancelQuickSynthesis();
+
+    /// <summary>Uses an inventory item (e.g. a cordial). False when unusable or absent.</summary>
+    bool UseItem(uint itemId);
+
+    /// <summary>The open gathering node has quick gathering toggled on.</summary>
+    bool IsQuickGatheringEnabled { get; }
+
+    /// <summary>Toggles quick gathering off on the open node.</summary>
+    void DisableQuickGathering();
 }

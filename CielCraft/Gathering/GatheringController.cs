@@ -31,6 +31,7 @@ public sealed class GatheringController : IDisposable
 
     private readonly IGameBridge gameBridge;
     private readonly INavigationProvider navigation;
+    private readonly Configuration configuration;
 
     private uint requestedItemId;
     private GatheringNodeSnapshot? node;
@@ -45,14 +46,19 @@ public sealed class GatheringController : IDisposable
     private int mountAttempts;
     private bool flyBlocked;
     private bool flyAttempted;
+    private int neededCount = int.MaxValue;
+    private bool yieldBuffUsed;
+    private bool buffsBroken;
+    private (uint ActionId, uint GpBefore, int IntegrityBefore, DateTime At)? pendingBuff;
 
     public GatheringState State { get; private set; } = GatheringState.Idle;
     public string StatusText { get; private set; } = "Idle.";
 
-    public GatheringController(IGameBridge gameBridge, INavigationProvider navigation)
+    public GatheringController(IGameBridge gameBridge, INavigationProvider navigation, Configuration configuration)
     {
         this.gameBridge = gameBridge;
         this.navigation = navigation;
+        this.configuration = configuration;
 
         Plugin.Framework.Update += OnUpdate;
     }
@@ -65,8 +71,8 @@ public sealed class GatheringController : IDisposable
     /// <summary>Object id of the node this run targeted; 0 before the first run.</summary>
     public ulong LastNodeId { get; private set; }
 
-    /// <summary>Gathers the nearest node. itemId 0 = first gatherable slot.</summary>
-    public bool Start(uint itemId, System.Collections.Generic.IReadOnlyCollection<ulong>? excludedNodes = null)
+    /// <summary>Gathers the nearest node. itemId 0 = first gatherable slot; needed caps GP spending decisions.</summary>
+    public bool Start(uint itemId, System.Collections.Generic.IReadOnlyCollection<ulong>? excludedNodes = null, int needed = int.MaxValue)
     {
         if (State is GatheringState.MovingToNode or GatheringState.Interacting or GatheringState.GatheringNode)
             return false;
@@ -92,6 +98,10 @@ public sealed class GatheringController : IDisposable
 
         LastNodeId = node.ObjectId;
         requestedItemId = itemId;
+        neededCount = needed;
+        yieldBuffUsed = false;
+        buffsBroken = false;
+        pendingBuff = null;
         chosenItemId = 0;
         chosenSlot = -1;
         baselineCount = 0;
@@ -238,11 +248,21 @@ public sealed class GatheringController : IDisposable
             return;
         }
 
+        // Quick gathering bypasses per-swing control; turn it off first (roadmap 2.3).
+        if (gameBridge.IsQuickGatheringEnabled)
+        {
+            Throttled(gameBridge.DisableQuickGathering);
+            return;
+        }
+
         if (chosenSlot < 0)
         {
             if (!ChooseSlot(gathering))
                 return;
         }
+
+        if (TickBuffs(gathering))
+            return;
 
         if (awaitingSwing)
         {
@@ -271,6 +291,80 @@ public sealed class GatheringController : IDisposable
                 awaitingSwing = true;
             }
         });
+    }
+
+    /// <summary>
+    /// GP spending (spec §37): a yield buff once per node and integrity
+    /// restores while they pay for themselves. Usability (GP, level, unlock)
+    /// is the game's own action status; effects are confirmed by observing GP
+    /// or integrity change. Returns true while a buff is in flight.
+    /// </summary>
+    private bool TickBuffs(GatheringSnapshot gathering)
+    {
+        if (!configuration.UseGatheringBuffs || buffsBroken || awaitingSwing)
+            return false;
+
+        if (pendingBuff is { } pending)
+        {
+            if (gathering.CurrentGp < pending.GpBefore || gathering.IntegrityRemaining > pending.IntegrityBefore)
+            {
+                pendingBuff = null;
+                return false;
+            }
+
+            if (DateTime.UtcNow - pending.At > TimeSpan.FromSeconds(5))
+            {
+                // The action did not land; stop spending GP this node.
+                Plugin.Log.Warning($"[Gather] Buff action {pending.ActionId} did not resolve; skipping buffs.");
+                buffsBroken = true;
+                pendingBuff = null;
+            }
+
+            return pendingBuff != null;
+        }
+
+        if (gameBridge.IsGatheringActionInProgress)
+            return false;
+
+        var jobId = gameBridge.GetPlayerState()?.ClassJobId ?? 0;
+        if (jobId is not (GatheringActions.MinerJobId or GatheringActions.BotanistJobId))
+            return false;
+
+        var gained = Math.Max(0, gameBridge.GetItemCount(chosenItemId) - baselineCount);
+        var remaining = neededCount == int.MaxValue ? int.MaxValue : Math.Max(0, neededCount - gained);
+        var yieldPerSwing = gatherSwings > 0 ? Math.Max(1, gained / gatherSwings) : 1;
+
+        // Yield buff: worth it when this node alone cannot cover the need.
+        if (!yieldBuffUsed && remaining > gathering.IntegrityRemaining * yieldPerSwing)
+        {
+            foreach (var actionId in new[] { GatheringActions.YieldII(jobId), GatheringActions.YieldI(jobId) })
+            {
+                if (gameBridge.IsCraftActionReady(actionId) && gameBridge.ExecuteCraftAction(actionId))
+                {
+                    yieldBuffUsed = true;
+                    pendingBuff = (actionId, gathering.CurrentGp, gathering.IntegrityRemaining, DateTime.UtcNow);
+                    Plugin.Log.Information($"[Gather] Using yield buff (action {actionId}).");
+                    return true;
+                }
+            }
+
+            yieldBuffUsed = true; // not usable (GP/level); do not retry every tick
+        }
+
+        // Integrity restore: an extra swing is worth 300 GP while we still need more.
+        if (gathering.IntegrityRemaining < gathering.IntegrityTotal
+            && remaining > gathering.IntegrityRemaining * yieldPerSwing)
+        {
+            var actionId = GatheringActions.RestoreIntegrity(jobId);
+            if (gameBridge.IsCraftActionReady(actionId) && gameBridge.ExecuteCraftAction(actionId))
+            {
+                pendingBuff = (actionId, gathering.CurrentGp, gathering.IntegrityRemaining, DateTime.UtcNow);
+                Plugin.Log.Information($"[Gather] Restoring integrity (action {actionId}).");
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private bool ChooseSlot(GatheringSnapshot gathering)
