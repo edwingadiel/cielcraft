@@ -84,6 +84,60 @@ This tracks the remaining work toward 1.0. Sizes: S / M / L.
 - [x] 6.7 HQ-material auto-fill before each synthesis (config-gated)
 - [x] 6.8 Multi-target production queue (persisted, sequential, holds on failure)
 
+## Phase 7 — 2.0: beyond crafting (planned, after the v1.0 gate)
+
+Requested 2026-09-14. Ordered by how much each item reuses what exists; the
+first three are cheap, the last two are projects of their own. All of them
+follow the same rules as everything else: observed transitions, verify
+against inventory, pause with a reason.
+
+- [ ] 7.1 Standalone gather target (S) — "Gather X ×N" from the main window,
+  the way a recipe is entered today: plan = the runner's gather phase alone
+  (teleport, travel, timed windows, loop), no crafting. Fish targets join
+  this once 7.5 exists.
+- [ ] 7.2 Spiritbond / materia extraction (S–M) — detect any equipped piece
+  at 100% spiritbond, open Materialize and extract (general action, addon
+  callback — ids pending), between crafts/nodes like repair and food.
+  Optional "spiritbond mode": craft a chosen cheap recipe in a loop purely
+  to bond gear, stopping at a target materia count.
+- [ ] 7.3 NPC interaction layer (M) — shared prerequisite for 7.4: locate an
+  NPC (ENpcResident + Level sheet → territory/position), teleport to the
+  nearest attuned aetheryte, navmesh to the NPC, interact, drive the
+  dialog (SelectIconString/SelectString by option text, Talk advance),
+  with the same timeouts and interference rules as travel today.
+  - [ ] 7.3a NPC repair when no Dark Matter (S after 7.3) — find the nearest
+    mender, repair all, return to the previous task. Falls back to this
+    automatically when self-repair finds no Dark Matter in the bags.
+  - [ ] 7.3b Vendor purchases (M after 7.3) — GilShopItem sheet maps item →
+    shop → NPC; the planner treats such items as "buy N" steps instead of
+    missing materials (gil-gated, with a configurable gil floor and a
+    per-run spend cap). Special/currency shops excluded at first.
+- [ ] 7.4 Fishing (L) — needed by several CUL recipes. FishingSpot /
+  FishParameter / SpearfishingItem sheets for spot, bait and (where known)
+  time/weather windows; cast → observe bite (tug type) → hook → verify the
+  catch in inventory; mooch when the target needs it; bait purchases via
+  7.3b. Gearset for FSH, travel via the existing runner phases. Fish as
+  raw materials in production plans, and as 7.1 standalone targets.
+  Candidate shortcut: drive the AutoHook plugin over IPC for the
+  bite/hook timing if it exposes one (to confirm); own implementation
+  otherwise.
+- [ ] 7.5 Combat drops (XL) — skins, hides, etc. Three separate problems:
+  (1) data: no game sheet maps items to monsters, so a bundled drop table
+  built from an external dataset (Garland Tools / gamerescape) with a
+  refresh script, like the gathering database today; (2) combat: rotation
+  and targeting from a combat plugin over IPC — BossMod Reborn (AI mode +
+  autorotation) and Rotation Solver Reborn are the candidates; confirm
+  which exposes a stable IPC before designing around it; (3) the hunting
+  loop: travel to the spawn area, pick a target of the right name/level,
+  let the combat plugin fight, loot verification by inventory delta,
+  retreat/heal rules, death handling, "someone else is here" etiquette.
+  Combat-job gearsets and level gating decide feasibility per item.
+
+Cross-cutting for 2.0: the planner grows a "source" per missing material
+(gather / fish / buy / hunt / stored-in-retainer), chosen by preference and
+availability; the runner gets one phase per source. That is the point where
+5.1 (state machines in Core) pays off, so 5.1 comes first.
+
 ## Review follow-ups (structural, deferred)
 
 From the full-code review: extract the duplicated mount/fly travel logic
