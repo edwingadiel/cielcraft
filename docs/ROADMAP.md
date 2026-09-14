@@ -98,8 +98,10 @@ against inventory, pause with a reason.
 - [ ] 7.2 Spiritbond / materia extraction (S–M) — detect any equipped piece
   at 100% spiritbond, open Materialize and extract (general action, addon
   callback — ids pending), between crafts/nodes like repair and food.
-  Optional "spiritbond mode": craft a chosen cheap recipe in a loop purely
-  to bond gear, stopping at a target materia count.
+  Applies to crafter and gatherer gear alike: extraction runs between
+  crafts and between nodes. Optional "spiritbond mode": loop a chosen cheap
+  recipe (crafters) or a chosen node/item (gatherers) purely to bond the
+  equipped set, stopping at a target materia count.
 - [ ] 7.3 NPC interaction layer (M) — shared prerequisite for 7.4: locate an
   NPC (ENpcResident + Level sheet → territory/position), teleport to the
   nearest attuned aetheryte, navmesh to the NPC, interact, drive the
