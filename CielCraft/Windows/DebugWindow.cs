@@ -32,22 +32,43 @@ public class DebugWindow : Window, IDisposable
 
     public override void Draw()
     {
-        DrawDependencies();
-        ImGui.Separator();
-        DrawPlayer();
-        ImGui.Separator();
-        DrawCraft();
-        ImGui.Separator();
-        DrawGathering();
-        ImGui.Separator();
-        DrawGatherAutomation();
-        ImGui.Separator();
-        DrawNavigation();
+        if (!ImGui.BeginTabBar("##debugTabs"))
+            return;
+
+        if (ImGui.BeginTabItem("Overview"))
+        {
+            DrawDependencies();
+            UiTheme.SectionHeader("Player");
+            DrawPlayer();
+            ImGui.EndTabItem();
+        }
+
+        if (ImGui.BeginTabItem("Crafting"))
+        {
+            DrawCraft();
+            ImGui.EndTabItem();
+        }
+
+        if (ImGui.BeginTabItem("Gathering"))
+        {
+            DrawGathering();
+            UiTheme.SectionHeader("Automation");
+            DrawGatherAutomation();
+            ImGui.EndTabItem();
+        }
+
+        if (ImGui.BeginTabItem("Navigation"))
+        {
+            DrawNavigation();
+            ImGui.EndTabItem();
+        }
+
+        ImGui.EndTabBar();
     }
 
     private void DrawGathering()
     {
-        ImGui.TextUnformatted("Gathering (Milestone 11)");
+        UiTheme.SectionHeader("Open node");
 
         var gathering = gameBridge.GetGatheringState();
         if (gathering == null)
@@ -73,7 +94,7 @@ public class DebugWindow : Window, IDisposable
 
     private void DrawGatherAutomation()
     {
-        ImGui.TextUnformatted("Auto-gather (Milestones 12–13)");
+        
 
         var controller = plugin.GatheringController;
         var loop = plugin.GatheringLoop;
@@ -147,7 +168,7 @@ public class DebugWindow : Window, IDisposable
 
     private void DrawNavigation()
     {
-        ImGui.TextUnformatted("Navigation (Milestone 10)");
+        UiTheme.SectionHeader("Navigation");
 
         var nav = plugin.Navigation;
         ImGui.BulletText($"Available: {nav.IsAvailable}   Mesh ready: {nav.IsReady}   Moving: {nav.IsMoving}");
@@ -179,7 +200,7 @@ public class DebugWindow : Window, IDisposable
 
     private void DrawDependencies()
     {
-        ImGui.TextUnformatted("Dependencies");
+        UiTheme.SectionHeader("Dependencies");
         ImGui.BulletText($"Dalamud: Ready");
         ImGui.BulletText($"Raphael: {(CielCraft.Raphael.RaphaelSolver.IsAvailable ? "Ready" : "Native library missing")}");
         var nav = plugin.Navigation;
@@ -188,8 +209,7 @@ public class DebugWindow : Window, IDisposable
 
     private void DrawPlayer()
     {
-        ImGui.TextUnformatted("Player");
-
+        
         if (!gameBridge.IsLoggedIn)
         {
             ImGui.BulletText("Not logged in.");
@@ -214,7 +234,7 @@ public class DebugWindow : Window, IDisposable
 
     private void DrawCraft()
     {
-        ImGui.TextUnformatted("Crafting");
+        UiTheme.SectionHeader("Craft state");
         ImGui.BulletText($"Preparing to craft: {gameBridge.IsPreparingToCraft}");
         ImGui.BulletText($"Crafting active: {gameBridge.IsCrafting}");
         ImGui.BulletText($"Gathering active: {gameBridge.IsGathering}");
@@ -242,7 +262,7 @@ public class DebugWindow : Window, IDisposable
         }
 
         ImGui.Separator();
-        ImGui.TextUnformatted("Action execution (Milestone 2)");
+        UiTheme.SectionHeader("Action execution");
 
         var executor = plugin.ActionExecutor;
         var player = gameBridge.GetPlayerState();
@@ -262,7 +282,7 @@ public class DebugWindow : Window, IDisposable
         DrawSolver(player, actionId != null);
 
         ImGui.Separator();
-        ImGui.TextUnformatted("Recent craft events");
+        UiTheme.SectionHeader("Recent craft events");
 
         if (ImGui.BeginChild("##craftEvents", new Vector2(0, 150), true))
         {
@@ -279,7 +299,7 @@ public class DebugWindow : Window, IDisposable
 
     private void DrawSolver(PlayerSnapshot? player, bool onCrafterJob)
     {
-        ImGui.TextUnformatted("Raphael solver (Milestone 3)");
+        UiTheme.SectionHeader("Raphael solver");
 
         var solverService = plugin.SolverService;
         var craft = craftMonitor.Current;
@@ -333,7 +353,7 @@ public class DebugWindow : Window, IDisposable
 
     private void DrawAutomation(PlayerSnapshot? player, CraftSolution solution)
     {
-        ImGui.TextUnformatted("Auto craft (Milestone 4)");
+        UiTheme.SectionHeader("Auto craft");
 
         var automator = plugin.CraftAutomator;
 

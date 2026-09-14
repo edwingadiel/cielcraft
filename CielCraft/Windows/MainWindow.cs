@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Numerics;
 using CielCraft.Core;
+using CielCraft.Crafting;
 using CielCraft.Game;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
@@ -13,11 +14,24 @@ public class MainWindow : Window, IDisposable
     private readonly Plugin plugin;
     private readonly IGameBridge gameBridge;
 
+    private int batchQuantity = 1;
+    private string searchText = "";
+    private IReadOnlyList<(uint RecipeId, uint ItemId, string Name)> searchResults = [];
+    private (uint RecipeId, string Name)? searchTarget;
+
+    private DateTime requirementsRefreshedAt = DateTime.MinValue;
+    private ushort requirementsRecipeId;
+    private IReadOnlyList<IngredientRequirement> requirements = [];
+    private readonly Dictionary<uint, int> storedCounts = new();
+
+    private ProductionPlan? plan;
+    private string planError = "";
+
     public MainWindow(Plugin plugin) : base("CielCraft##Main")
     {
         SizeConstraints = new WindowSizeConstraints
         {
-            MinimumSize = new Vector2(340, 260),
+            MinimumSize = new Vector2(400, 320),
             MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
         };
 
@@ -27,124 +41,286 @@ public class MainWindow : Window, IDisposable
 
     public void Dispose() { }
 
-    private int batchQuantity = 1;
-
-    private string searchText = "";
-    private IReadOnlyList<(uint RecipeId, uint ItemId, string Name)> searchResults = [];
-    private (uint RecipeId, string Name)? searchTarget;
-
     private uint EffectiveRecipeId => searchTarget?.RecipeId ?? gameBridge.SelectedRecipeId;
-
-    private DateTime requirementsRefreshedAt = DateTime.MinValue;
-    private ushort requirementsRecipeId;
-    private IReadOnlyList<IngredientRequirement> requirements = [];
-    private readonly Dictionary<uint, int> storedCounts = new();
 
     public override void Draw()
     {
-        DrawStatus();
-        ImGui.Separator();
-        DrawCharacter();
-        ImGui.Separator();
-        DrawTargetSearch();
-        ImGui.Separator();
-        DrawBatch();
-        ImGui.Separator();
-
-        if (ImGui.Button("Debug"))
-            plugin.ToggleDebugUi();
-
-        ImGui.SameLine();
-        if (ImGui.Button("Settings"))
-            plugin.ToggleConfigUi();
+        DrawHeader();
+        UiTheme.SectionHeader("Target");
+        DrawTarget();
+        UiTheme.SectionHeader("Production");
+        DrawProduction();
+        DrawMaterials();
+        DrawFooter();
     }
 
-    private void DrawTargetSearch()
-    {
-        ImGui.TextUnformatted("Target");
+    // ------------------------------------------------------------- header
 
-        ImGui.SetNextItemWidth(220);
-        if (ImGui.InputTextWithHint("##itemSearch", "Search craftable item...", ref searchText, 64))
+    private void DrawHeader()
+    {
+        var player = gameBridge.GetPlayerState();
+        if (player != null)
+        {
+            ImGui.TextUnformatted($"{player.Name}");
+            ImGui.SameLine(0, 8);
+            ImGui.TextColored(UiTheme.Accent, $"{player.ClassJobAbbreviation} {player.Level}");
+            ImGui.SameLine(0, 14);
+            ImGui.TextColored(
+                UiTheme.Muted,
+                $"{player.Craftsmanship} craft · {player.Control} control · {player.CurrentCp}/{player.MaxCp} CP");
+        }
+        else
+        {
+            ImGui.TextColored(UiTheme.Muted, "Not logged in.");
+        }
+
+        var raphael = CielCraft.Raphael.RaphaelSolver.IsAvailable;
+        var nav = plugin.Navigation;
+        UiTheme.StatusDot("Raphael", raphael ? UiTheme.Success : UiTheme.Danger,
+            raphael ? "Solver ready" : "Native solver library missing — crafting automation disabled");
+        ImGui.SameLine(0, 12);
+        var navColor = !nav.IsAvailable ? UiTheme.Danger : nav.IsReady ? UiTheme.Success : UiTheme.Warning;
+        UiTheme.StatusDot("vnavmesh", navColor,
+            !nav.IsAvailable ? "vnavmesh unavailable — gathering automation disabled"
+            : nav.IsReady ? "Navigation ready"
+            : "Installed; navmesh still building for this zone");
+        ImGui.SameLine(0, 12);
+        UiTheme.StatusDot("Gathering", nav.IsAvailable ? UiTheme.Success : UiTheme.Muted,
+            nav.IsAvailable ? "Gathering automation ready" : "Disabled without vnavmesh");
+    }
+
+    // ------------------------------------------------------------- target
+
+    private void DrawTarget()
+    {
+        ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - 110);
+        if (ImGui.InputTextWithHint("##itemSearch", "Search craftable item…", ref searchText, 64))
             searchResults = plugin.RecipeProvider.SearchCraftable(searchText);
 
-        foreach (var result in searchResults)
+        ImGui.SameLine();
+        ImGui.SetNextItemWidth(100);
+        if (ImGui.InputInt("##qty", ref batchQuantity))
+            batchQuantity = Math.Clamp(batchQuantity, 1, 999);
+        UiTheme.Tooltip("Quantity");
+
+        if (searchResults.Count > 0)
         {
-            if (ImGui.Selectable($"{result.Name}##r{result.RecipeId}"))
+            using var child = Dalamud.Interface.Utility.Raii.ImRaii.Child(
+                "##searchResults", new Vector2(-1, Math.Min(searchResults.Count, 6) * 24f + 8), true);
+            foreach (var result in searchResults)
             {
-                searchTarget = (result.RecipeId, result.Name);
-                searchText = result.Name;
-                searchResults = [];
+                if (ImGui.Selectable($"{result.Name}##r{result.RecipeId}"))
+                {
+                    searchTarget = (result.RecipeId, result.Name);
+                    searchText = result.Name;
+                    searchResults = [];
+                    plan = null;
+                }
             }
         }
 
         if (searchTarget is { } target)
         {
-            ImGui.TextUnformatted($"Selected: {target.Name}");
-            ImGui.SameLine();
-            if (ImGui.SmallButton("Use crafting log instead"))
+            ImGui.TextColored(UiTheme.Accent, "◈");
+            ImGui.SameLine(0, 6);
+            ImGui.TextUnformatted(target.Name);
+            ImGui.SameLine(0, 10);
+            if (ImGui.SmallButton("×##clearTarget"))
             {
                 searchTarget = null;
                 searchText = "";
+                plan = null;
             }
+
+            UiTheme.Tooltip("Clear and use the crafting log selection instead");
+        }
+        else if (gameBridge.SelectedRecipeId != 0)
+        {
+            ImGui.TextColored(UiTheme.Muted, "Using the crafting log selection.");
         }
         else
         {
-            ImGui.TextDisabled("No search target — using the crafting log selection.");
+            ImGui.TextColored(UiTheme.Faint, "Search above, or select a recipe in the crafting log.");
         }
     }
 
-    private void DrawBatch()
-    {
-        ImGui.TextUnformatted("Batch craft");
+    // --------------------------------------------------------- production
 
+    private void DrawProduction()
+    {
+        var runner = plugin.ProductionRunner;
         var batch = plugin.BatchCrafter;
 
-        switch (batch.State)
+        var runnerActive = runner.State is not (ProductionState.Idle or ProductionState.Completed or ProductionState.Failed);
+        var batchActive = batch.State is not (BatchState.Idle or BatchState.Completed or BatchState.Failed);
+
+        if (runnerActive)
+            DrawRunnerActive(runner, batch);
+        else if (batchActive)
+            DrawBatchActive(batch);
+        else
+            DrawIdleControls(runner, batch);
+    }
+
+    private void DrawRunnerActive(ProductionRunner runner, BatchCrafter batch)
+    {
+        var stepFraction = batch.TargetQuantity > 0 ? (float)batch.CompletedCrafts / batch.TargetQuantity : 0f;
+        var overall = runner.TotalSteps > 0
+            ? (runner.CompletedSteps + Math.Clamp(stepFraction, 0f, 1f)) / runner.TotalSteps
+            : 0f;
+
+        UiTheme.ProgressBar(
+            overall,
+            $"{overall * 100:F0}%  ·  step {Math.Min(runner.CompletedSteps + 1, Math.Max(runner.TotalSteps, 1))}/{runner.TotalSteps}");
+        DrawStateBadge(runner.State.ToString(), runner.State is ProductionState.Paused, runner.StatusText);
+
+        if (batch.TargetQuantity > 0 && batch.State is not BatchState.Idle)
+            UiTheme.ProgressBar(stepFraction, $"{batch.CompletedCrafts}/{batch.TargetQuantity} crafts", UiTheme.Info);
+
+        DrawPauseResumeStop(
+            paused: runner.State == ProductionState.Paused,
+            onPause: () => runner.Pause("paused by user"),
+            onResume: runner.Resume,
+            onStop: runner.Stop);
+    }
+
+    private void DrawBatchActive(BatchCrafter batch)
+    {
+        var fraction = batch.TargetQuantity > 0 ? (float)batch.CompletedCrafts / batch.TargetQuantity : 0f;
+        UiTheme.ProgressBar(fraction, $"{batch.CompletedCrafts}/{batch.TargetQuantity} crafts");
+        DrawStateBadge(batch.State.ToString(), batch.State == BatchState.Paused, batch.StatusText);
+
+        DrawPauseResumeStop(
+            paused: batch.State == BatchState.Paused,
+            onPause: () => batch.Pause("paused by user"),
+            onResume: batch.Resume,
+            onStop: batch.Stop);
+    }
+
+    private void DrawIdleControls(ProductionRunner runner, BatchCrafter batch)
+    {
+        var haveTarget = EffectiveRecipeId != 0;
+        var raphael = CielCraft.Raphael.RaphaelSolver.IsAvailable;
+
+        using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!haveTarget))
         {
-            case Crafting.BatchState.Solving:
-            case Crafting.BatchState.StartingCraft:
-            case Crafting.BatchState.Crafting:
-                if (ImGui.Button("Pause"))
-                    batch.Pause("paused by user");
-                ImGui.SameLine();
-                if (ImGui.Button("Stop"))
-                    batch.Stop();
-                break;
-
-            case Crafting.BatchState.Paused:
-                if (ImGui.Button("Resume"))
-                    batch.Resume();
-                ImGui.SameLine();
-                if (ImGui.Button("Stop"))
-                    batch.Stop();
-                break;
-
-            default:
-                ImGui.SetNextItemWidth(100);
-                if (ImGui.InputInt("Quantity", ref batchQuantity))
-                    batchQuantity = Math.Clamp(batchQuantity, 1, 999);
-
-                var canStart = CielCraft.Raphael.RaphaelSolver.IsAvailable
-                               && (gameBridge.IsReadyToStartCraft
-                                   || (gameBridge.IsCrafting && plugin.CraftMonitor.Current is { Step: <= 1, Quality: 0 }));
-
-                using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!canStart))
-                {
-                    if (ImGui.Button("Start batch"))
-                        batch.Start(batchQuantity);
-                }
-
-                if (!canStart)
-                    ImGui.TextDisabled("Select a recipe in the crafting log to enable.");
-
-                break;
+            if (UiTheme.TintedButton("Plan", UiTheme.Info))
+                ComputePlan();
         }
 
-        ImGui.TextUnformatted($"Progress: {batch.CompletedCrafts}/{batch.TargetQuantity}   State: {batch.State}");
-        ImGui.TextUnformatted(batch.StatusText);
+        UiTheme.Tooltip("Resolve sub-recipes, inventory, and missing materials");
 
-        DrawMaterials();
+        ImGui.SameLine();
+        var canRun = plan != null && raphael
+                     && (plan.RawMaterials.Count == 0 || plugin.Navigation.IsAvailable);
+        using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!canRun))
+        {
+            if (UiTheme.TintedButton("Run plan", UiTheme.Success) && plan != null)
+                runner.Start(plan);
+        }
+
+        UiTheme.Tooltip("Gather missing materials, craft intermediates, then the target");
+
+        ImGui.SameLine();
+        var canBatch = raphael && (gameBridge.IsReadyToStartCraft
+                                   || (gameBridge.IsCrafting && plugin.CraftMonitor.Current is { Step: <= 1, Quality: 0 }));
+        using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!canBatch))
+        {
+            if (UiTheme.TintedButton($"Batch ×{batchQuantity}", UiTheme.Accent))
+                batch.Start(batchQuantity);
+        }
+
+        UiTheme.Tooltip("Craft the crafting-log selection repeatedly (no sub-recipes)");
+
+        if (runner.State is ProductionState.Completed or ProductionState.Failed)
+            DrawStateBadge(runner.State.ToString(), false, runner.StatusText);
+        else if (batch.State is BatchState.Completed or BatchState.Failed)
+            DrawStateBadge(batch.State.ToString(), false, batch.StatusText);
+
+        if (planError.Length > 0)
+            ImGui.TextColored(UiTheme.Danger, planError);
+
+        DrawPlanPreview();
     }
+
+    private void ComputePlan()
+    {
+        plan = null;
+        planError = "";
+
+        var recipe = plugin.RecipeProvider.GetRecipeById(EffectiveRecipeId);
+        if (recipe == null)
+            planError = "Could not read the selected recipe.";
+        else
+            plan = DependencyResolver.Resolve(
+                recipe.ResultItemId, batchQuantity, plugin.RecipeProvider, gameBridge.GetItemCount);
+    }
+
+    private void DrawPlanPreview()
+    {
+        if (plan == null)
+            return;
+
+        var provider = plugin.RecipeProvider;
+        ImGui.Spacing();
+        ImGui.TextColored(UiTheme.Muted, $"Plan · {provider.GetItemName(plan.TargetItemId)} ×{plan.TargetQuantity}");
+
+        if (plan.RawMaterials.Count > 0)
+        {
+            ImGui.TextColored(UiTheme.Warning, "Gather first:");
+            foreach (var material in plan.RawMaterials)
+                ImGui.BulletText($"{provider.GetItemName(material.ItemId)} ×{material.Amount}");
+        }
+        else
+        {
+            ImGui.TextColored(UiTheme.Success, "✓ all raw materials on hand");
+        }
+
+        foreach (var step in plan.CraftSteps)
+        {
+            ImGui.TextColored(UiTheme.Faint, "  ▸");
+            ImGui.SameLine(0, 4);
+            ImGui.TextUnformatted($"{provider.GetItemName(step.ItemId)} ×{step.TotalProduced}");
+            ImGui.SameLine(0, 6);
+            ImGui.TextColored(UiTheme.Muted, $"({step.Crafts} crafts)");
+        }
+    }
+
+    private static void DrawStateBadge(string state, bool paused, string statusText)
+    {
+        var color = state switch
+        {
+            "Failed" => UiTheme.Danger,
+            "Completed" => UiTheme.Success,
+            _ when paused => UiTheme.Warning,
+            _ => UiTheme.Info,
+        };
+
+        ImGui.TextColored(color, $"● {state}");
+        ImGui.SameLine(0, 8);
+        ImGui.PushTextWrapPos();
+        ImGui.TextColored(UiTheme.Muted, statusText);
+        ImGui.PopTextWrapPos();
+    }
+
+    private void DrawPauseResumeStop(bool paused, Action onPause, Action onResume, Action onStop)
+    {
+        if (paused)
+        {
+            if (UiTheme.TintedButton("Resume", UiTheme.Success))
+                onResume();
+        }
+        else if (UiTheme.TintedButton("Pause", UiTheme.Warning))
+        {
+            onPause();
+        }
+
+        ImGui.SameLine();
+        if (UiTheme.TintedButton("Stop", UiTheme.Danger))
+            onStop();
+    }
+
+    // ---------------------------------------------------------- materials
 
     private void DrawMaterials()
     {
@@ -155,7 +331,6 @@ public class MainWindow : Window, IDisposable
             return;
         }
 
-        // Inventory and recipe data are stable enough to refresh once a second.
         if (recipeId != requirementsRecipeId || DateTime.UtcNow - requirementsRefreshedAt > TimeSpan.FromSeconds(1))
         {
             requirements = gameBridge.GetRecipeRequirements(recipeId);
@@ -174,14 +349,18 @@ public class MainWindow : Window, IDisposable
         if (requirements.Count == 0)
             return;
 
-        ImGui.Separator();
-        ImGui.TextUnformatted($"Materials (craftable now: {InventoryMath.CraftableCount(requirements)})");
+        UiTheme.SectionHeader("Materials");
+        var craftable = InventoryMath.CraftableCount(requirements);
+        ImGui.TextColored(
+            craftable >= batchQuantity ? UiTheme.Success : UiTheme.Warning,
+            $"Craftable now: {craftable}");
 
-        if (ImGui.BeginTable("##materials", 4))
+        if (ImGui.BeginTable("##materials", 4,
+                ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH | ImGuiTableFlags.PadOuterX))
         {
             ImGui.TableSetupColumn("Ingredient");
-            ImGui.TableSetupColumn("Need", ImGuiTableColumnFlags.WidthFixed, 60);
-            ImGui.TableSetupColumn("Owned", ImGuiTableColumnFlags.WidthFixed, 60);
+            ImGui.TableSetupColumn("Need", ImGuiTableColumnFlags.WidthFixed, 54);
+            ImGui.TableSetupColumn("Owned", ImGuiTableColumnFlags.WidthFixed, 84);
             ImGui.TableSetupColumn("Missing", ImGuiTableColumnFlags.WidthFixed, 60);
             ImGui.TableHeadersRow();
 
@@ -193,157 +372,43 @@ public class MainWindow : Window, IDisposable
                 ImGui.TableNextColumn();
                 ImGui.TextUnformatted($"{requirement.RequiredFor(batchQuantity)}");
                 ImGui.TableNextColumn();
-                ImGui.TextUnformatted(storedCounts.TryGetValue(requirement.ItemId, out var stored)
-                    ? $"{requirement.Owned} (+{stored})"
-                    : $"{requirement.Owned}");
-                ImGui.TableNextColumn();
+                ImGui.TextUnformatted($"{requirement.Owned}");
+                if (storedCounts.TryGetValue(requirement.ItemId, out var stored))
+                {
+                    ImGui.SameLine(0, 4);
+                    ImGui.TextColored(UiTheme.Faint, $"+{stored}");
+                    UiTheme.Tooltip("Also stored in saddlebags/retainers (not used by plans)");
+                }
 
+                ImGui.TableNextColumn();
                 var missing = requirement.MissingFor(batchQuantity);
                 if (missing > 0)
-                    ImGui.TextColored(new Vector4(0.9f, 0.4f, 0.4f, 1f), $"{missing}");
+                    ImGui.TextColored(UiTheme.Danger, $"{missing}");
                 else
-                    ImGui.TextUnformatted("0");
+                    ImGui.TextColored(UiTheme.Success, "✓");
             }
 
             ImGui.EndTable();
         }
-
-        DrawPlan();
     }
 
-    private ProductionPlan? plan;
-    private string planError = "";
+    // ------------------------------------------------------------- footer
 
-    private void DrawPlan()
+    private void DrawFooter()
     {
+        ImGui.Spacing();
+        ImGui.PushStyleColor(ImGuiCol.Separator, UiTheme.AccentDim);
         ImGui.Separator();
+        ImGui.PopStyleColor();
 
-        if (ImGui.Button("Plan production"))
-        {
-            plan = null;
-            planError = "";
-
-            var recipe = plugin.RecipeProvider.GetRecipeById(EffectiveRecipeId);
-            if (recipe == null)
-                planError = "Could not read the selected recipe.";
-            else
-                plan = DependencyResolver.Resolve(
-                    recipe.ResultItemId, batchQuantity, plugin.RecipeProvider, gameBridge.GetItemCount);
-        }
-
-        if (planError.Length > 0)
-            ImGui.TextColored(new Vector4(0.9f, 0.4f, 0.4f, 1f), planError);
-
-        if (plan == null)
-            return;
-
-        var provider = plugin.RecipeProvider;
-        ImGui.TextUnformatted($"Plan for {provider.GetItemName(plan.TargetItemId)} ×{plan.TargetQuantity}:");
-
-        if (plan.RawMaterials.Count > 0)
-        {
-            ImGui.TextUnformatted("Acquire:");
-            foreach (var material in plan.RawMaterials)
-                ImGui.BulletText($"{provider.GetItemName(material.ItemId)} ×{material.Amount}");
-        }
-
-        ImGui.TextUnformatted("Craft:");
-        foreach (var step in plan.CraftSteps)
-            ImGui.BulletText($"{provider.GetItemName(step.ItemId)} ×{step.TotalProduced} ({step.Crafts} crafts)");
-
-        if (plan.RawMaterials.Count == 0)
-            ImGui.TextColored(new Vector4(0.4f, 0.9f, 0.4f, 1f), "All raw materials on hand.");
-
-        DrawProduction();
-    }
-
-    private void DrawProduction()
-    {
-        var runner = plugin.ProductionRunner;
-
-        switch (runner.State)
-        {
-            case Crafting.ProductionState.PreparingStep:
-            case Crafting.ProductionState.RunningBatch:
-                if (ImGui.Button("Pause##production"))
-                    runner.Pause("paused by user");
-                ImGui.SameLine();
-                if (ImGui.Button("Stop##production"))
-                    runner.Stop();
-                break;
-
-            case Crafting.ProductionState.Paused:
-                if (ImGui.Button("Resume##production"))
-                    runner.Resume();
-                ImGui.SameLine();
-                if (ImGui.Button("Stop##production"))
-                    runner.Stop();
-                break;
-
-            default:
-                var canRun = plan != null
-                             && (plan.RawMaterials.Count == 0 || plugin.Navigation.IsAvailable)
-                             && CielCraft.Raphael.RaphaelSolver.IsAvailable
-                             && plugin.BatchCrafter.State is Crafting.BatchState.Idle
-                                 or Crafting.BatchState.Completed or Crafting.BatchState.Failed;
-
-                if (plan is { RawMaterials.Count: > 0 })
-                    ImGui.TextDisabled("Missing raw materials will be gathered first (MIN/BTN, current zone).");
-
-                using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!canRun))
-                {
-                    if (ImGui.Button("Run plan") && plan != null)
-                        runner.Start(plan);
-                }
-
-                break;
-        }
-
-        if (runner.State != Crafting.ProductionState.Idle || runner.TotalSteps > 0)
-        {
-            ImGui.TextUnformatted($"Production: step {Math.Min(runner.CompletedSteps + 1, Math.Max(runner.TotalSteps, 1))}/{runner.TotalSteps}   State: {runner.State}");
-            ImGui.TextUnformatted(runner.StatusText);
-        }
-    }
-
-    private void DrawStatus()
-    {
-        ImGui.TextUnformatted("Status");
-        StatusLine("Dalamud", true, "Ready");
-        var raphael = CielCraft.Raphael.RaphaelSolver.IsAvailable;
-        StatusLine("Raphael", raphael, raphael ? "Ready" : "Native library missing");
-
-        var nav = plugin.Navigation;
-        var navText = !nav.IsAvailable ? "Unavailable"
-            : nav.IsReady ? "Ready"
-            : "Installed (navmesh not built for this zone)";
-        StatusLine("vnavmesh", nav.IsAvailable, navText);
-        StatusLine("Gathering automation", nav.IsAvailable, nav.IsAvailable ? "Ready" : "Disabled (vnavmesh missing)");
-    }
-
-    private static void StatusLine(string label, bool ok, string text)
-    {
-        var color = ok
-            ? new Vector4(0.4f, 0.9f, 0.4f, 1f)
-            : new Vector4(0.9f, 0.7f, 0.3f, 1f);
-
-        ImGui.TextUnformatted($"{label}:");
-        ImGui.SameLine(180);
-        ImGui.TextColored(color, text);
-    }
-
-    private void DrawCharacter()
-    {
-        ImGui.TextUnformatted("Character");
-
-        var player = gameBridge.GetPlayerState();
-        if (player == null)
-        {
-            ImGui.TextUnformatted("Not logged in.");
-            return;
-        }
-
-        ImGui.TextUnformatted($"{player.Name} — {player.ClassJobAbbreviation} Lv. {player.Level}");
-        ImGui.TextUnformatted($"Craftsmanship: {player.Craftsmanship}   Control: {player.Control}   CP: {player.CurrentCp} / {player.MaxCp}");
+        if (ImGui.SmallButton("Debug"))
+            plugin.ToggleDebugUi();
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Settings"))
+            plugin.ToggleConfigUi();
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Stop everything"))
+            plugin.StopEverything();
+        UiTheme.Tooltip("Emergency stop: production, batch, gathering, navigation (/cielcraft stop)");
     }
 }

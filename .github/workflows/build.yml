@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    # Weekly build against the latest Dalamud distrib to catch API drift
+    # from game patches before it bites in a play session.
+    - cron: "0 6 * * 1"
 
 jobs:
   native:

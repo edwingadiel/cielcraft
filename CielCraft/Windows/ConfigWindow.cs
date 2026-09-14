@@ -11,7 +11,7 @@ public class ConfigWindow : Window, IDisposable
 
     public ConfigWindow(Plugin plugin) : base("CielCraft Settings##Config")
     {
-        Size = new Vector2(360, 160);
+        Size = new Vector2(420, 420);
         SizeCondition = ImGuiCond.FirstUseEver;
 
         configuration = plugin.Configuration;
@@ -21,6 +21,7 @@ public class ConfigWindow : Window, IDisposable
 
     public override void Draw()
     {
+        UiTheme.SectionHeader("General");
         var openOnLogin = configuration.OpenMainWindowOnLogin;
         if (ImGui.Checkbox("Open main window on login", ref openOnLogin))
         {
@@ -28,6 +29,7 @@ public class ConfigWindow : Window, IDisposable
             configuration.Save();
         }
 
+        UiTheme.SectionHeader("Crafting");
         var adaptive = configuration.AdaptiveCrafting;
         if (ImGui.Checkbox("Adaptive crafting", ref adaptive))
         {
@@ -46,6 +48,7 @@ public class ConfigWindow : Window, IDisposable
 
         ImGui.TextDisabled("Bulk-produce intermediate materials with quick synthesis\n(much faster; intermediates come out normal quality).");
 
+        UiTheme.SectionHeader("Gathering");
         var buffs = configuration.UseGatheringBuffs;
         if (ImGui.Checkbox("Gathering yield/integrity actions", ref buffs))
         {

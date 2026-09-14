@@ -54,9 +54,11 @@ This tracks the remaining work toward 1.0. Sizes: S / M / L.
 ## Phase 5 — Engineering health
 
 - [ ] 5.1 Extract batch/production state machines into Core for offline tests
-  (spec §50–51) (M)
-- [ ] 5.2 Weekly scheduled CI against the latest Dalamud distrib to catch API drift (S)
-- [ ] 5.3 UI polish to spec §44–46 (plan preview, live production panel, debug errors) (M)
+  (spec §50–51) (M) — deliberately deferred: requires threading time/log/framework
+  seams through validated orchestration code; all pure decision logic (resolution,
+  adaptive engine, planner, inventory, ET) is already in Core with 32 tests
+- [x] 5.2 Weekly scheduled CI against the latest Dalamud distrib to catch API drift (S)
+- [x] 5.3 UI polish to spec §44–46 (plan preview, live production panel, debug errors) (M)
 
 ## Known validation-pending values
 
