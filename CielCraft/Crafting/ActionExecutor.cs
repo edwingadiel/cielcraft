@@ -25,6 +25,7 @@ public sealed class ActionExecutor : IDisposable
 
     private CraftSnapshot? baseline;
     private DateTime requestedAt;
+    private bool expectStepAdvance = true;
 
     public ExecutorState State { get; private set; } = ExecutorState.Idle;
 
@@ -49,7 +50,7 @@ public sealed class ActionExecutor : IDisposable
     }
 
     /// <summary>Pre-execution guard list per spec §12. Returns false with a logged reason.</summary>
-    public bool TryExecute(uint actionId)
+    public bool TryExecute(uint actionId, bool advancesStep = true)
     {
         if (State == ExecutorState.AwaitingResolution)
             return Reject("previous action is still resolving");
@@ -69,6 +70,7 @@ public sealed class ActionExecutor : IDisposable
 
         baseline = current;
         requestedAt = DateTime.UtcNow;
+        expectStepAdvance = advancesStep;
         State = ExecutorState.AwaitingResolution;
         LastResult = $"Action {actionId} requested at step {current.Step}...";
         Plugin.Log.Information($"[Craft] Requested action {actionId} at step {current.Step}.");
@@ -92,7 +94,8 @@ public sealed class ActionExecutor : IDisposable
             craftMonitor.Current,
             gameBridge.IsCrafting,
             DateTime.UtcNow - requestedAt,
-            Timeout);
+            Timeout,
+            expectStepAdvance);
 
         if (outcome == ActionOutcome.Pending)
             return;

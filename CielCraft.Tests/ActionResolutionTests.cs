@@ -65,6 +65,19 @@ public class ActionResolutionTests
     }
 
     [Fact]
+    public void NonAdvancingActionResolvesOnBuffChange()
+    {
+        var baseline = Snapshot(step: 3);
+        var withBuff = Snapshot(step: 3) with { Buffs = [new CraftBuff(CraftBuffIds.HeartAndSoul, 0)] };
+
+        Assert.Equal(ActionOutcome.Pending, ActionResolution.Evaluate(
+            baseline, Snapshot(step: 3), isCrafting: true, TimeSpan.FromSeconds(1), Timeout, advancesStep: false));
+
+        Assert.Equal(ActionOutcome.StepAdvanced, ActionResolution.Evaluate(
+            baseline, withBuff, isCrafting: true, TimeSpan.FromSeconds(1), Timeout, advancesStep: false));
+    }
+
+    [Fact]
     public void TimesOutAfterDeadlineWithNoTransition()
     {
         var outcome = ActionResolution.Evaluate(

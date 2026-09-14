@@ -27,6 +27,7 @@ public static class CraftActionData
         19004,  // Innovation
         260,    // Great Strides
         100459, // Quick Innovation
+        100419, // Heart and Soul (only serves condition-gated quality plays)
         100010, // Observe (only feeds touch combos)
         100371, // Tricks of the Trade (condition-gated utility)
     ];

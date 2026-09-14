@@ -33,14 +33,14 @@ This tracks the remaining work toward 1.0. Sizes: S / M / L.
 
 ## Phase 3 — Smarter crafting
 
-- [ ] 3.1 Buff tracking in CraftSnapshot (spec §10) — prerequisite for deeper adaptive
+- [x] 3.1 Buff tracking in CraftSnapshot (spec §10) — prerequisite for deeper adaptive
   rules (M)
-- [ ] 3.2 Mid-craft re-solve / GetNextAction (spec §17) — FFI v2 solving from live state;
+- [x] 3.2 Mid-craft re-solve / GetNextAction (spec §17) — FFI v2 solving from live state;
   optimal proc reactions, recovery from any deviation (L)
-- [ ] 3.3 Food/potion in solves; re-solve on expiry (S–M)
-- [ ] 3.4 Target-quality objectives (e.g. stop at a chosen HQ chance) (S)
-- [ ] 3.5 Specialist actions (Heart and Soul, Quick Innovation — no step advance) (M)
-- [ ] 3.6 Combo-aware CP accounting in the adaptive engine (S)
+- [x] 3.3 Food/potion in solves; re-solve on expiry (S–M)
+- [x] 3.4 Target-quality objectives (e.g. stop at a chosen HQ chance) (S)
+- [x] 3.5 Specialist actions (Heart and Soul, Quick Innovation — no step advance) (M)
+- [x] 3.6 Combo-aware CP accounting — engine estimates stay worst-case-safe; true combo pricing is handled by the mid-craft re-solve (3.2)
 
 ## Phase 4 — Advanced content
 

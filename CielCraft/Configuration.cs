@@ -22,5 +22,8 @@ public class Configuration : IPluginConfiguration
     /// <summary>Drink cordials between nodes when GP is low.</summary>
     public bool UseCordials { get; set; } = true;
 
+    /// <summary>Quality goal for solves as a percentage of the recipe maximum (roadmap 3.4).</summary>
+    public int TargetQualityPercent { get; set; } = 100;
+
     public void Save() => Plugin.PluginInterface.SavePluginConfig(this);
 }

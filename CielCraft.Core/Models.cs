@@ -47,6 +47,31 @@ public sealed record GatheringSnapshot(
     uint MaxGp,
     IReadOnlyList<GatheringItemSlot> Items);
 
+/// <summary>An active crafting buff (spec §10).</summary>
+public sealed record CraftBuff(uint StatusId, int Stacks);
+
+/// <summary>Crafting status-effect ids.</summary>
+public static class CraftBuffIds
+{
+    public const uint InnerQuiet = 251;
+    public const uint WasteNot = 252;
+    public const uint GreatStrides = 254;
+    public const uint WasteNot2 = 257;
+    public const uint Manipulation = 1164;
+    public const uint Innovation = 2189;
+    public const uint FinalAppraisal = 2190;
+    public const uint MuscleMemory = 2191;
+    public const uint Veneration = 2226;
+    public const uint HeartAndSoul = 2665;
+    public const uint TrainedPerfection = 3813;
+
+    public static readonly uint[] All =
+    [
+        InnerQuiet, WasteNot, GreatStrides, WasteNot2, Manipulation, Innovation,
+        FinalAppraisal, MuscleMemory, Veneration, HeartAndSoul, TrainedPerfection,
+    ];
+}
+
 /// <summary>Live state of the craft in progress (spec §10). Null when not crafting.</summary>
 public sealed record CraftSnapshot(
     ushort RecipeLevel,
@@ -59,4 +84,32 @@ public sealed record CraftSnapshot(
     int MaxDurability,
     uint CurrentCp,
     uint MaxCp,
-    CraftCondition Condition);
+    CraftCondition Condition)
+{
+    public IReadOnlyList<CraftBuff> Buffs { get; init; } = [];
+
+    public bool HasBuff(uint statusId)
+    {
+        foreach (var buff in Buffs)
+        {
+            if (buff.StatusId == statusId)
+                return true;
+        }
+
+        return false;
+    }
+
+    public static bool BuffsEqual(IReadOnlyList<CraftBuff> a, IReadOnlyList<CraftBuff> b)
+    {
+        if (a.Count != b.Count)
+            return false;
+
+        for (var i = 0; i < a.Count; i++)
+        {
+            if (a[i] != b[i])
+                return false;
+        }
+
+        return true;
+    }
+}

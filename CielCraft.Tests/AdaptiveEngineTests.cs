@@ -103,6 +103,20 @@ public class AdaptiveEngineTests
     }
 
     [Fact]
+    public void TargetQualityBelowMaxTriggersCompletionEarly()
+    {
+        // Quality 6000 of 10000 max, but the target is 50% -> capped; finish.
+        var decision = AdaptiveEngine.Decide(
+            Snapshot(progress: 2720, quality: 6000),
+            [Innovation, PreparatoryTouch, Groundwork],
+            BaseProgress, Level, targetQuality: 5000);
+
+        Assert.NotNull(decision);
+        Assert.Equal(BasicSynthesis, decision.ActionId);
+        Assert.NotNull(decision.DeviationReason);
+    }
+
+    [Fact]
     public void GroundworkIsHalvedBelowItsDurabilityCost()
     {
         // 500 remaining at 10 durability: Groundwork halves to 450 and fails,

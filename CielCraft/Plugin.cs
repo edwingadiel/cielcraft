@@ -59,7 +59,7 @@ public sealed class Plugin : IDalamudPlugin
         ActionExecutor = new ActionExecutor(GameBridge, CraftMonitor);
         SolverService = new SolverService(new CielCraft.Raphael.RaphaelSolver());
         CraftAutomator = new CraftAutomator(GameBridge, CraftMonitor, ActionExecutor, Configuration);
-        BatchCrafter = new BatchCrafter(GameBridge, CraftMonitor, CraftAutomator, SolverService, RecipeProvider);
+        BatchCrafter = new BatchCrafter(GameBridge, CraftMonitor, CraftAutomator, SolverService, RecipeProvider, Configuration);
         Navigation = new Navigation.VNavmeshProvider();
         GatheringController = new Gathering.GatheringController(GameBridge, Navigation, Configuration);
         GatheringLoop = new Gathering.GatheringLoop(GameBridge, GatheringController, Navigation, Configuration);

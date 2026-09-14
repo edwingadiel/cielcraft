@@ -59,5 +59,15 @@ public class ConfigWindow : Window, IDisposable
             configuration.UseCordials = cordials;
             configuration.Save();
         }
+
+        var targetQuality = configuration.TargetQualityPercent;
+        ImGui.SetNextItemWidth(160);
+        if (ImGui.SliderInt("Target quality %", ref targetQuality, 10, 100))
+        {
+            configuration.TargetQualityPercent = Math.Clamp(targetQuality, 10, 100);
+            configuration.Save();
+        }
+
+        ImGui.TextDisabled("Solve and craft toward this fraction of the recipe's maximum\nquality instead of always aiming for 100%.");
     }
 }

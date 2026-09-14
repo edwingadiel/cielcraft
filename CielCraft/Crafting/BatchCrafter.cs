@@ -33,6 +33,7 @@ public sealed class BatchCrafter : IDisposable
     private readonly CraftAutomator automator;
     private readonly SolverService solverService;
     private readonly Game.DalamudRecipeProvider recipeProvider;
+    private readonly Configuration configuration;
 
     private int targetQuantity;
     private ushort recipeId;
@@ -56,8 +57,10 @@ public sealed class BatchCrafter : IDisposable
         CraftStateMonitor craftMonitor,
         CraftAutomator automator,
         SolverService solverService,
-        Game.DalamudRecipeProvider recipeProvider)
+        Game.DalamudRecipeProvider recipeProvider,
+        Configuration configuration)
     {
+        this.configuration = configuration;
         this.gameBridge = gameBridge;
         this.craftMonitor = craftMonitor;
         this.automator = automator;
@@ -80,6 +83,11 @@ public sealed class BatchCrafter : IDisposable
     private bool quickMode;
     private bool quickDialogRequested;
     private DateTime quickLastProgressAt;
+    private CraftSetup? solvedSetup;
+    private int solveTargetQuality;
+    private CraftSolution? midSolution;
+    private bool midSolveTried;
+    private bool midSolve;
 
     public bool Start(int quantity, bool quickSynth = false)
     {
@@ -126,6 +134,10 @@ public sealed class BatchCrafter : IDisposable
         baselineItemCount = 0;
         solution = null;
         solveRequested = false;
+        solvedSetup = null;
+        midSolution = null;
+        midSolveTried = false;
+        midSolve = false;
         synthesisFired = false;
         automatorStarted = false;
         wasCrafting = gameBridge.IsCrafting;
@@ -311,6 +323,12 @@ public sealed class BatchCrafter : IDisposable
             if (craft == null || player == null)
                 return;
 
+            // Specialist one-shots: usable at craft start only when the job is
+            // an equipped specialist with charges (roadmap 3.5).
+            var jobId = player.ClassJobId;
+            var heartAndSoul = IsSpecialistActionReady(100419, jobId);
+            var quickInnovation = IsSpecialistActionReady(100459, jobId);
+
             var setup = new CraftSetup(
                 RecipeLevel: craft.RecipeLevel,
                 MaxProgress: (ushort)craft.MaxProgress,
@@ -322,32 +340,69 @@ public sealed class BatchCrafter : IDisposable
                 Cp: (ushort)player.MaxCp,
                 Level: (byte)player.Level,
                 Manipulation: player.Level >= 65,
-                HeartAndSoul: false,
-                QuickInnovation: false);
+                HeartAndSoul: heartAndSoul,
+                QuickInnovation: quickInnovation);
 
-            // Live quality at solve time reflects HQ materials, so the
-            // rotation accounts for them (every craft of the batch shares the
-            // same HQ fill).
-            if (!solverService.BeginSolve(setup, new CraftObjective(
-                    TargetQuality: (ushort)craft.MaxQuality,
+            solvedSetup = setup;
+            solveTargetQuality = Math.Max(
+                (int)craft.Quality,
+                craft.MaxQuality * Math.Clamp(configuration.TargetQualityPercent, 1, 100) / 100);
+
+            if (midSolve)
+            {
+                if (!solverService.BeginSolveFromState(setup, craft, solveTargetQuality))
+                    return;
+            }
+            else if (!solverService.BeginSolve(setup, new CraftObjective(
+                    // Live quality at solve time reflects HQ materials, so the
+                    // rotation accounts for them (every craft of the batch
+                    // shares the same HQ fill).
+                    TargetQuality: (ushort)solveTargetQuality,
                     InitialQuality: (ushort)craft.Quality)))
+            {
                 return;
+            }
 
             solveRequested = true;
-            StatusText = "Solving rotation...";
+            StatusText = midSolve ? "Re-solving from the current state..." : "Solving rotation...";
             return;
         }
 
         switch (solverService.Status)
         {
             case SolverStatus.Done when solverService.Solution is { Success: true } solved:
-                solution = solved;
+                if (midSolve)
+                {
+                    midSolution = solved;
+                    midSolve = false;
+                }
+                else
+                {
+                    solution = solved;
+                }
+
+                automatorStarted = false;
                 Transition(BatchState.Crafting, ProgressText());
                 break;
             case SolverStatus.Failed:
-                Fail($"solver failed ({solverService.Solution?.Error})");
+                if (midSolve)
+                {
+                    midSolve = false;
+                    Pause($"mid-craft re-solve failed ({solverService.Solution?.Error})");
+                }
+                else
+                {
+                    Fail($"solver failed ({solverService.Solution?.Error})");
+                }
+
                 break;
         }
+    }
+
+    private bool IsSpecialistActionReady(uint raphaelActionId, uint jobId)
+    {
+        var resolved = Game.CraftActionResolver.ResolveForJob(raphaelActionId, jobId);
+        return resolved != null && gameBridge.IsCraftActionReady(resolved.Value);
     }
 
     private void TickStartingCraft(bool isCrafting)
@@ -401,7 +456,25 @@ public sealed class BatchCrafter : IDisposable
             if (!automatorStarted && solution != null && automator.State != AutomationState.Running)
             {
                 var player = gameBridge.GetPlayerState();
-                if (player != null && automator.Start(solution.ActionIds, player.ClassJobId, solution.BaseProgress))
+                if (player == null)
+                    return;
+
+                // Food/potion expiry between crafts (roadmap 3.3): stats that
+                // no longer match the solve invalidate the rotation.
+                if (midSolution == null && solvedSetup is { } solved
+                    && ((ushort)player.Craftsmanship != solved.Craftsmanship
+                        || (ushort)player.Control != solved.Control
+                        || (ushort)player.MaxCp != solved.Cp))
+                {
+                    Plugin.Log.Information("[Raphael] Crafter stats changed (food/potion?); re-solving.");
+                    solution = null;
+                    solveRequested = false;
+                    Transition(BatchState.Solving, "Stats changed; re-solving...");
+                    return;
+                }
+
+                var active = midSolution ?? solution;
+                if (automator.Start(active.ActionIds, player.ClassJobId, active.BaseProgress, solveTargetQuality))
                 {
                     automatorStarted = true;
                     StatusText = ProgressText();
@@ -411,7 +484,24 @@ public sealed class BatchCrafter : IDisposable
             }
 
             if (automatorStarted && automator.State is AutomationState.Paused or AutomationState.Failed)
+            {
+                // One recovery attempt per craft (roadmap 3.2): re-solve the
+                // remainder from the live state instead of giving up.
+                if (!midSolveTried && automator.State == AutomationState.Paused
+                    && craftMonitor.Current != null && solvedSetup != null)
+                {
+                    midSolveTried = true;
+                    midSolve = true;
+                    solveRequested = false;
+                    automatorStarted = false;
+                    automator.Stop();
+                    Plugin.Log.Information($"[Adaptive] Automation paused ({automator.StatusText}); re-solving the remainder.");
+                    Transition(BatchState.Solving, "Recovering: re-solving the remaining craft...");
+                    return;
+                }
+
                 Pause($"craft automation stopped ({automator.StatusText})");
+            }
 
             return;
         }
@@ -421,6 +511,9 @@ public sealed class BatchCrafter : IDisposable
 
         // A craft ended: verify against inventory before counting it (spec §18).
         automatorStarted = false;
+        midSolution = null;
+        midSolveTried = false;
+        midSolve = false;
 
         if (automator.State != AutomationState.Completed)
         {

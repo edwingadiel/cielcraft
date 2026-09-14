@@ -28,13 +28,23 @@ public static class ActionResolution
         CraftSnapshot? current,
         bool isCrafting,
         TimeSpan elapsed,
-        TimeSpan timeout)
+        TimeSpan timeout,
+        bool advancesStep = true)
     {
         if (!isCrafting || current == null)
             return ActionOutcome.CraftEnded;
 
-        if (current.Step > baseline.Step)
+        if (advancesStep)
+        {
+            if (current.Step > baseline.Step)
+                return ActionOutcome.StepAdvanced;
+        }
+        else if (!CraftSnapshot.BuffsEqual(baseline.Buffs, current.Buffs))
+        {
+            // Specialist actions (Heart and Soul, Quick Innovation) do not
+            // advance the step counter; their buff appearing is the signal.
             return ActionOutcome.StepAdvanced;
+        }
 
         return elapsed >= timeout ? ActionOutcome.TimedOut : ActionOutcome.Pending;
     }

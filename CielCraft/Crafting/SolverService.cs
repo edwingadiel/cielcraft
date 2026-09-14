@@ -32,6 +32,53 @@ public sealed class SolverService
         this.solver = solver;
     }
 
+    public bool BeginSolveFromState(CraftSetup setup, CraftSnapshot live, int targetQuality)
+    {
+        lock (gate)
+        {
+            if (Status == SolverStatus.Solving)
+                return false;
+
+            Status = SolverStatus.Solving;
+            Solution = null;
+            startedAt = DateTime.UtcNow;
+            StatusText = "Re-solving from the current craft state...";
+        }
+
+        Plugin.Log.Information(
+            $"[Raphael] Mid-craft re-solve: step {live.Step}, progress {live.Progress}/{live.MaxProgress}, " +
+            $"quality {live.Quality}/{targetQuality}, durability {live.Durability}, CP {live.CurrentCp}.");
+
+        Task.Run(() => Finish(() => solver.SolveFromState(setup, live, targetQuality)));
+        return true;
+    }
+
+    private void Finish(Func<CraftSolution> run)
+    {
+        CraftSolution result;
+        try
+        {
+            result = run();
+        }
+        catch (Exception e)
+        {
+            result = CraftSolution.Failed(e.Message);
+            Plugin.Log.Error(e, "[Raphael] Solve threw.");
+        }
+
+        var elapsed = DateTime.UtcNow - startedAt;
+        lock (gate)
+        {
+            Solution = result;
+            Status = result.Success ? SolverStatus.Done : SolverStatus.Failed;
+            StatusText = result.Success
+                ? $"Solved in {elapsed.TotalSeconds:F1}s: {result.ActionIds.Count} actions."
+                : $"Failed after {elapsed.TotalSeconds:F1}s: {result.Error}.";
+        }
+
+        Plugin.Log.Information($"[Raphael] {StatusText}");
+    }
+
     public bool BeginSolve(CraftSetup setup, CraftObjective objective)
     {
         lock (gate)
@@ -51,32 +98,7 @@ public sealed class SolverService
             $"stats {setup.Craftsmanship}/{setup.Control}/{setup.Cp} @ Lv{setup.Level}, " +
             $"target quality {objective.TargetQuality} (initial {objective.InitialQuality}).");
 
-        Task.Run(() =>
-        {
-            CraftSolution result;
-            try
-            {
-                result = solver.Solve(setup, objective);
-            }
-            catch (Exception e)
-            {
-                result = CraftSolution.Failed(e.Message);
-                Plugin.Log.Error(e, "[Raphael] Solve threw.");
-            }
-
-            var elapsed = DateTime.UtcNow - startedAt;
-            lock (gate)
-            {
-                Solution = result;
-                Status = result.Success ? SolverStatus.Done : SolverStatus.Failed;
-                StatusText = result.Success
-                    ? $"Solved in {elapsed.TotalSeconds:F1}s: {result.ActionIds.Count} actions."
-                    : $"Failed after {elapsed.TotalSeconds:F1}s: {result.Error}.";
-            }
-
-            Plugin.Log.Information($"[Raphael] {StatusText}");
-        });
-
+        Task.Run(() => Finish(() => solver.Solve(setup, objective)));
         return true;
     }
 }

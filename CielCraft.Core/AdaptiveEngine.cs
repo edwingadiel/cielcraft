@@ -27,9 +27,11 @@ public static class AdaptiveEngine
         CraftSnapshot state,
         IReadOnlyList<uint> remainingPlan,
         int baseProgress,
-        byte level)
+        byte level,
+        int targetQuality = 0)
     {
-        var qualityCapped = state.Quality >= state.MaxQuality;
+        var target = targetQuality > 0 ? Math.Min(targetQuality, state.MaxQuality) : state.MaxQuality;
+        var qualityCapped = state.Quality >= target;
 
         if (!qualityCapped || baseProgress <= 0)
             return FollowPlan(remainingPlan);

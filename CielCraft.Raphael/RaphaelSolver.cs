@@ -46,6 +46,8 @@ public sealed class RaphaelSolver : ICraftSolver
             QuickInnovation = ToByte(setup.QuickInnovation),
             Adversarial = ToByte(objective.Adversarial),
             BackloadProgress = ToByte(objective.BackloadProgress),
+            ExcludeFirstStepActions = ToByte(objective.ExcludeFirstStepActions),
+            ExcludePrudent = ToByte(objective.ExcludePrudent),
         };
 
         var buffer = new uint[MaxActions];
@@ -63,6 +65,30 @@ public sealed class RaphaelSolver : ICraftSolver
             -4 => CraftSolution.Failed("the solution exceeded the action buffer"),
             _ => CraftSolution.Failed($"invalid solver arguments (code {result})"),
         };
+    }
+
+    public CraftSolution SolveFromState(CraftSetup setup, CraftSnapshot live, int targetQuality)
+    {
+        var remainingProgress = Math.Max(1, setup.MaxProgress - live.Progress);
+        var remainingQuality = Math.Max(0, Math.Min(targetQuality, (int)setup.MaxQuality) - live.Quality);
+
+        var adjusted = setup with
+        {
+            MaxProgress = (ushort)remainingProgress,
+            MaxQuality = (ushort)remainingQuality,
+            MaxDurability = (ushort)Math.Max(1, live.Durability),
+            Cp = (ushort)live.CurrentCp,
+            // Specialist one-shots cannot be assumed available mid-craft.
+            HeartAndSoul = false,
+            QuickInnovation = false,
+        };
+
+        var objective = new CraftObjective(
+            TargetQuality: adjusted.MaxQuality,
+            ExcludeFirstStepActions: live.Step > 1,
+            ExcludePrudent: live.HasBuff(CraftBuffIds.WasteNot) || live.HasBuff(CraftBuffIds.WasteNot2));
+
+        return Solve(adjusted, objective);
     }
 
     private static byte ToByte(bool value) => value ? (byte)1 : (byte)0;
@@ -120,6 +146,8 @@ public sealed class RaphaelSolver : ICraftSolver
         public byte QuickInnovation;
         public byte Adversarial;
         public byte BackloadProgress;
+        public byte ExcludeFirstStepActions;
+        public byte ExcludePrudent;
     }
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using CielCraft.Core;
 using CielCraft.Game;
@@ -231,6 +232,13 @@ public class DebugWindow : Window, IDisposable
             ImGui.BulletText($"Durability: {craft.Durability} / {craft.MaxDurability}");
             ImGui.BulletText($"CP: {craft.CurrentCp} / {craft.MaxCp}");
             ImGui.BulletText($"Condition: {craft.Condition}");
+            if (craft.Buffs.Count > 0)
+            {
+                var parts = new List<string>();
+                foreach (var buff in craft.Buffs)
+                    parts.Add(buff.Stacks > 0 ? $"{buff.StatusId}x{buff.Stacks}" : $"{buff.StatusId}");
+                ImGui.BulletText($"Buffs: {string.Join(", ", parts)}");
+            }
         }
 
         ImGui.Separator();

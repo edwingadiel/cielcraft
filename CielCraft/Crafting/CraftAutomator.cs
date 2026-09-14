@@ -68,8 +68,14 @@ public sealed class CraftAutomator : IDisposable
         executor.ActionResolved -= OnActionResolved;
     }
 
+    /// <summary>Specialist actions do not advance the step counter.</summary>
+    private static bool AdvancesStep(uint raphaelActionId) => raphaelActionId is not (100419 or 100459);
+
+    private int targetQuality;
+
     /// <param name="craftBaseProgress">Progress per 100% efficiency, from the solve; 0 disables the adaptive rules that need it.</param>
-    public bool Start(IReadOnlyList<uint> actions, uint jobId, int craftBaseProgress = 0)
+    /// <param name="qualityTarget">Absolute quality goal; 0 = the recipe maximum.</param>
+    public bool Start(IReadOnlyList<uint> actions, uint jobId, int craftBaseProgress = 0, int qualityTarget = 0)
     {
         if (State == AutomationState.Running)
             return false;
@@ -83,6 +89,7 @@ public sealed class CraftAutomator : IDisposable
         waitingForReady = false;
         adaptive = configuration.AdaptiveCrafting;
         baseProgress = craftBaseProgress;
+        targetQuality = qualityTarget;
         crafterLevel = (byte)(gameBridge.GetPlayerState()?.Level ?? 0);
         pendingConsume = 1;
 
@@ -130,7 +137,8 @@ public sealed class CraftAutomator : IDisposable
                     // With adaptive crafting the engine keeps synthesizing past
                     // the plan while the quality target is met; otherwise stop.
                     var craft = craftMonitor.Current;
-                    if (!(adaptive && baseProgress > 0 && craft != null && craft.Quality >= craft.MaxQuality))
+                    var goal = targetQuality > 0 ? Math.Min(targetQuality, craft?.MaxQuality ?? 0) : craft?.MaxQuality ?? 0;
+                    if (!(adaptive && baseProgress > 0 && craft != null && craft.Quality >= goal))
                         Pause("rotation exhausted but the craft is still in progress");
                 }
                 else
@@ -215,7 +223,7 @@ public sealed class CraftAutomator : IDisposable
 
         pendingConsume = decision.ConsumeFromPlan;
 
-        if (!executor.TryExecute(resolved.Value))
+        if (!executor.TryExecute(resolved.Value, AdvancesStep(decision.ActionId)))
             Pause($"executor refused the action ({executor.LastResult})");
     }
 
@@ -226,7 +234,7 @@ public sealed class CraftAutomator : IDisposable
             : (IReadOnlyList<uint>)[.. rotation.Skip(nextIndex)];
 
         if (adaptive && baseProgress > 0 && craftMonitor.Current is { } craft)
-            return AdaptiveEngine.Decide(craft, remaining, baseProgress, crafterLevel);
+            return AdaptiveEngine.Decide(craft, remaining, baseProgress, crafterLevel, targetQuality);
 
         return remaining.Count > 0 ? new AdaptiveDecision(remaining[0], 1, null) : null;
     }

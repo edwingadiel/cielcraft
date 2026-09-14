@@ -25,6 +25,10 @@ pub struct RaphaelInput {
     pub quick_innovation: u8,
     pub adversarial: u8,
     pub backload_progress: u8,
+    /// Mid-craft solve: exclude first-step-only actions (Muscle Memory, Reflect, Trained Eye).
+    pub exclude_first_step_actions: u8,
+    /// Waste Not active: exclude Prudent Synthesis/Touch (unusable under it).
+    pub exclude_prudent: u8,
 }
 
 pub const ERR_INVALID_ARGS: i32 = -1;
@@ -131,6 +135,22 @@ fn settings_for(input: &RaphaelInput) -> raphael_sim::Settings {
     let mut settings = get_game_settings(recipe, Some(overrides), stats, None, None);
     settings.adversarial = input.adversarial != 0;
     settings.backload_progress = input.backload_progress != 0;
+
+    if input.exclude_first_step_actions != 0 {
+        settings.allowed_actions = settings
+            .allowed_actions
+            .remove(raphael_sim::Action::MuscleMemory)
+            .remove(raphael_sim::Action::Reflect)
+            .remove(raphael_sim::Action::TrainedEye);
+    }
+
+    if input.exclude_prudent != 0 {
+        settings.allowed_actions = settings
+            .allowed_actions
+            .remove(raphael_sim::Action::PrudentSynthesis)
+            .remove(raphael_sim::Action::PrudentTouch);
+    }
+
     settings
 }
 

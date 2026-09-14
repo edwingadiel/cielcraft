@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using CielCraft.Core;
 using FFXIVClientStructs.FFXIV.Client.Game.Event;
 using FFXIVClientStructs.FFXIV.Client.UI;
@@ -40,7 +42,26 @@ internal static unsafe class CraftStateReader
             MaxDurability: AtkTextParser.ParseInt(addon->StartingDurability),
             CurrentCp: player?.CurrentCp ?? 0,
             MaxCp: player?.MaxCp ?? 0,
-            Condition: condition);
+            Condition: condition)
+        {
+            Buffs = ReadBuffs(),
+        };
+    }
+
+    private static IReadOnlyList<CraftBuff> ReadBuffs()
+    {
+        var player = Plugin.ObjectTable.LocalPlayer;
+        if (player == null)
+            return [];
+
+        var buffs = new List<CraftBuff>();
+        foreach (var status in player.StatusList)
+        {
+            if (status.StatusId != 0 && Array.IndexOf(CraftBuffIds.All, status.StatusId) >= 0)
+                buffs.Add(new CraftBuff(status.StatusId, status.Param));
+        }
+
+        return buffs;
     }
 
 
