@@ -105,19 +105,46 @@ public sealed class CraftAutomator : IDisposable
 
     public void Pause(string reason) => Transition(AutomationState.Paused, $"Paused: {reason}.");
 
-    public void Resume()
+    /// <summary>
+    /// Resumes a paused run. Returns false when there is nothing left to run
+    /// (rotation exhausted with the craft unfinished) — the owner must then
+    /// recover another way (e.g. re-solve from the live state).
+    /// </summary>
+    public bool Resume()
     {
         if (State != AutomationState.Paused)
-            return;
+            return false;
 
         if (!gameBridge.IsCrafting)
         {
             Transition(AutomationState.Failed, "Cannot resume: no craft is active.");
-            return;
+            return false;
         }
+
+        if (nextIndex >= rotation.Count && exhaustedAt == null && !AdaptiveCanContinue())
+        {
+            StatusText = "Paused: rotation exhausted; nothing to resume.";
+            return false;
+        }
+
+        // A grace window frozen by the pause must restart, not expire instantly.
+        if (exhaustedAt != null)
+            exhaustedAt = DateTime.UtcNow;
 
         waitingForReady = false;
         Transition(AutomationState.Running, $"Running: {CompletedActions}/{rotation.Count} actions.");
+        return true;
+    }
+
+    /// <summary>Adaptive mode keeps synthesizing past the plan once the quality goal is met.</summary>
+    private bool AdaptiveCanContinue()
+    {
+        var craft = craftMonitor.Current;
+        if (!adaptive || baseProgress <= 0 || craft == null)
+            return false;
+
+        var goal = targetQuality > 0 ? Math.Min(targetQuality, craft.MaxQuality) : craft.MaxQuality;
+        return craft.Quality >= goal;
     }
 
     public void Stop()
@@ -140,31 +167,35 @@ public sealed class CraftAutomator : IDisposable
                 nextIndex += pendingConsume;
                 pendingConsume = 1;
                 RebuildRemaining();
-                if (State == AutomationState.Paused)
+
+                if (nextIndex < rotation.Count)
                 {
-                    StatusText = $"Paused after action resolved ({nextIndex}/{rotation.Count}).";
+                    StatusText = State == AutomationState.Paused
+                        ? $"Paused after action resolved ({nextIndex}/{rotation.Count})."
+                        : $"Running: {nextIndex}/{rotation.Count} actions.";
                     break;
                 }
 
-                if (nextIndex >= rotation.Count)
+                // Rotation exhausted. Progress is the real signal: a complete
+                // progress bar means the craft is finishing (the step advance
+                // is observed a few frames before the crafting flag clears),
+                // so wait for the end; anything less is a genuine shortfall.
+                if (AdaptiveCanContinue())
+                    break;
+
+                var current = craftMonitor.Current;
+                if (current == null || current.Progress >= current.MaxProgress)
                 {
-                    // With adaptive crafting the engine keeps synthesizing past
-                    // the plan while the quality target is met; otherwise give
-                    // the craft a grace period first — the final action's step
-                    // advance is often observed a few frames before the
-                    // crafting flag clears, and pausing there would flag a
-                    // successful craft as incomplete.
-                    var craft = craftMonitor.Current;
-                    var goal = targetQuality > 0 ? Math.Min(targetQuality, craft?.MaxQuality ?? 0) : craft?.MaxQuality ?? 0;
-                    if (!(adaptive && baseProgress > 0 && craft != null && craft.Quality >= goal))
-                    {
-                        exhaustedAt = DateTime.UtcNow;
-                        StatusText = $"Running: {nextIndex}/{rotation.Count} actions (awaiting craft end).";
-                    }
+                    exhaustedAt = DateTime.UtcNow;
+                    StatusText = $"{(State == AutomationState.Paused ? "Paused" : "Running")}: rotation done, awaiting craft end.";
+                }
+                else if (State == AutomationState.Running)
+                {
+                    Pause($"rotation exhausted with progress {current.Progress}/{current.MaxProgress}");
                 }
                 else
                 {
-                    StatusText = $"Running: {nextIndex}/{rotation.Count} actions.";
+                    StatusText = "Paused: rotation exhausted; nothing to resume.";
                 }
 
                 break;
@@ -174,8 +205,9 @@ public sealed class CraftAutomator : IDisposable
                 // the synthesis window closes as it resolves. If the in-flight
                 // action was expected to retire the rest of the plan (the last
                 // planned action, or an adaptive finisher), the craft ran to
-                // completion; anything earlier is an abnormal end.
-                if (exhaustedAt != null || nextIndex + pendingConsume >= rotation.Count)
+                // completion; anything earlier is an abnormal end. (The grace
+                // window, when armed, already implies nextIndex == Count.)
+                if (nextIndex + pendingConsume >= rotation.Count)
                 {
                     exhaustedAt = null;
                     nextIndex = rotation.Count;
@@ -222,10 +254,12 @@ public sealed class CraftAutomator : IDisposable
 
         if (exhaustedAt is { } exhausted)
         {
-            if (DateTime.UtcNow - exhausted > TimeSpan.FromSeconds(4))
+            // Progress was complete when the plan ran out; the craft should end
+            // on its own within moments. The ceiling only guards a stalled client.
+            if (DateTime.UtcNow - exhausted > TimeSpan.FromSeconds(10))
             {
                 exhaustedAt = null;
-                Pause("rotation exhausted but the craft is still in progress");
+                Pause("the craft did not end after the rotation completed");
             }
 
             return;

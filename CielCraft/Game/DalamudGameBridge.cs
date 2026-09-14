@@ -103,6 +103,9 @@ public sealed class DalamudGameBridge : IGameBridge
         FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase* addon,
         FFXIVClientStructs.FFXIV.Component.GUI.AtkComponentCheckBox* checkbox)
     {
+        if (checkbox == null)
+            return false;
+
         var node = checkbox->OwnerNode;
         if (node == null)
             return false;

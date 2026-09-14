@@ -42,12 +42,15 @@ public sealed class GatheringController : IDisposable
     private int lastIntegrity = -1;
     private int gatherSwings;
     private bool awaitingSwing;
+    private DateTime swingStartedAt;
     private DateTime phaseStartedAt;
     private DateTime lastAttemptAt;
     private int mountAttempts;
     private bool flyBlocked;
     private bool flyAttempted;
     private int neededCount = int.MaxValue;
+    private int gainedAtSwing = -1;
+    private int gainedCached;
     private bool yieldBuffUsed;
     private bool buffsBroken;
     private (uint ActionId, uint GpBefore, int IntegrityBefore, DateTime At)? pendingBuff;
@@ -101,6 +104,8 @@ public sealed class GatheringController : IDisposable
         LastNodeId = node.ObjectId;
         requestedItemId = itemId;
         neededCount = needed;
+        gainedAtSwing = -1;
+        gainedCached = 0;
         collectablesTaken = 0;
         pendingCollectAction = null;
         yieldBuffUsed = false;
@@ -135,14 +140,16 @@ public sealed class GatheringController : IDisposable
         if (State != GatheringState.Paused)
             return;
 
-        if (gameBridge.GetGatheringState() is { } gathering)
+        if (gameBridge.GetGatheringState() != null)
         {
-            // Re-baseline the swing observer: a swing may have resolved (or
-            // been lost) during the pause, and a stale awaitingSwing against a
-            // reset timer would re-pause instantly.
-            awaitingSwing = false;
-            pendingCollectAction = null;
-            lastIntegrity = gathering.IntegrityRemaining;
+            // Keep an in-flight swing's observer intact (its integrity drop is
+            // still the completion signal) but restart its deadline, which the
+            // pause froze. Collectable appraisals likewise.
+            if (awaitingSwing)
+                swingStartedAt = DateTime.UtcNow;
+            if (pendingCollectAction is { } pending)
+                pendingCollectAction = pending with { At = DateTime.UtcNow };
+
             EnterPhase(GatheringState.GatheringNode, "Resuming at the open node.");
         }
         else if (node != null)
@@ -380,7 +387,7 @@ public sealed class GatheringController : IDisposable
                 gatherSwings++;
                 StatusText = $"Gathering: {gatherSwings} swings, integrity {gathering.IntegrityRemaining}/{gathering.IntegrityTotal}.";
             }
-            else if (DateTime.UtcNow - lastAttemptAt > SwingTimeout)
+            else if (DateTime.UtcNow - swingStartedAt > SwingTimeout)
             {
                 Pause("gather attempt did not resolve in time");
             }
@@ -396,6 +403,7 @@ public sealed class GatheringController : IDisposable
             if (gameBridge.GatherSlot(chosenSlot))
             {
                 awaitingSwing = true;
+                swingStartedAt = DateTime.UtcNow;
             }
         });
     }
@@ -437,7 +445,13 @@ public sealed class GatheringController : IDisposable
         if (jobId is not (GatheringActions.MinerJobId or GatheringActions.BotanistJobId))
             return false;
 
-        var gained = Math.Max(0, gameBridge.GetItemCount(chosenItemId) - baselineCount);
+        if (gainedAtSwing != gatherSwings)
+        {
+            gainedAtSwing = gatherSwings;
+            gainedCached = Math.Max(0, gameBridge.GetItemCount(chosenItemId) - baselineCount);
+        }
+
+        var gained = gainedCached;
         var remaining = neededCount == int.MaxValue ? int.MaxValue : Math.Max(0, neededCount - gained);
         var yieldPerSwing = gatherSwings > 0 ? Math.Max(1, gained / gatherSwings) : 1;
 

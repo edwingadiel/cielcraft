@@ -58,13 +58,20 @@ public sealed class ProductionQueue : IDisposable
         configuration.Save();
     }
 
+    /// <summary>Row 0 while an entry is being produced — not removable.</summary>
+    public bool IsInFlight(int index) => startedCurrent && index == 0;
+
     public void StartQueue()
     {
         if (configuration.QueueItems.Count == 0)
             return;
 
+        // An entry already in flight stays tracked; if the runner is merely
+        // paused on it, running the queue means resuming production.
+        if (startedCurrent && runner.State == ProductionState.Paused)
+            runner.Resume();
+
         Running = true;
-        startedCurrent = false;
         StatusText = $"Queue running ({Count} target(s)).";
         Plugin.Log.Information($"[Production] {StatusText}");
     }
@@ -73,6 +80,25 @@ public sealed class ProductionQueue : IDisposable
     {
         Running = false;
         StatusText = "Queue stopped.";
+    }
+
+    private void TrimInFlightEntry()
+    {
+        if (configuration.QueueItems.Count == 0)
+            return;
+
+        var entry = configuration.QueueItems[0];
+        var saved = configuration.SavedProduction;
+        if (saved.ItemId != entry.ItemId)
+            return;
+
+        var produced = Math.Max(0, gameBridge.GetItemCount(entry.ItemId) - saved.InitialCount);
+        if (produced >= entry.Quantity)
+            configuration.QueueItems.RemoveAt(0);
+        else
+            entry.Quantity -= produced;
+
+        configuration.Save();
     }
 
     private void OnUpdate(IFramework framework)
@@ -90,16 +116,19 @@ public sealed class ProductionQueue : IDisposable
                 break;
 
             case ProductionState.Idle when startedCurrent:
-                // The runner was stopped underneath the queue.
+                // The runner was stopped underneath the queue: keep the entry
+                // for a later run, trimmed by whatever was already produced.
+                TrimInFlightEntry();
                 Running = false;
                 startedCurrent = false;
                 StatusText = "Queue held: production was stopped.";
                 return;
 
-            case ProductionState.Failed:
-            case ProductionState.Paused:
+            case ProductionState.Failed when startedCurrent:
+            case ProductionState.Paused when startedCurrent:
+                // Hold, but keep tracking the entry so its completion still
+                // advances the queue after the user resumes.
                 Running = false;
-                startedCurrent = false;
                 StatusText = $"Queue held: {runner.StatusText}";
                 return;
         }

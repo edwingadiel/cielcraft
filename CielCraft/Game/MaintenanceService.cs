@@ -146,7 +146,7 @@ public sealed class MaintenanceService
                     return NeedsFood && StartFood();
                 }
 
-                Throttled(() => gameBridge.FireAddonCallbackInt("Repair", -1));
+                Throttled(CloseRepairUi);
                 if (TimedOut("the repair window did not close"))
                     return false;
 
@@ -222,15 +222,22 @@ public sealed class MaintenanceService
         StatusText = statusText;
     }
 
-    /// <summary>Abandons any in-flight phase, closing the repair window if it is open.</summary>
+    /// <summary>Abandons any in-flight phase, dismissing any repair UI left open.</summary>
     public void Abort()
     {
         if (phase == Phase.Idle)
             return;
 
-        gameBridge.FireAddonCallbackInt("Repair", -1);
+        CloseRepairUi();
         phase = Phase.Idle;
         StatusText = "";
+    }
+
+    /// <summary>Dismisses the repair confirmation (No) and the repair window, whichever are open.</summary>
+    private void CloseRepairUi()
+    {
+        gameBridge.FireAddonCallbackInt("SelectYesno", 1);
+        gameBridge.FireAddonCallbackInt("Repair", -1);
     }
 
     private bool TimedOut(string reason)
@@ -239,9 +246,9 @@ public sealed class MaintenanceService
             return false;
 
         Plugin.Log.Warning($"[Maintenance] {reason}.");
-        // Never leave the repair window open behind a timeout — it blocks
-        // gearset swaps and crafting-log interaction downstream.
-        gameBridge.FireAddonCallbackInt("Repair", -1);
+        // Never leave repair UI open behind a timeout — it blocks gearset
+        // swaps and crafting-log interaction downstream.
+        CloseRepairUi();
         BlockedReason = reason;
         phase = Phase.Idle;
         return true;

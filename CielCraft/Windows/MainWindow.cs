@@ -318,6 +318,13 @@ public class MainWindow : Window, IDisposable
         {
             ItemIcon(items[i].ItemId, 18f);
             ImGui.TextUnformatted($"{plugin.RecipeProvider.GetItemName(items[i].ItemId)} ×{items[i].Quantity}");
+            if (queue.IsInFlight(i))
+            {
+                ImGui.SameLine();
+                ImGui.TextColored(UiTheme.Info, "● producing");
+                continue;
+            }
+
             ImGui.SameLine();
             if (ImGui.SmallButton($"×##q{i}"))
             {
@@ -376,12 +383,12 @@ public class MainWindow : Window, IDisposable
 
     private static void DrawStateBadge(string state, bool paused, string statusText)
     {
-        // Compiler-checked coloring lives in the enum-typed overloads below;
-        // this string form remains only as their shared renderer.
+        // Every state enum shares the terminal names Failed/Completed; the
+        // badge keys off those names deliberately so one renderer serves all.
         var color = state switch
         {
-            nameof(ProductionState.Failed) => UiTheme.Danger,
-            nameof(ProductionState.Completed) => UiTheme.Success,
+            "Failed" => UiTheme.Danger,
+            "Completed" => UiTheme.Success,
             _ when paused => UiTheme.Warning,
             _ => UiTheme.Info,
         };

@@ -115,7 +115,7 @@ public sealed class BatchCrafter : IDisposable
         {
             var requirements = gameBridge.GetRecipeRequirements(gameBridge.SelectedRecipeId);
             var craftable = InventoryMath.CraftableCount(requirements);
-            if (requirements.Count > 0 && !InventoryMath.CanCraft(requirements, quantity))
+            if (requirements.Count > 0 && craftable < quantity)
             {
                 Transition(
                     BatchState.Idle,
@@ -139,6 +139,7 @@ public sealed class BatchCrafter : IDisposable
         solution = null;
         solveRequested = false;
         solvedSetup = null;
+        solveTargetQuality = 0;
         midSolution = null;
         midSolveTried = false;
         midSolve = false;
@@ -203,10 +204,9 @@ public sealed class BatchCrafter : IDisposable
         }
         else if (gameBridge.IsCrafting)
         {
-            if (automator.State == AutomationState.Paused)
+            if (automator.State == AutomationState.Paused && automator.Resume())
             {
                 // The automator holds a consistent position in its rotation.
-                automator.Resume();
                 Transition(BatchState.Crafting, ProgressText());
                 return;
             }
@@ -249,6 +249,14 @@ public sealed class BatchCrafter : IDisposable
         var isCrafting = gameBridge.IsCrafting;
         var craftJustEnded = wasCrafting && !isCrafting;
         wasCrafting = isCrafting;
+
+        // A craft can end while the batch is paused (in-flight last action);
+        // its verification must not be lost or the count drifts by one.
+        if (craftJustEnded && State == BatchState.Paused && automatorStarted)
+        {
+            HandleCraftEnded();
+            return;
+        }
 
         switch (State)
         {
@@ -374,7 +382,7 @@ public sealed class BatchCrafter : IDisposable
             // required quality. A mid-craft recovery keeps the original target
             // — recomputing from live quality would inflate it for the rest of
             // the batch.
-            if (!midSolve)
+            if (!midSolve || solveTargetQuality == 0)
                 solveTargetQuality = Math.Max(
                     Math.Max((int)craft.Quality, craft.RequiredQuality),
                     craft.MaxQuality * Math.Clamp(configuration.TargetQualityPercent, 1, 100) / 100);
@@ -568,6 +576,12 @@ public sealed class BatchCrafter : IDisposable
         if (!craftJustEnded)
             return;
 
+        HandleCraftEnded();
+    }
+
+    /// <summary>Verifies and counts a finished craft (spec §18); safe to run while paused.</summary>
+    private void HandleCraftEnded()
+    {
         // A craft ended: verify against inventory before counting it (spec §18).
         automatorStarted = false;
         midSolution = null;
@@ -602,7 +616,10 @@ public sealed class BatchCrafter : IDisposable
 
         synthesisFired = false;
         waitStartedAt = DateTime.UtcNow;
-        Transition(BatchState.StartingCraft, ProgressText());
+        if (State == BatchState.Paused)
+            StatusText = $"Paused ({CompletedCrafts}/{targetQuantity} crafts verified).";
+        else
+            Transition(BatchState.StartingCraft, ProgressText());
     }
 
     private void CaptureCraftResult()

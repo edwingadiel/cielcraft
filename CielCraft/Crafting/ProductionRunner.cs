@@ -251,7 +251,7 @@ public sealed class ProductionRunner : IDisposable
         if (gameBridge.IsCrafting)
             return;
 
-        if (!EnsureJob(task.JobId))
+        if (!EnsureJob(task.JobId, "gathering job"))
             return;
 
         // Timed node not up yet: hold until shortly before the window opens
@@ -444,12 +444,14 @@ public sealed class ProductionRunner : IDisposable
     /// gearset. Returns true when already on the job; false while working or
     /// after failing.
     /// </summary>
-    private bool EnsureJob(uint jobId)
+    private bool EnsureJob(uint jobId, string jobLabel = "job")
     {
         if (gameBridge.CurrentClassJobId == jobId)
             return true;
 
-        if (gameBridge.IsPreparingToCraft || gameBridge.SelectedRecipeId != 0)
+        // The log being *open* is what blocks class changes; the game struct's
+        // selected-recipe id can outlive the window, so test the addon itself.
+        if (gameBridge.IsPreparingToCraft || gameBridge.IsAddonVisible("RecipeNote"))
         {
             Throttled(gameBridge.CloseRecipeNote);
             return false;
@@ -459,7 +461,7 @@ public sealed class ProductionRunner : IDisposable
         {
             gearsetRequested = true;
             if (!gameBridge.EquipGearsetForJob(jobId))
-                Fail($"no gearset found for job {jobId}");
+                Fail($"no gearset found for {jobLabel} {jobId}");
         });
         return false;
     }
@@ -575,6 +577,7 @@ public sealed class ProductionRunner : IDisposable
     {
         gatherQueue.Clear();
         gatherIndex = 0;
+        areaDestination = null; // a new plan never inherits a previous area point
         if (productionPlan.RawMaterials.Count == 0)
             return true;
 
@@ -675,6 +678,7 @@ public sealed class ProductionRunner : IDisposable
         mountAttempts = 0;
         flyBlocked = false;
         flyAttempted = false;
+        lastNodeProbeAt = DateTime.MinValue; // never carry a node probe across phases/tasks
     }
 
     private void Throttled(Action action)

@@ -132,19 +132,20 @@ public sealed class GatheringLoop : IDisposable
         if (State != GatheringLoopState.Running)
             return;
 
-        if (Gathered >= targetQuantity)
-        {
-            controller.Stop();
-            Transition(GatheringLoopState.Completed, $"Completed: {Gathered}/{targetQuantity} gathered.");
-            return;
-        }
-
-        // Inventory-space and cordial checks poll native inventory sweeps;
-        // once a second is plenty (maintenance keeps ticking every frame only
-        // while a repair/food phase is actually in flight).
+        // Completion, inventory-space and cordial checks all poll native
+        // inventory sweeps; once a second is plenty (node runs start at most
+        // every two seconds anyway).
         if (DateTime.UtcNow - lastHousekeepingAt > TimeSpan.FromSeconds(1))
         {
             lastHousekeepingAt = DateTime.UtcNow;
+            var gathered = Gathered;
+            if (gathered >= targetQuantity)
+            {
+                controller.Stop();
+                Transition(GatheringLoopState.Completed, $"Completed: {gathered}/{targetQuantity} gathered.");
+                return;
+            }
+
             if (gameBridge.GetFreeInventorySlots() < 1)
             {
                 Pause("inventory is full");
