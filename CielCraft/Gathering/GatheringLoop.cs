@@ -179,7 +179,11 @@ public sealed class GatheringLoop : IDisposable
                 return;
             }
 
-            TryCordial();
+            // Cordials only between nodes: item use while the node window is
+            // open is refused and would just burn the retry back-off.
+            if (controller.State is not (GatheringState.MovingToNode or GatheringState.Interacting
+                or GatheringState.GatheringNode or GatheringState.CollectableNode))
+                TryCordial();
         }
 
         // Between-node maintenance (repair/food) — never while a node run is live.

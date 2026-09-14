@@ -465,6 +465,11 @@ public sealed class GatheringController : IDisposable
         {
             if (gameBridge.GatherSlot(chosenSlot))
             {
+                // Baseline for the completion check is the integrity right now,
+                // not the value after the last swing: an integrity restore in
+                // between (Solid Reason / Ageless Words) raises it, and the
+                // next swing's drop would otherwise never register.
+                lastIntegrity = gathering.IntegrityRemaining;
                 awaitingSwing = true;
                 swingStartedAt = DateTime.UtcNow;
             }
