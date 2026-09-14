@@ -8,6 +8,12 @@ namespace CielCraft.Core;
 /// </summary>
 public static class CraftActionData
 {
+    public const uint HeartAndSoul = 100419;
+    public const uint QuickInnovation = 100459;
+
+    /// <summary>Specialist one-shots; they do not advance the step counter.</summary>
+    public static bool IsSpecialist(uint actionId) => actionId is HeartAndSoul or QuickInnovation;
+
     /// <summary>Actions that only serve quality — safe to skip once the quality target is met.</summary>
     private static readonly HashSet<uint> QualityOnly =
     [

@@ -24,8 +24,8 @@ public sealed record GatheringLocation(
 /// </summary>
 public sealed class GatheringDatabase
 {
-    public const uint MinerJobId = 16;
-    public const uint BotanistJobId = 17;
+    public const uint MinerJobId = CielCraft.Core.GatheringActions.MinerJobId;
+    public const uint BotanistJobId = CielCraft.Core.GatheringActions.BotanistJobId;
 
     private Dictionary<uint, uint>? itemToJob;
     private Dictionary<uint, GatheringLocation>? itemToLocation;

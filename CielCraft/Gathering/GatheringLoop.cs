@@ -44,6 +44,7 @@ public sealed class GatheringLoop : IDisposable
     private DateTime lastStartAttempt = DateTime.MinValue;
     private System.Numerics.Vector3? areaCenter;
     private DateTime lastCordialAt = DateTime.MinValue;
+    private DateTime lastHousekeepingAt = DateTime.MinValue;
 
     public GatheringLoopState State { get; private set; } = GatheringLoopState.Idle;
     public string StatusText { get; private set; } = "Idle.";
@@ -100,6 +101,9 @@ public sealed class GatheringLoop : IDisposable
             return;
 
         controller.Pause("loop paused");
+        // The between-node area drift runs while the controller is idle, so
+        // its Pause cannot stop that movement — stop it here.
+        navigation.Stop();
         Transition(GatheringLoopState.Paused, $"Paused: {reason}.");
     }
 
@@ -117,6 +121,8 @@ public sealed class GatheringLoop : IDisposable
     public void Stop()
     {
         controller.Stop();
+        maintenance.Abort();
+        navigation.Stop();
         if (State is GatheringLoopState.Running or GatheringLoopState.Paused)
             Transition(GatheringLoopState.Idle, $"Stopped by user at {Gathered}/{targetQuantity}.");
     }
@@ -133,13 +139,20 @@ public sealed class GatheringLoop : IDisposable
             return;
         }
 
-        if (gameBridge.GetFreeInventorySlots() < 1)
+        // Inventory-space and cordial checks poll native inventory sweeps;
+        // once a second is plenty (maintenance keeps ticking every frame only
+        // while a repair/food phase is actually in flight).
+        if (DateTime.UtcNow - lastHousekeepingAt > TimeSpan.FromSeconds(1))
         {
-            Pause("inventory is full");
-            return;
-        }
+            lastHousekeepingAt = DateTime.UtcNow;
+            if (gameBridge.GetFreeInventorySlots() < 1)
+            {
+                Pause("inventory is full");
+                return;
+            }
 
-        TryCordial();
+            TryCordial();
+        }
 
         // Between-node maintenance (repair/food) — never while a node run is live.
         var nodeRunActive = controller.State is GatheringState.MovingToNode
@@ -244,7 +257,10 @@ public sealed class GatheringLoop : IDisposable
 
         foreach (var cordial in Core.GatheringActions.Cordials)
         {
-            if (gameBridge.GetItemCount(cordial) > 0 && gameBridge.UseItem(cordial))
+            // HQ consumables are addressed as item id + 1,000,000; the count
+            // covers both qualities, so try the HQ form first.
+            if (gameBridge.GetItemCount(cordial) > 0
+                && (gameBridge.UseItem(cordial + 1_000_000) || gameBridge.UseItem(cordial)))
             {
                 lastCordialAt = DateTime.UtcNow;
                 Plugin.Log.Information($"[Gather] Drinking cordial (item {cordial}); GP {player.CurrentGp}/{player.MaxGp}.");

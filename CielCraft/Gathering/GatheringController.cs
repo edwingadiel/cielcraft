@@ -135,12 +135,24 @@ public sealed class GatheringController : IDisposable
         if (State != GatheringState.Paused)
             return;
 
-        if (gameBridge.GetGatheringState() != null)
+        if (gameBridge.GetGatheringState() is { } gathering)
+        {
+            // Re-baseline the swing observer: a swing may have resolved (or
+            // been lost) during the pause, and a stale awaitingSwing against a
+            // reset timer would re-pause instantly.
+            awaitingSwing = false;
+            pendingCollectAction = null;
+            lastIntegrity = gathering.IntegrityRemaining;
             EnterPhase(GatheringState.GatheringNode, "Resuming at the open node.");
+        }
         else if (node != null)
+        {
             EnterPhase(GatheringState.MovingToNode, "Resuming approach.");
+        }
         else
+        {
             Transition(GatheringState.Idle, "Nothing to resume.");
+        }
     }
 
     public void Stop()

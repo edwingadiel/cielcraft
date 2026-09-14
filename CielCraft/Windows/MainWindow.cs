@@ -214,6 +214,10 @@ public class MainWindow : Window, IDisposable
             onPause: () => runner.Pause("paused by user"),
             onResume: runner.Resume,
             onStop: runner.Stop);
+
+        // Keep the queue visible (and holdable) while it is driving the runner.
+        if (plugin.ProductionQueue.Running || plugin.Configuration.QueueItems.Count > 0)
+            DrawQueue();
     }
 
     private void DrawBatchActive(BatchCrafter batch)
@@ -255,7 +259,7 @@ public class MainWindow : Window, IDisposable
 
         ImGui.SameLine();
         var canBatch = raphael && (gameBridge.IsReadyToStartCraft
-                                   || (gameBridge.IsCrafting && plugin.CraftMonitor.Current is { Step: <= 1, Quality: 0 }));
+                                   || (gameBridge.IsCrafting && plugin.CraftMonitor.Current is { Step: <= 1 }));
         using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!canBatch))
         {
             if (UiTheme.TintedButton($"Batch ×{batchQuantity}", UiTheme.Accent))
@@ -372,10 +376,12 @@ public class MainWindow : Window, IDisposable
 
     private static void DrawStateBadge(string state, bool paused, string statusText)
     {
+        // Compiler-checked coloring lives in the enum-typed overloads below;
+        // this string form remains only as their shared renderer.
         var color = state switch
         {
-            "Failed" => UiTheme.Danger,
-            "Completed" => UiTheme.Success,
+            nameof(ProductionState.Failed) => UiTheme.Danger,
+            nameof(ProductionState.Completed) => UiTheme.Success,
             _ when paused => UiTheme.Warning,
             _ => UiTheme.Info,
         };

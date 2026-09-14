@@ -82,23 +82,37 @@ public sealed class DalamudGameBridge : IGameBridge
 
     public unsafe bool GatherSlot(int slotIndex)
     {
-        var addonPtr = Plugin.GameGui.GetAddonByName("Gathering");
-        if (addonPtr.IsNull || !addonPtr.IsVisible)
-            return false;
-
-        var addon = (FFXIVClientStructs.FFXIV.Client.UI.AddonGathering*)addonPtr.Address;
-        if (slotIndex < 0 || slotIndex >= addon->GatheredItemComponentCheckbox.Length)
+        var addon = GetGatheringAddon();
+        if (addon == null || slotIndex < 0 || slotIndex >= addon->GatheredItemComponentCheckbox.Length)
             return false;
 
         var checkbox = addon->GatheredItemComponentCheckbox[slotIndex].Value;
         if (checkbox == null || !checkbox->IsEnabled || !checkbox->AtkResNode->IsVisible())
             return false;
 
-        // Replay the checkbox's own click event back into the addon.
+        return ReplayCheckboxClick(&addon->AtkUnitBase, checkbox);
+    }
+
+    /// <summary>
+    /// Replays a checkbox's own click event back into its addon. Null-guarded
+    /// end to end: a missing owner node or unattached event listener (possible
+    /// on the addon's first visible frame) would otherwise be a native null
+    /// dereference — a client crash, not an exception.
+    /// </summary>
+    private static unsafe bool ReplayCheckboxClick(
+        FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase* addon,
+        FFXIVClientStructs.FFXIV.Component.GUI.AtkComponentCheckBox* checkbox)
+    {
         var node = checkbox->OwnerNode;
+        if (node == null)
+            return false;
+
         var evt = node->AtkResNode.AtkEventManager.Event;
+        if (evt == null)
+            return false;
+
         var data = default(FFXIVClientStructs.FFXIV.Component.GUI.AtkEventData);
-        addon->AtkUnitBase.ReceiveEvent(evt->State.EventType, (int)evt->Param, evt, &data);
+        addon->ReceiveEvent(evt->State.EventType, (int)evt->Param, evt, &data);
         return true;
     }
 
@@ -231,9 +245,20 @@ public sealed class DalamudGameBridge : IGameBridge
 
     public unsafe bool EquipGearsetForJob(uint classJobId)
     {
+        var best = FindBestGearsetForJob(classJobId);
+        if (best < 0)
+            return false;
+
+        FFXIVClientStructs.FFXIV.Client.UI.Misc.RaptureGearsetModule.Instance()->EquipGearset(best, 0);
+        return true;
+    }
+
+    /// <summary>Highest-item-level gearset slot for the job; -1 when none exists.</summary>
+    private static unsafe int FindBestGearsetForJob(uint classJobId)
+    {
         var module = FFXIVClientStructs.FFXIV.Client.UI.Misc.RaptureGearsetModule.Instance();
         if (module == null)
-            return false;
+            return -1;
 
         var best = -1;
         short bestItemLevel = -1;
@@ -253,11 +278,7 @@ public sealed class DalamudGameBridge : IGameBridge
             }
         }
 
-        if (best < 0)
-            return false;
-
-        module->EquipGearset(best, 0);
-        return true;
+        return best;
     }
 
     public uint CurrentTerritoryId => Plugin.ClientState.TerritoryType;
@@ -345,21 +366,9 @@ public sealed class DalamudGameBridge : IGameBridge
         return true;
     }
 
-    public unsafe bool IsQuickSynthesisActive
-    {
-        get
-        {
-            var ptr = Plugin.GameGui.GetAddonByName("SynthesisSimple");
-            return !ptr.IsNull && ptr.IsVisible;
-        }
-    }
+    public bool IsQuickSynthesisActive => IsAddonVisible("SynthesisSimple");
 
-    public unsafe void CancelQuickSynthesis()
-    {
-        var ptr = Plugin.GameGui.GetAddonByName("SynthesisSimple");
-        if (!ptr.IsNull && ptr.IsVisible)
-            ((FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)ptr.Address)->FireCallbackInt(-1);
-    }
+    public void CancelQuickSynthesis() => FireAddonCallbackInt("SynthesisSimple", -1);
 
     public unsafe bool UseItem(uint itemId)
     {
@@ -392,12 +401,7 @@ public sealed class DalamudGameBridge : IGameBridge
             || !addon->QuickGatheringComponentCheckBox->IsChecked)
             return;
 
-        // Replay the checkbox's own click event to toggle it off.
-        var checkbox = addon->QuickGatheringComponentCheckBox;
-        var node = checkbox->OwnerNode;
-        var evt = node->AtkResNode.AtkEventManager.Event;
-        var data = default(FFXIVClientStructs.FFXIV.Component.GUI.AtkEventData);
-        addon->AtkUnitBase.ReceiveEvent(evt->State.EventType, (int)evt->Param, evt, &data);
+        ReplayCheckboxClick(&addon->AtkUnitBase, addon->QuickGatheringComponentCheckBox);
     }
 
     public unsafe CollectableGatheringSnapshot? GetCollectableGatheringState()
@@ -431,33 +435,10 @@ public sealed class DalamudGameBridge : IGameBridge
         };
     }
 
-    public unsafe bool HasGearsetForJob(uint classJobId)
-    {
-        var module = FFXIVClientStructs.FFXIV.Client.UI.Misc.RaptureGearsetModule.Instance();
-        if (module == null)
-            return false;
+    public bool HasGearsetForJob(uint classJobId) => FindBestGearsetForJob(classJobId) >= 0;
 
-        for (var i = 0; i < 100; i++)
-        {
-            if (!module->IsValidGearset(i))
-                continue;
-
-            var gearset = module->GetGearset(i);
-            if (gearset != null && gearset->ClassJob == classJobId)
-                return true;
-        }
-
-        return false;
-    }
-
-    public unsafe int GetStoredItemCount(uint itemId)
-    {
-        var inventory = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
-        if (inventory == null)
-            return 0;
-
-        FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] containers =
-        [
+    private static readonly FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] StorageContainers =
+    [
             FFXIVClientStructs.FFXIV.Client.Game.InventoryType.SaddleBag1,
             FFXIVClientStructs.FFXIV.Client.Game.InventoryType.SaddleBag2,
             FFXIVClientStructs.FFXIV.Client.Game.InventoryType.PremiumSaddleBag1,
@@ -469,10 +450,16 @@ public sealed class DalamudGameBridge : IGameBridge
             FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage5,
             FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage6,
             FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage7,
-        ];
+    ];
+
+    public unsafe int GetStoredItemCount(uint itemId)
+    {
+        var inventory = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+        if (inventory == null)
+            return 0;
 
         var total = 0;
-        foreach (var container in containers)
+        foreach (var container in StorageContainers)
         {
             // Unvisited containers are simply not loaded and count as zero.
             total += inventory->GetItemCountInContainer(itemId, container, false);
@@ -552,21 +539,31 @@ public sealed class DalamudGameBridge : IGameBridge
         if (recipeNote == null || recipeNote->ActiveCraftRecipeId == 0 || !IsAddonVisible("RecipeNote"))
             return false;
 
-        var requirements = GetRecipeRequirements(recipeNote->ActiveCraftRecipeId);
+        if (!Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Recipe>()
+                .TryGetRow(recipeNote->ActiveCraftRecipeId, out var recipe))
+            return false;
+
         var nq = recipeNote->CraftIngredientNQAmounts;
         var hq = recipeNote->CraftIngredientHQAmounts;
 
-        for (var i = 0; i < requirements.Count && i < nq.Length && i < hq.Length; i++)
+        // The RecipeNote amount arrays hold the six non-crystal material
+        // slots; crystals (item ids 2-19, always the trailing sheet entries)
+        // are tracked separately by the game and must not be written here.
+        var slot = 0;
+        for (var i = 0; i < recipe.Ingredient.Count && slot < nq.Length && slot < hq.Length; i++)
         {
-            var required = requirements[i].AmountPerCraft;
-            var inventory = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
-            var hqOwned = inventory == null
-                ? 0
-                : inventory->GetInventoryItemCount(requirements[i].ItemId, true);
+            var itemId = recipe.Ingredient[i].RowId;
+            var amount = (int)recipe.AmountIngredient[i];
+            if (itemId == 0 || amount <= 0)
+                continue;
 
-            var hqUse = (byte)System.Math.Min(required, hqOwned);
-            hq[i] = hqUse;
-            nq[i] = (byte)(required - hqUse);
+            if (itemId is >= 2 and <= 19)
+                break;
+
+            var hqUse = (byte)System.Math.Min(amount, GetHqItemCount(itemId));
+            hq[slot] = hqUse;
+            nq[slot] = (byte)(amount - hqUse);
+            slot++;
         }
 
         return true;

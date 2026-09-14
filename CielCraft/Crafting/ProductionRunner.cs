@@ -53,6 +53,8 @@ public sealed class ProductionRunner : IDisposable
     private bool gearsetRequested;
     private bool sawLoadingScreen;
     private System.Numerics.Vector3? areaDestination;
+    private DateTime lastNodeProbeAt = DateTime.MinValue;
+    private bool lastNodeProbe;
     private int initialTargetCount;
     private int initialHqCount;
     private DateTime productionStartedAt;
@@ -249,22 +251,8 @@ public sealed class ProductionRunner : IDisposable
         if (gameBridge.IsCrafting)
             return;
 
-        if (gameBridge.CurrentClassJobId != task.JobId)
-        {
-            if (gameBridge.IsPreparingToCraft || gameBridge.SelectedRecipeId != 0)
-            {
-                Throttled(gameBridge.CloseRecipeNote);
-                return;
-            }
-
-            Throttled(() =>
-            {
-                gearsetRequested = true;
-                if (!gameBridge.EquipGearsetForJob(task.JobId))
-                    Fail($"no gearset found for gathering job {task.JobId}");
-            });
+        if (!EnsureJob(task.JobId))
             return;
-        }
 
         // Timed node not up yet: hold until shortly before the window opens
         // (travel starts ~2 real minutes early so we arrive as it pops).
@@ -297,7 +285,7 @@ public sealed class ProductionRunner : IDisposable
         // Right zone but the node area may be far: approach it until nodes
         // appear in the object table.
         if (task.AreaPosition != default
-            && gameBridge.FindNearestGatheringNode() == null)
+            && !NodeNearby())
         {
             areaDestination = null;
             EnterPhase(ProductionState.MovingToArea, GatherText("Traveling to the node area for"));
@@ -364,7 +352,7 @@ public sealed class ProductionRunner : IDisposable
         }
 
         // A targetable node in the object table means we are close enough.
-        if (gameBridge.FindNearestGatheringNode() != null)
+        if (NodeNearby())
         {
             navigation.Stop();
             EnterPreparing();
@@ -428,6 +416,7 @@ public sealed class ProductionRunner : IDisposable
         {
             case Gathering.GatheringLoopState.Completed:
                 gatherIndex++;
+                areaDestination = null; // never reuse a previous task's area point
                 EnterPreparing();
                 if (gatherIndex >= gatherQueue.Count)
                     Transition(ProductionState.PreparingStep, StepText("Preparing"));
@@ -447,6 +436,44 @@ public sealed class ProductionRunner : IDisposable
                 Transition(ProductionState.Paused, "Paused: the gathering loop was stopped.");
                 break;
         }
+    }
+
+    /// <summary>
+    /// Gets the character onto the given job: closes the crafting log first
+    /// (class changes are blocked while it is open), then equips the best
+    /// gearset. Returns true when already on the job; false while working or
+    /// after failing.
+    /// </summary>
+    private bool EnsureJob(uint jobId)
+    {
+        if (gameBridge.CurrentClassJobId == jobId)
+            return true;
+
+        if (gameBridge.IsPreparingToCraft || gameBridge.SelectedRecipeId != 0)
+        {
+            Throttled(gameBridge.CloseRecipeNote);
+            return false;
+        }
+
+        Throttled(() =>
+        {
+            gearsetRequested = true;
+            if (!gameBridge.EquipGearsetForJob(jobId))
+                Fail($"no gearset found for job {jobId}");
+        });
+        return false;
+    }
+
+    /// <summary>Object-table scans are costly; cache "is a node visible?" for a second.</summary>
+    private bool NodeNearby()
+    {
+        if (DateTime.UtcNow - lastNodeProbeAt > TimeSpan.FromSeconds(1))
+        {
+            lastNodeProbeAt = DateTime.UtcNow;
+            lastNodeProbe = gameBridge.FindNearestGatheringNode() != null;
+        }
+
+        return lastNodeProbe;
     }
 
     private string GatherText(string verb)
@@ -475,24 +502,8 @@ public sealed class ProductionRunner : IDisposable
         if (gameBridge.IsCrafting)
             return;
 
-        // Wrong job: close the crafting log (class changes are blocked while
-        // it is open), then equip a gearset for the recipe's job.
-        if (gameBridge.CurrentClassJobId != recipe.ClassJobId)
-        {
-            if (gameBridge.IsPreparingToCraft || gameBridge.SelectedRecipeId != 0)
-            {
-                Throttled(gameBridge.CloseRecipeNote);
-                return;
-            }
-
-            Throttled(() =>
-            {
-                gearsetRequested = true;
-                if (!gameBridge.EquipGearsetForJob(recipe.ClassJobId))
-                    Fail($"no gearset found for job {recipe.ClassJobId}");
-            });
+        if (!EnsureJob(recipe.ClassJobId))
             return;
-        }
 
         // Right job: get the crafting log onto this step's recipe.
         if (gameBridge.SelectedRecipeId != step.RecipeId || !gameBridge.IsReadyToStartCraft)

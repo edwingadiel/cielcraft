@@ -83,20 +83,23 @@ public sealed class ProductionQueue : IDisposable
         switch (runner.State)
         {
             case ProductionState.Completed when startedCurrent:
-            case ProductionState.Idle when startedCurrent && configuration.QueueItems.Count > 0:
-                // Current entry finished (Completed) — advance.
-                if (runner.State == ProductionState.Completed)
-                {
-                    configuration.QueueItems.RemoveAt(0);
-                    configuration.Save();
-                    startedCurrent = false;
-                }
-
+                // Current entry finished — advance to the next.
+                configuration.QueueItems.RemoveAt(0);
+                configuration.Save();
+                startedCurrent = false;
                 break;
+
+            case ProductionState.Idle when startedCurrent:
+                // The runner was stopped underneath the queue.
+                Running = false;
+                startedCurrent = false;
+                StatusText = "Queue held: production was stopped.";
+                return;
 
             case ProductionState.Failed:
             case ProductionState.Paused:
                 Running = false;
+                startedCurrent = false;
                 StatusText = $"Queue held: {runner.StatusText}";
                 return;
         }

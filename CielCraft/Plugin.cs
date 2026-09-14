@@ -142,6 +142,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         Log.Information("[Plugin] Emergency stop requested.");
         ProductionQueue.StopQueue();
+        Maintenance.Abort();
         ProductionRunner.Stop();
         BatchCrafter.Stop();
         GatheringLoop.Stop();

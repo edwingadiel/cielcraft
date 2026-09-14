@@ -47,6 +47,15 @@ public sealed class BatchCrafter : IDisposable
     private bool automatorStarted;
     private bool wasCrafting;
     private DateTime waitStartedAt;
+    private bool quickMode;
+    private bool quickDialogRequested;
+    private DateTime quickLastProgressAt;
+    private CraftSetup? solvedSetup;
+    private int solveTargetQuality;
+    private CraftSolution? midSolution;
+    private bool midSolveTried;
+    private bool midSolve;
+    private DateTime lastRecipeOpenAttempt = DateTime.MinValue;
 
     public BatchState State { get; private set; } = BatchState.Idle;
     public string StatusText { get; private set; } = "Idle.";
@@ -83,15 +92,6 @@ public sealed class BatchCrafter : IDisposable
     /// selected, or an active craft still on its first step (which then counts
     /// as craft #1 of the batch).
     /// </summary>
-    private bool quickMode;
-    private bool quickDialogRequested;
-    private DateTime quickLastProgressAt;
-    private CraftSetup? solvedSetup;
-    private int solveTargetQuality;
-    private CraftSolution? midSolution;
-    private bool midSolveTried;
-    private bool midSolve;
-
     public bool Start(int quantity, bool quickSynth = false)
     {
         if (State is BatchState.Solving or BatchState.StartingCraft or BatchState.Crafting
@@ -101,7 +101,8 @@ public sealed class BatchCrafter : IDisposable
         if (quantity < 1)
             return false;
 
-        var freshCraft = gameBridge.IsCrafting && craftMonitor.Current is { Step: <= 1, Quality: 0 };
+        // Step 1 counts as fresh even with HQ materials (initial quality > 0).
+        var freshCraft = gameBridge.IsCrafting && craftMonitor.Current is { Step: <= 1 };
         if (!freshCraft && !gameBridge.IsReadyToStartCraft)
         {
             Transition(BatchState.Idle, "Cannot start: open the crafting log on a recipe (or be on step 1 of a craft).");
@@ -114,7 +115,7 @@ public sealed class BatchCrafter : IDisposable
         {
             var requirements = gameBridge.GetRecipeRequirements(gameBridge.SelectedRecipeId);
             var craftable = InventoryMath.CraftableCount(requirements);
-            if (requirements.Count > 0 && craftable < quantity)
+            if (requirements.Count > 0 && !InventoryMath.CanCraft(requirements, quantity))
             {
                 Transition(
                     BatchState.Idle,
@@ -131,7 +132,7 @@ public sealed class BatchCrafter : IDisposable
 
         targetQuantity = quantity;
         CompletedCrafts = 0;
-        recipeId = gameBridge.IsCrafting ? (ushort)0 : gameBridge.SelectedRecipeId;
+        recipeId = gameBridge.SelectedRecipeId;
         resultItemId = 0;
         resultAmount = 0;
         baselineItemCount = 0;
@@ -203,8 +204,27 @@ public sealed class BatchCrafter : IDisposable
         else if (gameBridge.IsCrafting)
         {
             if (automator.State == AutomationState.Paused)
+            {
+                // The automator holds a consistent position in its rotation.
                 automator.Resume();
+                Transition(BatchState.Crafting, ProgressText());
+                return;
+            }
 
+            // No resumable automation. Mid-craft the only sound continuation
+            // is a rotation solved from the live state; a fresh craft (or a
+            // pause taken during Solving) just needs the solve (re)run.
+            var craft = craftMonitor.Current;
+            if (solution == null || (craft is { Step: > 1 } && midSolution == null))
+            {
+                midSolve = craft is { Step: > 1 };
+                solveRequested = false;
+                automatorStarted = false;
+                Transition(BatchState.Solving, "Re-solving after resume...");
+                return;
+            }
+
+            automatorStarted = false;
             Transition(BatchState.Crafting, ProgressText());
         }
         else
@@ -217,6 +237,7 @@ public sealed class BatchCrafter : IDisposable
     public void Stop()
     {
         automator.Stop();
+        maintenance.Abort();
         if (State is BatchState.QuickStarting or BatchState.QuickRunning)
             gameBridge.CancelQuickSynthesis();
         if (State is not (BatchState.Idle or BatchState.Completed or BatchState.Failed))
@@ -329,8 +350,8 @@ public sealed class BatchCrafter : IDisposable
             // Specialist one-shots: usable at craft start only when the job is
             // an equipped specialist with charges (roadmap 3.5).
             var jobId = player.ClassJobId;
-            var heartAndSoul = IsSpecialistActionReady(100419, jobId);
-            var quickInnovation = IsSpecialistActionReady(100459, jobId);
+            var heartAndSoul = IsSpecialistActionReady(CraftActionData.HeartAndSoul, jobId);
+            var quickInnovation = IsSpecialistActionReady(CraftActionData.QuickInnovation, jobId);
 
             var recipeInfo = recipeId != 0 ? recipeProvider.GetRecipeById(recipeId) : null;
 
@@ -350,10 +371,13 @@ public sealed class BatchCrafter : IDisposable
 
             solvedSetup = setup;
             // Collectables (roadmap 4.1): never solve below the recipe's
-            // required quality.
-            solveTargetQuality = Math.Max(
-                Math.Max((int)craft.Quality, craft.RequiredQuality),
-                craft.MaxQuality * Math.Clamp(configuration.TargetQualityPercent, 1, 100) / 100);
+            // required quality. A mid-craft recovery keeps the original target
+            // — recomputing from live quality would inflate it for the rest of
+            // the batch.
+            if (!midSolve)
+                solveTargetQuality = Math.Max(
+                    Math.Max((int)craft.Quality, craft.RequiredQuality),
+                    craft.MaxQuality * Math.Clamp(configuration.TargetQualityPercent, 1, 100) / 100);
 
             if (midSolve)
             {
@@ -411,8 +435,6 @@ public sealed class BatchCrafter : IDisposable
         var resolved = Game.CraftActionResolver.ResolveForJob(raphaelActionId, jobId);
         return resolved != null && gameBridge.IsCraftActionReady(resolved.Value);
     }
-
-    private DateTime lastRecipeOpenAttempt = DateTime.MinValue;
 
     private void TickStartingCraft(bool isCrafting)
     {

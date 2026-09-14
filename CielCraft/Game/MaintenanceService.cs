@@ -33,6 +33,7 @@ public sealed class MaintenanceService
     private Phase phase = Phase.Idle;
     private DateTime phaseStartedAt;
     private DateTime lastAttemptAt;
+    private DateTime lastIdleCheckAt;
     private bool foodFailedThisSession;
 
     public string StatusText { get; private set; } = "";
@@ -70,6 +71,12 @@ public sealed class MaintenanceService
         switch (phase)
         {
             case Phase.Idle:
+                // Gear condition and food buffs change on a minutes timescale;
+                // polling the native containers every frame is pure waste.
+                if (DateTime.UtcNow - lastIdleCheckAt < TimeSpan.FromSeconds(1))
+                    return false;
+
+                lastIdleCheckAt = DateTime.UtcNow;
                 if (NeedsRepair)
                     return StartRepair();
                 if (NeedsFood)
@@ -215,12 +222,26 @@ public sealed class MaintenanceService
         StatusText = statusText;
     }
 
+    /// <summary>Abandons any in-flight phase, closing the repair window if it is open.</summary>
+    public void Abort()
+    {
+        if (phase == Phase.Idle)
+            return;
+
+        gameBridge.FireAddonCallbackInt("Repair", -1);
+        phase = Phase.Idle;
+        StatusText = "";
+    }
+
     private bool TimedOut(string reason)
     {
         if (DateTime.UtcNow - phaseStartedAt <= PhaseTimeout)
             return false;
 
         Plugin.Log.Warning($"[Maintenance] {reason}.");
+        // Never leave the repair window open behind a timeout — it blocks
+        // gearset swaps and crafting-log interaction downstream.
+        gameBridge.FireAddonCallbackInt("Repair", -1);
         BlockedReason = reason;
         phase = Phase.Idle;
         return true;

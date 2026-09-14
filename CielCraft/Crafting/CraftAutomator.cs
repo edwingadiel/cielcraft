@@ -40,6 +40,8 @@ public sealed class CraftAutomator : IDisposable
     private int baseProgress;
     private byte crafterLevel;
     private int pendingConsume;
+    private uint[] remainingCache = [];
+    private DateTime? exhaustedAt;
 
     public AutomationState State { get; private set; } = AutomationState.Idle;
     public string StatusText { get; private set; } = "Idle.";
@@ -69,7 +71,7 @@ public sealed class CraftAutomator : IDisposable
     }
 
     /// <summary>Specialist actions do not advance the step counter.</summary>
-    private static bool AdvancesStep(uint raphaelActionId) => raphaelActionId is not (100419 or 100459);
+    private static bool AdvancesStep(uint raphaelActionId) => !CraftActionData.IsSpecialist(raphaelActionId);
 
     private int targetQuality;
 
@@ -92,6 +94,8 @@ public sealed class CraftAutomator : IDisposable
         targetQuality = qualityTarget;
         crafterLevel = (byte)(gameBridge.GetPlayerState()?.Level ?? 0);
         pendingConsume = 1;
+        exhaustedAt = null;
+        RebuildRemaining();
 
         Transition(
             AutomationState.Running,
@@ -124,7 +128,10 @@ public sealed class CraftAutomator : IDisposable
 
     private void OnActionResolved(ActionOutcome outcome)
     {
-        if (State != AutomationState.Running)
+        // Bookkeeping must survive a pause: an in-flight action still resolves,
+        // and dropping it would desync nextIndex and repeat the action on
+        // Resume. Only fully idle/terminal states ignore resolutions.
+        if (State is not (AutomationState.Running or AutomationState.Paused))
             return;
 
         switch (outcome)
@@ -132,14 +139,28 @@ public sealed class CraftAutomator : IDisposable
             case ActionOutcome.StepAdvanced:
                 nextIndex += pendingConsume;
                 pendingConsume = 1;
+                RebuildRemaining();
+                if (State == AutomationState.Paused)
+                {
+                    StatusText = $"Paused after action resolved ({nextIndex}/{rotation.Count}).";
+                    break;
+                }
+
                 if (nextIndex >= rotation.Count)
                 {
                     // With adaptive crafting the engine keeps synthesizing past
-                    // the plan while the quality target is met; otherwise stop.
+                    // the plan while the quality target is met; otherwise give
+                    // the craft a grace period first — the final action's step
+                    // advance is often observed a few frames before the
+                    // crafting flag clears, and pausing there would flag a
+                    // successful craft as incomplete.
                     var craft = craftMonitor.Current;
                     var goal = targetQuality > 0 ? Math.Min(targetQuality, craft?.MaxQuality ?? 0) : craft?.MaxQuality ?? 0;
                     if (!(adaptive && baseProgress > 0 && craft != null && craft.Quality >= goal))
-                        Pause("rotation exhausted but the craft is still in progress");
+                    {
+                        exhaustedAt = DateTime.UtcNow;
+                        StatusText = $"Running: {nextIndex}/{rotation.Count} actions (awaiting craft end).";
+                    }
                 }
                 else
                 {
@@ -154,8 +175,9 @@ public sealed class CraftAutomator : IDisposable
                 // action was expected to retire the rest of the plan (the last
                 // planned action, or an adaptive finisher), the craft ran to
                 // completion; anything earlier is an abnormal end.
-                if (nextIndex + pendingConsume >= rotation.Count)
+                if (exhaustedAt != null || nextIndex + pendingConsume >= rotation.Count)
                 {
+                    exhaustedAt = null;
                     nextIndex = rotation.Count;
                     Transition(AutomationState.Completed, $"Completed: all {rotation.Count} actions executed.");
                 }
@@ -169,7 +191,8 @@ public sealed class CraftAutomator : IDisposable
                 break;
 
             case ActionOutcome.TimedOut:
-                Pause("action did not resolve within the timeout");
+                if (State == AutomationState.Running)
+                    Pause("action did not resolve within the timeout");
                 break;
         }
     }
@@ -184,7 +207,27 @@ public sealed class CraftAutomator : IDisposable
 
         if (!gameBridge.IsCrafting)
         {
+            if (exhaustedAt != null)
+            {
+                // The craft ended right after the final planned action: success.
+                exhaustedAt = null;
+                nextIndex = rotation.Count;
+                Transition(AutomationState.Completed, $"Completed: all {rotation.Count} actions executed.");
+                return;
+            }
+
             Transition(AutomationState.Failed, "Craft ended unexpectedly between actions.");
+            return;
+        }
+
+        if (exhaustedAt is { } exhausted)
+        {
+            if (DateTime.UtcNow - exhausted > TimeSpan.FromSeconds(4))
+            {
+                exhaustedAt = null;
+                Pause("rotation exhausted but the craft is still in progress");
+            }
+
             return;
         }
 
@@ -227,22 +270,21 @@ public sealed class CraftAutomator : IDisposable
             Pause($"executor refused the action ({executor.LastResult})");
     }
 
+    private void RebuildRemaining() =>
+        remainingCache = nextIndex >= rotation.Count ? [] : rotation.Skip(nextIndex).ToArray();
+
     private AdaptiveDecision? NextDecision()
     {
-        var remaining = nextIndex >= rotation.Count
-            ? []
-            : (IReadOnlyList<uint>)[.. rotation.Skip(nextIndex)];
-
         if (adaptive && baseProgress > 0 && craftMonitor.Current is { } craft)
-            return AdaptiveEngine.Decide(craft, remaining, baseProgress, crafterLevel, targetQuality);
+            return AdaptiveEngine.Decide(craft, remainingCache, baseProgress, crafterLevel, targetQuality);
 
-        return remaining.Count > 0 ? new AdaptiveDecision(remaining[0], 1, null) : null;
+        return remainingCache.Length > 0 ? new AdaptiveDecision(remainingCache[0], 1, null) : null;
     }
 
     private void Transition(AutomationState state, string statusText)
     {
         State = state;
         StatusText = statusText;
-        Plugin.Log.Information($"[Production] {statusText}");
+        Plugin.Log.Information($"[Craft] {statusText}");
     }
 }

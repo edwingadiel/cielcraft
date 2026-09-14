@@ -71,6 +71,14 @@ This tracks the remaining work toward 1.0. Sizes: S / M / L.
 - [x] 6.7 HQ-material auto-fill before each synthesis (config-gated)
 - [x] 6.8 Multi-target production queue (persisted, sequential, holds on failure)
 
+## Review follow-ups (structural, deferred)
+
+From the full-code review: extract the duplicated mount/fly travel logic
+(ProductionRunner + GatheringController) into one TravelDriver; consolidate the
+five per-class Throttled/RetryInterval copies into a shared helper; a common
+status/transition base for the five state machines; move interference detection
+below ProductionRunner so standalone batches/gathers are covered too.
+
 ## Known validation-pending values
 
 Values that could not be verified offline and are confirmed at in-game gates:
