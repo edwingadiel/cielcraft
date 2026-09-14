@@ -391,6 +391,10 @@ public sealed class GatheringController : IDisposable
             return;
         }
 
+        // Pause a beat after arriving before touching the node (pacing).
+        if (DateTime.UtcNow - phaseStartedAt < Pacing.BeforeInteract)
+            return;
+
         Throttled(() =>
         {
             if (node != null && !gameBridge.InteractWithObject(node.ObjectId))
@@ -425,6 +429,11 @@ public sealed class GatheringController : IDisposable
 
         if (chosenSlot < 0)
         {
+            // Let the window settle before the first click (pacing; the slots
+            // also fill in over these frames).
+            if (DateTime.UtcNow - phaseStartedAt < Pacing.AfterNodeOpen)
+                return;
+
             if (!ChooseSlot(gathering))
                 return;
         }

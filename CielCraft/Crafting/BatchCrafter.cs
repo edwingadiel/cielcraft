@@ -59,6 +59,8 @@ public sealed class BatchCrafter : IDisposable
     private DateTime lastRecipeOpenAttempt = DateTime.MinValue;
     private DateTime verifyUntil = DateTime.MinValue; // pending inventory verification of a finished craft
     private DateTime lastSynthesisPress = DateTime.MinValue;
+    private DateTime craftStartedAt = DateTime.MinValue;   // pacing: first action waits for the start animation
+    private DateTime lastCraftEndedAt = DateTime.MinValue; // pacing: next Synthesize waits for the end animation
     private static readonly TimeSpan SynthesisRetryInterval = TimeSpan.FromSeconds(3);
 
     public BatchState State { get; private set; } = BatchState.Idle;
@@ -508,12 +510,18 @@ public sealed class BatchCrafter : IDisposable
             // Craft #(CompletedCrafts+1) has begun.
             synthesisFired = false;
             automatorStarted = false;
+            craftStartedAt = DateTime.UtcNow;
             Transition(solution == null ? BatchState.Solving : BatchState.Crafting, ProgressText());
             return;
         }
 
         if (!synthesisFired)
         {
+            // Breathe between crafts (pacing): the completion animation is
+            // still playing and back-to-back presses are what got us kicked.
+            if (DateTime.UtcNow - lastCraftEndedAt < Core.Pacing.BetweenCrafts)
+                return;
+
             if (gameBridge.IsReadyToStartCraft)
             {
                 if (recipeId != 0 && gameBridge.SelectedRecipeId != recipeId)
@@ -568,6 +576,10 @@ public sealed class BatchCrafter : IDisposable
 
             if (!automatorStarted && solution != null && automator.State != AutomationState.Running)
             {
+                // Let the synthesis start animation play before the first action (pacing).
+                if (DateTime.UtcNow - craftStartedAt < Core.Pacing.AfterCraftStart)
+                    return;
+
                 var player = gameBridge.GetPlayerState();
                 if (player == null)
                     return;
@@ -664,6 +676,7 @@ public sealed class BatchCrafter : IDisposable
         }
 
         verifyUntil = DateTime.MinValue;
+        lastCraftEndedAt = DateTime.UtcNow;
         CompletedCrafts++;
         Plugin.Log.Information($"[Production] Craft {CompletedCrafts}/{targetQuantity} verified.");
 

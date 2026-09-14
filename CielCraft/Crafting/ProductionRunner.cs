@@ -55,6 +55,8 @@ public sealed class ProductionRunner : IDisposable
     private System.Numerics.Vector3? areaDestination;
     private bool returnTeleport;      // Teleporting phase is the post-gather return to the aetheryte
     private uint returnTerritoryId;
+    private DateTime zoneArrivedAt = DateTime.MinValue;
+    private DateTime gatherDoneAt = DateTime.MinValue;
     private DateTime lastNodeProbeAt = DateTime.MinValue;
     private bool lastNodeProbe;
     private int initialTargetCount;
@@ -353,6 +355,7 @@ public sealed class ProductionRunner : IDisposable
         if (gameBridge.IsBetweenAreas)
         {
             sawLoadingScreen = true;
+            zoneArrivedAt = DateTime.MinValue;
             return;
         }
 
@@ -360,6 +363,12 @@ public sealed class ProductionRunner : IDisposable
             && gameBridge.CurrentTerritoryId == targetTerritory
             && gameBridge.GetPlayerState() != null)
         {
+            // Let the zone settle before the next server-visible action (pacing).
+            if (zoneArrivedAt == DateTime.MinValue)
+                zoneArrivedAt = DateTime.UtcNow;
+            if (DateTime.UtcNow - zoneArrivedAt < Core.Pacing.AfterZoneChange)
+                return;
+
             EnterPreparing();
             if (returnTeleport)
             {
@@ -468,6 +477,18 @@ public sealed class ProductionRunner : IDisposable
         switch (gatheringLoop.State)
         {
             case Gathering.GatheringLoopState.Completed:
+                // Settle after leaving the node before teleporting or moving on (pacing).
+                if (gatherDoneAt == DateTime.MinValue)
+                {
+                    gatherDoneAt = DateTime.UtcNow;
+                    StatusText = GatherText("Gathered; settling after");
+                    break;
+                }
+
+                if (DateTime.UtcNow - gatherDoneAt < Core.Pacing.AfterGatherComplete)
+                    break;
+
+                gatherDoneAt = DateTime.MinValue;
                 gatherIndex++;
                 areaDestination = null; // never reuse a previous task's area point
                 EnterPreparing();
@@ -611,6 +632,10 @@ public sealed class ProductionRunner : IDisposable
         }
 
         if (!EnsureJob(recipe.ClassJobId))
+            return;
+
+        // A job change just happened: let it settle before touching the log (pacing).
+        if (gearsetRequested && DateTime.UtcNow - lastAttemptAt < Core.Pacing.AfterJobChange)
             return;
 
         // Right job: get the crafting log onto this step's recipe.
