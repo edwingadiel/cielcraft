@@ -11,7 +11,11 @@ public sealed record GatheringLocation(
     byte GatheringLevel,
     uint TerritoryId,
     Vector2 Position,
-    float Radius);
+    float Radius,
+    IReadOnlyList<CielCraft.Core.EtWindow> Windows)
+{
+    public bool IsTimed => Windows.Count > 0;
+}
 
 /// <summary>
 /// Which gathering job collects an item, from game data (spec §33): the
@@ -87,6 +91,7 @@ public sealed class GatheringDatabase
         // the base row) gives approximate world X/Z and radius.
         itemToLocation = new Dictionary<uint, GatheringLocation>();
         var exported = Plugin.DataManager.GetExcelSheet<ExportedGatheringPoint>();
+        var transients = Plugin.DataManager.GetExcelSheet<GatheringPointTransient>();
         foreach (var point in Plugin.DataManager.GetExcelSheet<GatheringPoint>())
         {
             var baseId = point.GatheringPointBase.RowId;
@@ -98,13 +103,57 @@ public sealed class GatheringDatabase
                 continue;
 
             var location = new GatheringLocation(
-                0, info.Job, info.Level, territory, new Vector2(coords.X, coords.Y), coords.Radius);
+                0, info.Job, info.Level, territory, new Vector2(coords.X, coords.Y), coords.Radius,
+                ReadTimeWindows(transients, point.RowId));
 
             foreach (var itemId in info.Items)
             {
-                if (!itemToLocation.TryGetValue(itemId, out var existing) || info.Level < existing.GatheringLevel)
+                // Untimed sources beat timed ones; within the same kind, the
+                // lowest gathering level wins.
+                if (!itemToLocation.TryGetValue(itemId, out var existing)
+                    || (existing.IsTimed && !location.IsTimed)
+                    || (existing.IsTimed == location.IsTimed && info.Level < existing.GatheringLevel))
                     itemToLocation[itemId] = location with { ItemId = itemId };
             }
         }
+    }
+
+    /// <summary>ET windows for a gathering point; empty = always up (spec §38).</summary>
+    private static IReadOnlyList<CielCraft.Core.EtWindow> ReadTimeWindows(
+        Lumina.Excel.ExcelSheet<GatheringPointTransient> transients, uint gatheringPointId)
+    {
+        if (!transients.TryGetRow(gatheringPointId, out var transient))
+            return [];
+
+        var windows = new List<CielCraft.Core.EtWindow>();
+
+        // Unspoiled/legendary nodes: up to three windows in the pop table.
+        var table = transient.GatheringRarePopTimeTable;
+        if (table.RowId != 0 && table.IsValid)
+        {
+            var row = table.Value;
+            for (var i = 0; i < row.StartTime.Count; i++)
+            {
+                int start = row.StartTime[i];
+                int duration = row.Duration[i];
+                if (start >= 2400 || duration == 0 || duration >= 2400)
+                    continue;
+
+                windows.Add(new CielCraft.Core.EtWindow(
+                    CielCraft.Core.EorzeaClock.FromHhmm(start),
+                    CielCraft.Core.EorzeaClock.FromHhmm(duration)));
+            }
+        }
+
+        // Ephemeral nodes: a single start/end pair.
+        if (transient.EphemeralStartTime < 2400 && transient.EphemeralEndTime < 2400
+            && transient.EphemeralStartTime != transient.EphemeralEndTime)
+        {
+            var start = CielCraft.Core.EorzeaClock.FromHhmm(transient.EphemeralStartTime);
+            var end = CielCraft.Core.EorzeaClock.FromHhmm(transient.EphemeralEndTime);
+            windows.Add(new CielCraft.Core.EtWindow(start, ((end - start) % 1440 + 1440) % 1440));
+        }
+
+        return windows;
     }
 }

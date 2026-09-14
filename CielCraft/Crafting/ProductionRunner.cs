@@ -10,6 +10,7 @@ public enum ProductionState
 {
     Idle,
     PreparingGather,
+    WaitingForWindow,
     Teleporting,
     MovingToArea,
     RunningGather,
@@ -52,7 +53,7 @@ public sealed class ProductionRunner : IDisposable
     private bool sawLoadingScreen;
     private System.Numerics.Vector3? areaDestination;
 
-    private sealed record GatherTask(uint ItemId, int Amount, uint JobId, uint TerritoryId, System.Numerics.Vector2 AreaPosition);
+    private sealed record GatherTask(uint ItemId, int Amount, uint JobId, uint TerritoryId, System.Numerics.Vector2 AreaPosition, IReadOnlyList<EtWindow> Windows);
 
     public ProductionState State { get; private set; } = ProductionState.Idle;
     public string StatusText { get; private set; } = "Idle.";
@@ -127,8 +128,16 @@ public sealed class ProductionRunner : IDisposable
                     material.Amount,
                     location?.JobId ?? job.Value,
                     location?.TerritoryId ?? 0,
-                    location?.Position ?? default));
+                    location?.Position ?? default,
+                    location?.Windows ?? []));
             }
+
+            // Timed materials go last, soonest window first, so untimed work
+            // fills the waiting time (spec §38).
+            var etNow = EorzeaClock.MinuteOfDay(DateTimeOffset.UtcNow);
+            gatherQueue.Sort((a, b) =>
+                EorzeaClock.RealTimeUntilOpen(a.Windows, etNow)
+                    .CompareTo(EorzeaClock.RealTimeUntilOpen(b.Windows, etNow)));
         }
 
         if (gameBridge.IsCrafting)
@@ -160,7 +169,8 @@ public sealed class ProductionRunner : IDisposable
 
         if (State is ProductionState.PreparingStep or ProductionState.RunningBatch
             or ProductionState.PreparingGather or ProductionState.RunningGather
-            or ProductionState.Teleporting or ProductionState.MovingToArea)
+            or ProductionState.Teleporting or ProductionState.MovingToArea
+            or ProductionState.WaitingForWindow)
             Transition(ProductionState.Paused, $"Paused: {reason}.");
     }
 
@@ -206,6 +216,9 @@ public sealed class ProductionRunner : IDisposable
         {
             case ProductionState.PreparingGather:
                 TickPreparingGather();
+                break;
+            case ProductionState.WaitingForWindow:
+                TickWaitingForWindow();
                 break;
             case ProductionState.Teleporting:
                 TickTeleporting();
@@ -256,6 +269,15 @@ public sealed class ProductionRunner : IDisposable
             return;
         }
 
+        // Timed node not up yet: hold until shortly before the window opens
+        // (travel starts ~2 real minutes early so we arrive as it pops).
+        var untilOpen = EorzeaClock.RealTimeUntilOpen(task.Windows, EorzeaClock.MinuteOfDay(DateTimeOffset.UtcNow));
+        if (untilOpen > TimeSpan.FromMinutes(2))
+        {
+            EnterPhase(ProductionState.WaitingForWindow, GatherText("Waiting for the ET window for"));
+            return;
+        }
+
         // Wrong zone: teleport there first (spec §68).
         if (task.TerritoryId != 0 && gameBridge.CurrentTerritoryId != task.TerritoryId)
         {
@@ -292,6 +314,21 @@ public sealed class ProductionRunner : IDisposable
                 $"{recipeProvider.GetItemName(task.ItemId)} ×{task.Amount}.");
             Transition(ProductionState.RunningGather, GatherText("Gathering"));
         }
+    }
+
+    private void TickWaitingForWindow()
+    {
+        var task = gatherQueue[gatherIndex];
+        var untilOpen = EorzeaClock.RealTimeUntilOpen(task.Windows, EorzeaClock.MinuteOfDay(DateTimeOffset.UtcNow));
+
+        if (untilOpen <= TimeSpan.FromMinutes(2))
+        {
+            EnterPreparing();
+            Transition(ProductionState.PreparingGather, GatherText("Window opening; preparing to gather"));
+            return;
+        }
+
+        StatusText = $"{GatherText("Waiting for the ET window for")} Opens in {(int)untilOpen.TotalMinutes}m {untilOpen.Seconds:D2}s (real time).";
     }
 
     private void TickTeleporting()
