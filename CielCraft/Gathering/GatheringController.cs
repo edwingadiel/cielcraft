@@ -42,6 +42,9 @@ public sealed class GatheringController : IDisposable
     private bool awaitingSwing;
     private DateTime phaseStartedAt;
     private DateTime lastAttemptAt;
+    private int mountAttempts;
+    private bool flyBlocked;
+    private bool flyAttempted;
 
     public GatheringState State { get; private set; } = GatheringState.Idle;
     public string StatusText { get; private set; } = "Idle.";
@@ -96,6 +99,9 @@ public sealed class GatheringController : IDisposable
         gatherSwings = 0;
         awaitingSwing = false;
 
+        mountAttempts = 0;
+        flyBlocked = false;
+        flyAttempted = false;
         EnterPhase(GatheringState.MovingToNode, $"Moving to {node.Name} ({node.Distance:F0}y away).");
         return true;
     }
@@ -168,12 +174,40 @@ public sealed class GatheringController : IDisposable
             return;
         }
 
-        if (!navigation.IsMoving)
-            Throttled(() => navigation.MoveCloseTo(node.Position, InteractRange - 0.5f, fly: false));
+        if (navigation.IsMoving)
+        {
+            flyAttempted = false;
+            return;
+        }
+
+        Throttled(() =>
+        {
+            // Mount for long legs between nodes (roadmap 1.1).
+            if (!gameBridge.IsMounted && mountAttempts < 3 && distance > 80f)
+            {
+                mountAttempts++;
+                gameBridge.TryMount();
+                return;
+            }
+
+            if (flyAttempted)
+                flyBlocked = true;
+
+            var fly = gameBridge.IsMounted && !flyBlocked;
+            flyAttempted = fly;
+            navigation.MoveCloseTo(node.Position, InteractRange - 0.5f, fly);
+        });
     }
 
     private void TickInteracting()
     {
+        // Gathering requires being dismounted.
+        if (gameBridge.IsMounted)
+        {
+            Throttled(gameBridge.TryDismount);
+            return;
+        }
+
         if (gameBridge.GetGatheringState() != null)
         {
             EnterPhase(GatheringState.GatheringNode, "Node open; gathering.");

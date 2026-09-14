@@ -36,5 +36,14 @@ public class ConfigWindow : Window, IDisposable
         }
 
         ImGui.TextDisabled("Deviate from the solved rotation when the live craft state\nmakes it safe and profitable (e.g. finish early once quality caps).");
+
+        var quick = configuration.QuickSynthIntermediates;
+        if (ImGui.Checkbox("Quick synthesis for intermediates", ref quick))
+        {
+            configuration.QuickSynthIntermediates = quick;
+            configuration.Save();
+        }
+
+        ImGui.TextDisabled("Bulk-produce intermediate materials with quick synthesis\n(much faster; intermediates come out normal quality).");
     }
 }

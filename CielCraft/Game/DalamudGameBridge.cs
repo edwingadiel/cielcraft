@@ -275,6 +275,84 @@ public sealed class DalamudGameBridge : IGameBridge
         return false;
     }
 
+    public bool IsMounted => Plugin.Condition[ConditionFlag.Mounted];
+
+    public unsafe void TryMount()
+    {
+        var actionManager = FFXIVClientStructs.FFXIV.Client.Game.ActionManager.Instance();
+        // General action 9 = mount roulette.
+        actionManager->UseAction(FFXIVClientStructs.FFXIV.Client.Game.ActionType.GeneralAction, 9);
+    }
+
+    public unsafe void TryDismount()
+    {
+        var actionManager = FFXIVClientStructs.FFXIV.Client.Game.ActionManager.Instance();
+        // General action 23 = dismount.
+        actionManager->UseAction(FFXIVClientStructs.FFXIV.Client.Game.ActionType.GeneralAction, 23);
+    }
+
+    public unsafe int GetFreeInventorySlots()
+    {
+        var inventory = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+        return inventory == null ? 0 : (int)inventory->GetEmptySlotsInBag();
+    }
+
+    public unsafe bool IsQuickSynthAvailable
+    {
+        get
+        {
+            var addon = GetRecipeNote();
+            return addon != null
+                   && SelectedRecipeId != 0
+                   && addon->QuickSynthesisButton != null
+                   && addon->QuickSynthesisButton->IsEnabled;
+        }
+    }
+
+    public unsafe bool OpenQuickSynthesisDialog()
+    {
+        if (!IsQuickSynthAvailable)
+            return false;
+
+        // Callback value 9 is the crafting log's Quick Synthesis command.
+        GetRecipeNote()->AtkUnitBase.FireCallbackInt(9);
+        return true;
+    }
+
+    public unsafe bool ConfirmQuickSynthesisDialog(int count)
+    {
+        var ptr = Plugin.GameGui.GetAddonByName("SynthesisSimpleDialog");
+        if (ptr.IsNull || !ptr.IsVisible)
+            return false;
+
+        var addon = (FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)ptr.Address;
+        var values = stackalloc FFXIVClientStructs.FFXIV.Component.GUI.AtkValue[3];
+        values[0].Type = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int;
+        values[0].Int = System.Math.Clamp(count, 1, 99);
+        values[1].Type = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Bool;
+        values[1].Byte = 1;
+        values[2].Type = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Bool;
+        values[2].Byte = 1;
+        addon->FireCallback(3, values, true);
+        return true;
+    }
+
+    public unsafe bool IsQuickSynthesisActive
+    {
+        get
+        {
+            var ptr = Plugin.GameGui.GetAddonByName("SynthesisSimple");
+            return !ptr.IsNull && ptr.IsVisible;
+        }
+    }
+
+    public unsafe void CancelQuickSynthesis()
+    {
+        var ptr = Plugin.GameGui.GetAddonByName("SynthesisSimple");
+        if (!ptr.IsNull && ptr.IsVisible)
+            ((FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)ptr.Address)->FireCallbackInt(-1);
+    }
+
     private static unsafe FFXIVClientStructs.FFXIV.Client.UI.AddonRecipeNote* GetRecipeNote()
     {
         var ptr = Plugin.GameGui.GetAddonByName("RecipeNote");

@@ -88,4 +88,30 @@ public interface IGameBridge
 
     /// <summary>Teleports to an attuned aetheryte in the territory. False when none is attuned.</summary>
     bool TeleportToTerritory(uint territoryId);
+
+    /// <summary>True while riding a mount.</summary>
+    bool IsMounted { get; }
+
+    /// <summary>Requests mount roulette. The game rejects it where mounting is not allowed.</summary>
+    void TryMount();
+
+    void TryDismount();
+
+    /// <summary>Free bag slots in the main inventory.</summary>
+    int GetFreeInventorySlots();
+
+    /// <summary>Quick Synthesis is offered for the selected recipe.</summary>
+    bool IsQuickSynthAvailable { get; }
+
+    /// <summary>Opens the quick-synthesis dialog from the crafting log.</summary>
+    bool OpenQuickSynthesisDialog();
+
+    /// <summary>Confirms the quick-synthesis dialog for the given count (uses HQ materials).</summary>
+    bool ConfirmQuickSynthesisDialog(int count);
+
+    /// <summary>The quick-synthesis progress window is up.</summary>
+    bool IsQuickSynthesisActive { get; }
+
+    /// <summary>Cancels a quick synthesis in progress.</summary>
+    void CancelQuickSynthesis();
 }

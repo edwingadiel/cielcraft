@@ -59,12 +59,12 @@ public sealed class Plugin : IDalamudPlugin
         ActionExecutor = new ActionExecutor(GameBridge, CraftMonitor);
         SolverService = new SolverService(new CielCraft.Raphael.RaphaelSolver());
         CraftAutomator = new CraftAutomator(GameBridge, CraftMonitor, ActionExecutor, Configuration);
-        BatchCrafter = new BatchCrafter(GameBridge, CraftMonitor, CraftAutomator, SolverService);
+        BatchCrafter = new BatchCrafter(GameBridge, CraftMonitor, CraftAutomator, SolverService, RecipeProvider);
         Navigation = new Navigation.VNavmeshProvider();
         GatheringController = new Gathering.GatheringController(GameBridge, Navigation);
         GatheringLoop = new Gathering.GatheringLoop(GameBridge, GatheringController);
         ProductionRunner = new ProductionRunner(
-            GameBridge, BatchCrafter, RecipeProvider, GatheringLoop, GatheringDatabase, Navigation);
+            GameBridge, BatchCrafter, RecipeProvider, GatheringLoop, GatheringDatabase, Navigation, Configuration);
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);
@@ -76,7 +76,7 @@ public sealed class Plugin : IDalamudPlugin
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open the CielCraft window. \"/cielcraft config\" for settings, \"/cielcraft debug\" for the debug window.",
+            HelpMessage = "Open the CielCraft window. \"/cielcraft config\" settings, \"/cielcraft debug\" debug window, \"/cielcraft stop\" emergency stop.",
         });
 
         PluginInterface.UiBuilder.Draw += DrawUi;
@@ -115,10 +115,25 @@ public sealed class Plugin : IDalamudPlugin
             case "debug":
                 ToggleDebugUi();
                 break;
+            case "stop":
+                StopEverything();
+                break;
             default:
                 ToggleMainUi();
                 break;
         }
+    }
+
+    /// <summary>Emergency stop (spec §48): halts every automation layer at once.</summary>
+    public void StopEverything()
+    {
+        Log.Information("[Plugin] Emergency stop requested.");
+        ProductionRunner.Stop();
+        BatchCrafter.Stop();
+        GatheringLoop.Stop();
+        GatheringController.Stop();
+        CraftAutomator.Stop();
+        Navigation.Stop();
     }
 
     private void DrawUi() => WindowSystem.Draw();

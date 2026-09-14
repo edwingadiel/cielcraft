@@ -42,6 +42,7 @@ public sealed class ProductionRunner : IDisposable
     private readonly Gathering.GatheringLoop gatheringLoop;
     private readonly GatheringDatabase gatheringDatabase;
     private readonly INavigationProvider navigation;
+    private readonly Configuration configuration;
 
     private ProductionPlan? plan;
     private int stepIndex;
@@ -52,6 +53,11 @@ public sealed class ProductionRunner : IDisposable
     private bool gearsetRequested;
     private bool sawLoadingScreen;
     private System.Numerics.Vector3? areaDestination;
+    private int initialTargetCount;
+    private int replanCount;
+    private int mountAttempts;
+    private bool flyBlocked;
+    private bool flyAttempted;
 
     private sealed record GatherTask(uint ItemId, int Amount, uint JobId, uint TerritoryId, System.Numerics.Vector2 AreaPosition, IReadOnlyList<EtWindow> Windows);
 
@@ -66,8 +72,10 @@ public sealed class ProductionRunner : IDisposable
         DalamudRecipeProvider recipeProvider,
         Gathering.GatheringLoop gatheringLoop,
         GatheringDatabase gatheringDatabase,
-        INavigationProvider navigation)
+        INavigationProvider navigation,
+        Configuration configuration)
     {
+        this.configuration = configuration;
         this.gameBridge = gameBridge;
         this.batchCrafter = batchCrafter;
         this.recipeProvider = recipeProvider;
@@ -94,51 +102,8 @@ public sealed class ProductionRunner : IDisposable
             return false;
         }
 
-        // Missing raw materials become gather tasks (spec §67) when they are
-        // gatherable and navigation is up; otherwise starting is refused.
-        gatherQueue.Clear();
-        gatherIndex = 0;
-        if (productionPlan.RawMaterials.Count > 0)
-        {
-            if (!navigation.IsAvailable)
-            {
-                Transition(
-                    ProductionState.Idle,
-                    "Cannot start: raw materials are missing and vnavmesh is unavailable for gathering.");
-                return false;
-            }
-
-            foreach (var material in productionPlan.RawMaterials)
-            {
-                var job = gatheringDatabase.GetGatheringJob(material.ItemId);
-                if (job == null)
-                {
-                    Transition(
-                        ProductionState.Idle,
-                        $"Cannot start: {recipeProvider.GetItemName(material.ItemId)} ×{material.Amount} " +
-                        "is missing and not gatherable by MIN/BTN.");
-                    return false;
-                }
-
-                // Known node area enables cross-territory travel (spec §68);
-                // without one, gathering is attempted in the current zone.
-                var location = gatheringDatabase.FindLocation(material.ItemId);
-                gatherQueue.Add(new GatherTask(
-                    material.ItemId,
-                    material.Amount,
-                    location?.JobId ?? job.Value,
-                    location?.TerritoryId ?? 0,
-                    location?.Position ?? default,
-                    location?.Windows ?? []));
-            }
-
-            // Timed materials go last, soonest window first, so untimed work
-            // fills the waiting time (spec §38).
-            var etNow = EorzeaClock.MinuteOfDay(DateTimeOffset.UtcNow);
-            gatherQueue.Sort((a, b) =>
-                EorzeaClock.RealTimeUntilOpen(a.Windows, etNow)
-                    .CompareTo(EorzeaClock.RealTimeUntilOpen(b.Windows, etNow)));
-        }
+        if (!TryBuildGatherQueue(productionPlan))
+            return false;
 
         if (gameBridge.IsCrafting)
         {
@@ -148,6 +113,8 @@ public sealed class ProductionRunner : IDisposable
 
         plan = productionPlan;
         stepIndex = 0;
+        initialTargetCount = gameBridge.GetItemCount(productionPlan.TargetItemId);
+        replanCount = 0;
         EnterPreparing();
 
         if (gatherQueue.Count > 0)
@@ -398,8 +365,31 @@ public sealed class ProductionRunner : IDisposable
         if (distance <= NodeAreaArrivalRange)
             return; // nodes should appear as they spawn into the object table
 
-        if (!navigation.IsMoving)
-            Throttled(() => navigation.MoveCloseTo(areaDestination.Value, 10f, fly: false));
+        if (navigation.IsMoving)
+        {
+            flyAttempted = false;
+            return;
+        }
+
+        Throttled(() =>
+        {
+            // Mount for long legs (roadmap 1.1); give up after a few refusals
+            // (indoors, combat) and just walk.
+            if (!gameBridge.IsMounted && mountAttempts < 3 && distance > 80f)
+            {
+                mountAttempts++;
+                gameBridge.TryMount();
+                return;
+            }
+
+            // A fly request that never starts moving means no flying here.
+            if (flyAttempted)
+                flyBlocked = true;
+
+            var fly = gameBridge.IsMounted && !flyBlocked;
+            flyAttempted = fly;
+            navigation.MoveCloseTo(areaDestination.Value, 10f, fly);
+        });
     }
 
     private void TickRunningGather()
@@ -481,11 +471,27 @@ public sealed class ProductionRunner : IDisposable
             return;
         }
 
-        if (batchCrafter.Start(step.Crafts))
+        // Re-verify ingredients right before committing to the step (spec §26).
+        foreach (var requirement in gameBridge.GetRecipeRequirements((ushort)step.RecipeId))
+        {
+            if (requirement.Owned < requirement.AmountPerCraft * step.Crafts)
+            {
+                Replan($"short {requirement.Name} for {recipeProvider.GetItemName(step.ItemId)}");
+                return;
+            }
+        }
+
+        // Quick synthesis for intermediates when enabled and offered (roadmap 1.4).
+        var quick = configuration.QuickSynthIntermediates
+                    && stepIndex < plan!.CraftSteps.Count - 1
+                    && gameBridge.IsQuickSynthAvailable;
+
+        if (batchCrafter.Start(step.Crafts, quick))
         {
             Plugin.Log.Information(
                 $"[Production] Step {stepIndex + 1}/{TotalSteps}: " +
-                $"{recipeProvider.GetItemName(step.ItemId)} ×{step.TotalProduced} ({step.Crafts} crafts).");
+                $"{recipeProvider.GetItemName(step.ItemId)} ×{step.TotalProduced} ({step.Crafts} crafts" +
+                (quick ? ", quick synthesis" : "") + ").");
             Transition(ProductionState.RunningBatch, StepText("Crafting"));
         }
     }
@@ -523,6 +529,97 @@ public sealed class ProductionRunner : IDisposable
         }
     }
 
+    /// <summary>Turns a plan's missing raw materials into gather tasks (spec §67/§38).</summary>
+    private bool TryBuildGatherQueue(ProductionPlan productionPlan)
+    {
+        gatherQueue.Clear();
+        gatherIndex = 0;
+        if (productionPlan.RawMaterials.Count == 0)
+            return true;
+
+        if (!navigation.IsAvailable)
+        {
+            Transition(
+                ProductionState.Idle,
+                "Cannot start: raw materials are missing and vnavmesh is unavailable for gathering.");
+            return false;
+        }
+
+        foreach (var material in productionPlan.RawMaterials)
+        {
+            var job = gatheringDatabase.GetGatheringJob(material.ItemId);
+            if (job == null)
+            {
+                Transition(
+                    ProductionState.Idle,
+                    $"Cannot start: {recipeProvider.GetItemName(material.ItemId)} ×{material.Amount} " +
+                    "is missing and not gatherable by MIN/BTN.");
+                return false;
+            }
+
+            // Known node area enables cross-territory travel (spec §68);
+            // without one, gathering is attempted in the current zone.
+            var location = gatheringDatabase.FindLocation(material.ItemId);
+            gatherQueue.Add(new GatherTask(
+                material.ItemId,
+                material.Amount,
+                location?.JobId ?? job.Value,
+                location?.TerritoryId ?? 0,
+                location?.Position ?? default,
+                location?.Windows ?? []));
+        }
+
+        // Timed materials go last, soonest window first, so untimed work
+        // fills the waiting time (spec §38).
+        var etNow = EorzeaClock.MinuteOfDay(DateTimeOffset.UtcNow);
+        gatherQueue.Sort((a, b) =>
+            EorzeaClock.RealTimeUntilOpen(a.Windows, etNow)
+                .CompareTo(EorzeaClock.RealTimeUntilOpen(b.Windows, etNow)));
+        return true;
+    }
+
+    /// <summary>
+    /// Light dynamic replanning (spec §26): rebuild the plan for what is still
+    /// missing. Work already produced is counted through the inventory and is
+    /// never redone.
+    /// </summary>
+    private void Replan(string reason)
+    {
+        if (plan == null || ++replanCount > 3)
+        {
+            Fail($"replanning limit reached ({reason})");
+            return;
+        }
+
+        var produced = Math.Max(0, gameBridge.GetItemCount(plan.TargetItemId) - initialTargetCount);
+        var remaining = plan.TargetQuantity - produced;
+        if (remaining <= 0)
+        {
+            Transition(ProductionState.Completed, $"Completed: target already satisfied ({produced} produced).");
+            return;
+        }
+
+        Plugin.Log.Information($"[Production] Replanning ({reason}): {remaining} of the target still needed.");
+        var newPlan = DependencyResolver.Resolve(
+            plan.TargetItemId, remaining, recipeProvider, gameBridge.GetItemCount);
+
+        if (!TryBuildGatherQueue(newPlan))
+        {
+            Fail($"replanning found unobtainable materials ({StatusText})");
+            return;
+        }
+
+        plan = newPlan;
+        stepIndex = 0;
+        EnterPreparing();
+        if (gatherQueue.Count > 0)
+            Transition(ProductionState.PreparingGather, GatherText("Preparing to gather"));
+        else if (newPlan.CraftSteps.Count > 0)
+            Transition(ProductionState.PreparingStep, StepText("Preparing"));
+        else
+            Transition(ProductionState.Completed, "Completed after replanning.");
+    }
+
     private void EnterPhase(ProductionState state, string statusText)
     {
         EnterPreparing();
@@ -534,6 +631,9 @@ public sealed class ProductionRunner : IDisposable
         phaseStartedAt = DateTime.UtcNow;
         lastAttemptAt = DateTime.MinValue;
         gearsetRequested = false;
+        mountAttempts = 0;
+        flyBlocked = false;
+        flyAttempted = false;
     }
 
     private void Throttled(Action action)

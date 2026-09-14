@@ -29,6 +29,12 @@ public class MainWindow : Window, IDisposable
 
     private int batchQuantity = 1;
 
+    private string searchText = "";
+    private IReadOnlyList<(uint RecipeId, uint ItemId, string Name)> searchResults = [];
+    private (uint RecipeId, string Name)? searchTarget;
+
+    private uint EffectiveRecipeId => searchTarget?.RecipeId ?? gameBridge.SelectedRecipeId;
+
     private DateTime requirementsRefreshedAt = DateTime.MinValue;
     private ushort requirementsRecipeId;
     private IReadOnlyList<IngredientRequirement> requirements = [];
@@ -39,6 +45,8 @@ public class MainWindow : Window, IDisposable
         ImGui.Separator();
         DrawCharacter();
         ImGui.Separator();
+        DrawTargetSearch();
+        ImGui.Separator();
         DrawBatch();
         ImGui.Separator();
 
@@ -48,6 +56,40 @@ public class MainWindow : Window, IDisposable
         ImGui.SameLine();
         if (ImGui.Button("Settings"))
             plugin.ToggleConfigUi();
+    }
+
+    private void DrawTargetSearch()
+    {
+        ImGui.TextUnformatted("Target");
+
+        ImGui.SetNextItemWidth(220);
+        if (ImGui.InputTextWithHint("##itemSearch", "Search craftable item...", ref searchText, 64))
+            searchResults = plugin.RecipeProvider.SearchCraftable(searchText);
+
+        foreach (var result in searchResults)
+        {
+            if (ImGui.Selectable($"{result.Name}##r{result.RecipeId}"))
+            {
+                searchTarget = (result.RecipeId, result.Name);
+                searchText = result.Name;
+                searchResults = [];
+            }
+        }
+
+        if (searchTarget is { } target)
+        {
+            ImGui.TextUnformatted($"Selected: {target.Name}");
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Use crafting log instead"))
+            {
+                searchTarget = null;
+                searchText = "";
+            }
+        }
+        else
+        {
+            ImGui.TextDisabled("No search target — using the crafting log selection.");
+        }
     }
 
     private void DrawBatch()
@@ -105,7 +147,7 @@ public class MainWindow : Window, IDisposable
 
     private void DrawMaterials()
     {
-        var recipeId = gameBridge.SelectedRecipeId;
+        var recipeId = (ushort)EffectiveRecipeId;
         if (recipeId == 0)
         {
             requirements = [];
@@ -170,7 +212,7 @@ public class MainWindow : Window, IDisposable
             plan = null;
             planError = "";
 
-            var recipe = plugin.RecipeProvider.GetRecipeById(gameBridge.SelectedRecipeId);
+            var recipe = plugin.RecipeProvider.GetRecipeById(EffectiveRecipeId);
             if (recipe == null)
                 planError = "Could not read the selected recipe.";
             else

@@ -11,6 +11,8 @@ public enum BatchState
     Solving,
     StartingCraft,
     Crafting,
+    QuickStarting,
+    QuickRunning,
     Paused,
     Completed,
     Failed,
@@ -30,6 +32,7 @@ public sealed class BatchCrafter : IDisposable
     private readonly CraftStateMonitor craftMonitor;
     private readonly CraftAutomator automator;
     private readonly SolverService solverService;
+    private readonly Game.DalamudRecipeProvider recipeProvider;
 
     private int targetQuantity;
     private ushort recipeId;
@@ -52,12 +55,14 @@ public sealed class BatchCrafter : IDisposable
         IGameBridge gameBridge,
         CraftStateMonitor craftMonitor,
         CraftAutomator automator,
-        SolverService solverService)
+        SolverService solverService,
+        Game.DalamudRecipeProvider recipeProvider)
     {
         this.gameBridge = gameBridge;
         this.craftMonitor = craftMonitor;
         this.automator = automator;
         this.solverService = solverService;
+        this.recipeProvider = recipeProvider;
 
         Plugin.Framework.Update += OnUpdate;
     }
@@ -72,9 +77,14 @@ public sealed class BatchCrafter : IDisposable
     /// selected, or an active craft still on its first step (which then counts
     /// as craft #1 of the batch).
     /// </summary>
-    public bool Start(int quantity)
+    private bool quickMode;
+    private bool quickDialogRequested;
+    private DateTime quickLastProgressAt;
+
+    public bool Start(int quantity, bool quickSynth = false)
     {
-        if (State is BatchState.Solving or BatchState.StartingCraft or BatchState.Crafting or BatchState.Paused)
+        if (State is BatchState.Solving or BatchState.StartingCraft or BatchState.Crafting
+            or BatchState.QuickStarting or BatchState.QuickRunning or BatchState.Paused)
             return false;
 
         if (quantity < 1)
@@ -102,6 +112,12 @@ public sealed class BatchCrafter : IDisposable
             }
         }
 
+        if (gameBridge.GetFreeInventorySlots() < 1)
+        {
+            Transition(BatchState.Idle, "Cannot start: inventory is full.");
+            return false;
+        }
+
         targetQuantity = quantity;
         CompletedCrafts = 0;
         recipeId = gameBridge.IsCrafting ? (ushort)0 : gameBridge.SelectedRecipeId;
@@ -115,6 +131,25 @@ public sealed class BatchCrafter : IDisposable
         wasCrafting = gameBridge.IsCrafting;
         waitStartedAt = DateTime.UtcNow;
 
+        quickMode = quickSynth && !gameBridge.IsCrafting && gameBridge.IsQuickSynthAvailable;
+        if (quickMode)
+        {
+            var recipe = recipeProvider.GetRecipeById(gameBridge.SelectedRecipeId);
+            if (recipe == null)
+            {
+                Transition(BatchState.Idle, "Cannot quick synth: recipe could not be read.");
+                return false;
+            }
+
+            resultItemId = recipe.ResultItemId;
+            resultAmount = recipe.ResultAmount;
+            baselineItemCount = gameBridge.GetItemCount(resultItemId);
+            quickDialogRequested = false;
+            waitStartedAt = DateTime.UtcNow;
+            Transition(BatchState.QuickStarting, $"Quick synthesis batch of {quantity} started.");
+            return true;
+        }
+
         Transition(
             gameBridge.IsCrafting ? BatchState.Solving : BatchState.StartingCraft,
             $"Batch of {quantity} started.");
@@ -123,6 +158,13 @@ public sealed class BatchCrafter : IDisposable
 
     public void Pause(string reason)
     {
+        if (State is BatchState.QuickStarting or BatchState.QuickRunning)
+        {
+            gameBridge.CancelQuickSynthesis();
+            Transition(BatchState.Paused, $"Paused: {reason}.");
+            return;
+        }
+
         if (State is BatchState.Solving or BatchState.StartingCraft or BatchState.Crafting)
         {
             if (automator.State == AutomationState.Running)
@@ -138,7 +180,12 @@ public sealed class BatchCrafter : IDisposable
             return;
 
         waitStartedAt = DateTime.UtcNow;
-        if (gameBridge.IsCrafting)
+        if (quickMode && !gameBridge.IsCrafting)
+        {
+            quickDialogRequested = false;
+            Transition(BatchState.QuickStarting, ProgressText());
+        }
+        else if (gameBridge.IsCrafting)
         {
             if (automator.State == AutomationState.Paused)
                 automator.Resume();
@@ -155,6 +202,8 @@ public sealed class BatchCrafter : IDisposable
     public void Stop()
     {
         automator.Stop();
+        if (State is BatchState.QuickStarting or BatchState.QuickRunning)
+            gameBridge.CancelQuickSynthesis();
         if (State is not (BatchState.Idle or BatchState.Completed or BatchState.Failed))
             Transition(BatchState.Idle, $"Stopped by user after {CompletedCrafts}/{targetQuantity} crafts.");
     }
@@ -176,7 +225,73 @@ public sealed class BatchCrafter : IDisposable
             case BatchState.Crafting:
                 TickCrafting(isCrafting, craftJustEnded);
                 break;
+            case BatchState.QuickStarting:
+                TickQuickStarting();
+                break;
+            case BatchState.QuickRunning:
+                TickQuickRunning();
+                break;
         }
+    }
+
+    private void TickQuickStarting()
+    {
+        if (gameBridge.IsQuickSynthesisActive)
+        {
+            quickLastProgressAt = DateTime.UtcNow;
+            Transition(BatchState.QuickRunning, $"Quick synthesizing {CompletedCrafts}/{targetQuantity}...");
+            return;
+        }
+
+        if (DateTime.UtcNow - waitStartedAt > StartTimeout)
+        {
+            Fail("quick synthesis did not start (out of materials, or the dialog did not respond)");
+            return;
+        }
+
+        if (!quickDialogRequested)
+        {
+            if (gameBridge.OpenQuickSynthesisDialog())
+                quickDialogRequested = true;
+            return;
+        }
+
+        // The dialog takes the count; batches are capped at 99 by the game and
+        // re-entered here for larger targets.
+        gameBridge.ConfirmQuickSynthesisDialog(targetQuantity - CompletedCrafts);
+    }
+
+    private void TickQuickRunning()
+    {
+        var produced = (gameBridge.GetItemCount(resultItemId) - baselineItemCount) / Math.Max(resultAmount, 1);
+        if (produced > CompletedCrafts)
+        {
+            CompletedCrafts = produced;
+            quickLastProgressAt = DateTime.UtcNow;
+            StatusText = $"Quick synthesizing {CompletedCrafts}/{targetQuantity}...";
+        }
+
+        if (CompletedCrafts >= targetQuantity)
+        {
+            if (gameBridge.IsQuickSynthesisActive)
+                gameBridge.CancelQuickSynthesis();
+            else
+                Transition(BatchState.Completed, $"Completed: {CompletedCrafts}/{targetQuantity} quick synths.");
+            return;
+        }
+
+        if (!gameBridge.IsQuickSynthesisActive)
+        {
+            // A 99-batch finished (or materials/space ran out): start the next
+            // round; QuickStarting fails cleanly if nothing can be crafted.
+            quickDialogRequested = false;
+            waitStartedAt = DateTime.UtcNow;
+            Transition(BatchState.QuickStarting, $"Quick synthesis round done ({CompletedCrafts}/{targetQuantity}); continuing.");
+            return;
+        }
+
+        if (DateTime.UtcNow - quickLastProgressAt > TimeSpan.FromSeconds(30))
+            Pause("quick synthesis made no progress for 30s");
     }
 
     private void TickSolving(bool isCrafting)
@@ -210,7 +325,12 @@ public sealed class BatchCrafter : IDisposable
                 HeartAndSoul: false,
                 QuickInnovation: false);
 
-            if (!solverService.BeginSolve(setup, new CraftObjective(TargetQuality: (ushort)craft.MaxQuality)))
+            // Live quality at solve time reflects HQ materials, so the
+            // rotation accounts for them (every craft of the batch shares the
+            // same HQ fill).
+            if (!solverService.BeginSolve(setup, new CraftObjective(
+                    TargetQuality: (ushort)craft.MaxQuality,
+                    InitialQuality: (ushort)craft.Quality)))
                 return;
 
             solveRequested = true;

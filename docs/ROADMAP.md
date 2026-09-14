@@ -5,21 +5,21 @@ This tracks the remaining work toward 1.0. Sizes: S / M / L.
 
 ## Phase 1 — Reliability & daily use
 
-- [ ] **1.1 Mount + flying during travel** (M) — mount up for long legs, fly where
+- [x] **1.1 Mount + flying during travel** (M) — mount up for long legs, fly where
   unlocked, dismount to gather. Travel is on foot today.
-- [ ] **1.2 Item search → "Make N"** (M) — search box in the main window (spec §43/§77);
+- [x] **1.2 Item search → "Make N"** (M) — search box in the main window (spec §43/§77);
   plan and run from an item name without opening the crafting log.
-- [ ] **1.3 HQ ingredients** (M) — respect the configured HQ material fill: solve with
+- [x] **1.3 HQ ingredients** (M) — respect the configured HQ material fill: solve with
   the craft's real starting quality instead of assuming 0.
-- [ ] **1.4 Quick synthesis for trivial intermediates** (S–M) — bulk low-level
+- [x] **1.4 Quick synthesis for trivial intermediates** (S–M) — bulk low-level
   intermediates via quick synth (much faster); config-gated, intermediates only.
-- [ ] **1.5 Light dynamic replanning** (S) — spec §26: re-verify ingredients before each
+- [x] **1.5 Light dynamic replanning** (S) — spec §26: re-verify ingredients before each
   production step; re-resolve the remaining plan on shortfall without redoing done work.
-- [ ] **1.6 Inventory-space guard** (S) — check free bag slots before/while batches and
+- [x] **1.6 Inventory-space guard** (S) — check free bag slots before/while batches and
   gathering; pause cleanly instead of failing verification confusingly.
-- [ ] **1.7 Emergency stop** (S) — `/cielcraft stop` halts production, batch, gathering,
+- [x] **1.7 Emergency stop** (S) — `/cielcraft stop` halts production, batch, gathering,
   and navigation at once (spec §48).
-- [ ] **1.8 Release pipeline** (S) — tagged releases + `repo.json` custom Dalamud repo so
+- [x] **1.8 Release pipeline** (S) — tagged releases + `repo.json` custom Dalamud repo so
   the game machine updates from the plugin installer.
 
 ## Phase 2 — Smarter gathering (spec §37)

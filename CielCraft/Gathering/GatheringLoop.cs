@@ -119,6 +119,12 @@ public sealed class GatheringLoop : IDisposable
             return;
         }
 
+        if (gameBridge.GetFreeInventorySlots() < 1)
+        {
+            Pause("inventory is full");
+            return;
+        }
+
         switch (controller.State)
         {
             case GatheringState.MovingToNode:

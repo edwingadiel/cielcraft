@@ -62,6 +62,40 @@ public sealed class DalamudRecipeProvider : IRecipeProvider
         return name;
     }
 
+    /// <summary>Case-insensitive substring search over craftable item names (roadmap 1.2).</summary>
+    public IReadOnlyList<(uint RecipeId, uint ItemId, string Name)> SearchCraftable(string query, int maxResults = 10)
+    {
+        EnsureIndex();
+        var needle = query.Trim();
+        if (needle.Length < 2)
+            return [];
+
+        var results = new List<(uint RecipeId, uint ItemId, string Name)>();
+        foreach (var (itemId, recipeId) in itemToRecipeId!)
+        {
+            var name = GetItemName(itemId);
+            if (!name.Contains(needle, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            results.Add((recipeId, itemId, name));
+            if (results.Count >= maxResults * 4)
+                break;
+        }
+
+        // Prefer names that start with the query, then shorter names.
+        results.Sort((a, b) =>
+        {
+            var aStarts = a.Name.StartsWith(needle, StringComparison.OrdinalIgnoreCase);
+            var bStarts = b.Name.StartsWith(needle, StringComparison.OrdinalIgnoreCase);
+            if (aStarts != bStarts)
+                return aStarts ? -1 : 1;
+
+            return a.Name.Length.CompareTo(b.Name.Length);
+        });
+
+        return results.Count > maxResults ? results.GetRange(0, maxResults) : results;
+    }
+
     /// <summary>Item-to-recipe index, built once; the lowest recipe id wins for multi-recipe items.</summary>
     private void EnsureIndex()
     {

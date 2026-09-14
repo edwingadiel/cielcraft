@@ -35,7 +35,17 @@ CI builds the Windows x64 `cielcraft_raphael.dll` and bundles it into the plugin
 
 The packaged plugin ends up in `CielCraft/bin/x64/Debug/CielCraft` (via DalamudPackager).
 
-## Testing in game
+## Installing in game
+
+Add the custom plugin repository in `/xlsettings` → Experimental → Custom Plugin Repositories:
+
+```
+https://raw.githubusercontent.com/edwingadiel/cielcraft/main/repo.json
+```
+
+then install CielCraft from `/xlplugins`. Releases are published by tagging (`git tag v0.7.0 && git push --tags`).
+
+## Testing in game (dev builds)
 
 1. In game, run `/xlsettings` → Experimental → Dev Plugin Locations.
 2. Add the full path to the built `CielCraft.dll`.
