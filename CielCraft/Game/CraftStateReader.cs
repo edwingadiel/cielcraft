@@ -58,8 +58,10 @@ internal static unsafe class CraftStateReader
         var buffs = new List<CraftBuff>();
         foreach (var status in player.StatusList)
         {
+            // Crafting statuses carry their remaining step count in the
+            // duration field (the number shown on the buff icon).
             if (status.StatusId != 0 && Array.IndexOf(CraftBuffIds.All, status.StatusId) >= 0)
-                buffs.Add(new CraftBuff(status.StatusId, status.Param));
+                buffs.Add(new CraftBuff(status.StatusId, status.Param, (int)MathF.Round(status.RemainingTime)));
         }
 
         return buffs;

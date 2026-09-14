@@ -131,4 +131,26 @@ public class AdaptiveEngineTests
         Assert.Equal(Veneration, decision.ActionId);
         Assert.Equal(2, decision.ConsumeFromPlan);
     }
+
+    [Fact]
+    public void ProgressBuffsMakeACheaperFinisherSufficient()
+    {
+        // 450 remaining: unbuffed Careful (450) is the cheapest sufficient
+        // finisher; under Veneration Basic Synthesis reaches 300 × 1.5 = 450.
+        var plain = Snapshot(progress: 2550, quality: 10000);
+        var venerated = plain with { Buffs = [new CraftBuff(CraftBuffIds.Veneration, 0, 2)] };
+
+        Assert.Equal(CarefulSynthesis, AdaptiveEngine.Decide(plain, [PreparatoryTouch], BaseProgress, Level)!.ActionId);
+        Assert.Equal(BasicSynthesis, AdaptiveEngine.Decide(venerated, [PreparatoryTouch], BaseProgress, Level)!.ActionId);
+    }
+
+    [Fact]
+    public void MuscleMemoryDoublesTheEstimate()
+    {
+        var action = CraftActionData.Finishers[0]; // Basic Synthesis, 300 at Lv100 with base 250
+        Assert.Equal(300, action.ProgressGain(BaseProgress, Level, 40));
+        Assert.Equal(450, action.ProgressGain(BaseProgress, Level, 40, veneration: true));
+        Assert.Equal(600, action.ProgressGain(BaseProgress, Level, 40, muscleMemory: true));
+        Assert.Equal(750, action.ProgressGain(BaseProgress, Level, 40, veneration: true, muscleMemory: true));
+    }
 }

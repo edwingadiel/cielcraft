@@ -9,8 +9,9 @@ public sealed record AdaptiveDecision(uint ActionId, int ConsumeFromPlan, string
 
 /// <summary>
 /// Live-state adaptation over a Raphael plan (spec §15/§16). Evaluated before
-/// every action. v1 rules, all safe underestimates (buffs are ignored, so real
-/// gains are never lower than estimated):
+/// every action. v1 rules; progress estimates count the progress buffs
+/// active for the next action (Veneration, Muscle Memory) and nothing
+/// speculative, so real gains are never lower than estimated:
 ///
 ///  1. Quality target reached and one synthesis action can finish the craft
 ///     (including Good-only Intensive Synthesis) — finish now.
@@ -46,7 +47,7 @@ public static class AdaptiveEngine
                 finisher.ActionId,
                 ConsumeFromPlan: remainingPlan.Count,
                 $"quality target reached — finishing with {finisher.Name} " +
-                $"({finisher.ProgressGain(baseProgress, level, state.Durability)} progress covers the remaining {remainingProgress})");
+                $"({Gain(finisher, state, level, baseProgress)} progress covers the remaining {remainingProgress})");
         }
 
         // Rule 2: drop quality-only actions from the plan.
@@ -74,6 +75,14 @@ public static class AdaptiveEngine
         return FollowPlan(remainingPlan);
     }
 
+    private static int Gain(CraftActionData.SynthesisAction action, CraftSnapshot state, byte level, int baseProgress) =>
+        action.ProgressGain(
+            baseProgress,
+            level,
+            state.Durability,
+            veneration: state.HasBuff(CraftBuffIds.Veneration),
+            muscleMemory: state.HasBuff(CraftBuffIds.MuscleMemory));
+
     private static AdaptiveDecision? FollowPlan(IReadOnlyList<uint> remainingPlan) =>
         remainingPlan.Count > 0 ? new AdaptiveDecision(remainingPlan[0], 1, null) : null;
 
@@ -100,7 +109,7 @@ public static class AdaptiveEngine
             if (state.Durability <= 0)
                 continue;
 
-            var gain = action.ProgressGain(baseProgress, level, state.Durability);
+            var gain = Gain(action, state, level, baseProgress);
             if (requireSufficient)
             {
                 // Finishers are ordered cheapest-CP first; the first sufficient one wins.

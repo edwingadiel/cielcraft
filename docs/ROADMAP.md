@@ -33,10 +33,16 @@ This tracks the remaining work toward 1.0. Sizes: S / M / L.
 
 ## Phase 3 — Smarter crafting
 
-- [x] 3.1 Buff tracking in CraftSnapshot (spec §10) — prerequisite for deeper adaptive
-  rules (M)
-- [x] 3.2 Mid-craft re-solve / GetNextAction (spec §17) — FFI v2 solving from live state;
-  optimal proc reactions, recovery from any deviation (L)
+- [x] 3.1 Buff tracking in CraftSnapshot (spec §10) — status, stacks and remaining
+  steps; the adaptive engine counts Veneration/Muscle Memory in its progress
+  estimates (M)
+- [x] 3.2 Mid-craft re-solve (spec §17) — the vendored solver
+  (`native/raphael-solver`, one added entry point) searches from the live
+  state: progress, quality, durability, CP, Inner Quiet stacks, buff durations,
+  one-shot availability. Proc reactions (Good/Excellent) stay rule-based in the
+  adaptive engine; the solver assumes Normal conditions, as Raphael does. The
+  touch-combo state is assumed lost on a recovery (only forgoes a CP discount).
+  One recovery re-solve per craft; anything after that pauses safely (L)
 - [x] 3.3 Food/potion in solves; re-solve on expiry (S–M)
 - [x] 3.4 Target-quality objectives (e.g. stop at a chosen HQ chance) (S)
 - [x] 3.5 Specialist actions (Heart and Soul, Quick Innovation — no step advance) (M)
@@ -53,10 +59,17 @@ This tracks the remaining work toward 1.0. Sizes: S / M / L.
 
 ## Phase 5 — Engineering health
 
-- [ ] 5.1 Extract batch/production state machines into Core for offline tests
-  (spec §50–51) (M) — deliberately deferred: requires threading time/log/framework
-  seams through validated orchestration code; all pure decision logic (resolution,
-  adaptive engine, planner, inventory, ET) is already in Core with 32 tests
+- [ ] 5.1 Extract batch/production/gathering state machines into Core for offline
+  tests (spec §50–51) (L) — still deferred, now the top post-1.0 item: the
+  orchestrators (BatchCrafter, ProductionRunner, GatheringController/Loop) are
+  the riskiest code and the least testable. Plan: give each a pure core driven
+  by synthetic events (CraftStarted, ActionResolved, CraftEnded,
+  InventoryChanged, NavigationCompleted, NodeOpened, Timeout, Pause, Resume)
+  with time/log/framework as seams, and keep the Dalamud classes as thin
+  adapters. Do it after the v1.0 in-game gate, since a pure refactor of
+  validated code needs its own regression pass. All pure decision logic
+  (resolution, adaptive engine, planner, inventory, ET, live-effect mapping,
+  digit parsing) is already in Core with 60 tests
 - [x] 5.2 Weekly scheduled CI against the latest Dalamud distrib to catch API drift (S)
 - [x] 5.3 UI polish to spec §44–46 (plan preview, live production panel, debug errors) (M)
 
@@ -85,4 +98,9 @@ Values that could not be verified offline and are confirmed at in-game gates:
 crafting-log callbacks (8 = synthesize, 9 = quick synthesis — validated),
 general action ids (9 = mount roulette, 23 = dismount — validated; 6 = repair — pending),
 repair-addon callbacks (0 = repair all, -1 = close; SelectYesno 0 = yes — pending),
-RecipeNote NQ/HQ ingredient amount spans as the HQ-fill mechanism (pending).
+RecipeNote NQ/HQ ingredient amount spans as the HQ-fill mechanism (pending),
+crafting-status `RemainingTime` holding the remaining step count (the number on
+the buff icon; shown in the debug window's craft buffs as "(N steps)" — pending;
+a wrong read degrades to "buff applies to the next action only", never unsound),
+Synthesis-window numbers arriving without thousands separators (the parser now
+merges "12,345"/"12.345"/"12 345" groups either way).

@@ -28,31 +28,36 @@ public sealed class RaphaelSolver : ICraftSolver
         if (!IsAvailable)
             return CraftSolution.Failed("native Raphael library is not available");
 
-        var input = new RaphaelInput
-        {
-            RecipeLevel = setup.RecipeLevel,
-            MaxProgress = setup.MaxProgress,
-            MaxQuality = setup.MaxQuality,
-            MaxDurability = setup.MaxDurability,
-            Craftsmanship = setup.Craftsmanship,
-            Control = setup.Control,
-            Cp = setup.Cp,
-            TargetQuality = objective.TargetQuality,
-            InitialQuality = objective.InitialQuality,
-            Level = setup.Level,
-            IsExpert = ToByte(setup.IsExpert),
-            Manipulation = ToByte(setup.Manipulation),
-            HeartAndSoul = ToByte(setup.HeartAndSoul),
-            QuickInnovation = ToByte(setup.QuickInnovation),
-            Adversarial = ToByte(objective.Adversarial),
-            BackloadProgress = ToByte(objective.BackloadProgress),
-            ExcludeFirstStepActions = ToByte(objective.ExcludeFirstStepActions),
-            ExcludePrudent = ToByte(objective.ExcludePrudent),
-        };
-
+        var input = BuildInput(setup, objective);
         var buffer = new uint[MaxActions];
         var result = raphael_solve(ref input, buffer, buffer.Length);
+        return ToSolution(result, buffer, input);
+    }
 
+    private static RaphaelInput BuildInput(CraftSetup setup, CraftObjective objective) => new()
+    {
+        RecipeLevel = setup.RecipeLevel,
+        MaxProgress = setup.MaxProgress,
+        MaxQuality = setup.MaxQuality,
+        MaxDurability = setup.MaxDurability,
+        Craftsmanship = setup.Craftsmanship,
+        Control = setup.Control,
+        Cp = setup.Cp,
+        TargetQuality = objective.TargetQuality,
+        InitialQuality = objective.InitialQuality,
+        Level = setup.Level,
+        IsExpert = ToByte(setup.IsExpert),
+        Manipulation = ToByte(setup.Manipulation),
+        HeartAndSoul = ToByte(setup.HeartAndSoul),
+        QuickInnovation = ToByte(setup.QuickInnovation),
+        Adversarial = ToByte(objective.Adversarial),
+        BackloadProgress = ToByte(objective.BackloadProgress),
+        ExcludeFirstStepActions = ToByte(objective.ExcludeFirstStepActions),
+        ExcludePrudent = ToByte(objective.ExcludePrudent),
+    };
+
+    private static CraftSolution ToSolution(int result, uint[] buffer, RaphaelInput input)
+    {
         ushort baseProgress = 0, baseQuality = 0;
         if (result >= 0)
             raphael_base_values(ref input, ref baseProgress, ref baseQuality);
@@ -63,32 +68,49 @@ public sealed class RaphaelSolver : ICraftSolver
             -2 => CraftSolution.Failed("the solver found no solution for these parameters"),
             -3 => CraftSolution.Failed("the solver panicked"),
             -4 => CraftSolution.Failed("the solution exceeded the action buffer"),
+            -5 => CraftSolution.Failed("the craft is already finished (no durability or progress complete)"),
             _ => CraftSolution.Failed($"invalid solver arguments (code {result})"),
         };
     }
 
-    public CraftSolution SolveFromState(CraftSetup setup, CraftSnapshot live, int targetQuality)
+    public CraftSolution SolveFromState(CraftSetup setup, CraftSnapshot live, int targetQuality, CraftSolveContext context)
     {
-        var remainingProgress = Math.Max(1, setup.MaxProgress - live.Progress);
-        var remainingQuality = Math.Max(0, Math.Min(targetQuality, (int)setup.MaxQuality) - live.Quality);
+        if (!IsAvailable)
+            return CraftSolution.Failed("native Raphael library is not available");
 
-        var adjusted = setup with
+        var effects = CraftLiveEffects.FromSnapshot(live, setup, context);
+        var target = (ushort)Math.Clamp(targetQuality, 0, setup.MaxQuality);
+
+        var input = BuildInput(setup, new CraftObjective(
+            TargetQuality: target,
+            // Past step 1 the first-step-only actions are excluded up front
+            // (the combo state would reject them anyway).
+            ExcludeFirstStepActions: live.Step > 1));
+
+        var state = new RaphaelLiveState
         {
-            MaxProgress = (ushort)remainingProgress,
-            MaxQuality = (ushort)remainingQuality,
-            MaxDurability = (ushort)Math.Max(1, live.Durability),
-            Cp = (ushort)live.CurrentCp,
-            // Specialist one-shots cannot be assumed available mid-craft.
-            HeartAndSoul = false,
-            QuickInnovation = false,
+            Progress = (ushort)Math.Clamp(live.Progress, 0, ushort.MaxValue),
+            Quality = (ushort)Math.Clamp(live.Quality, 0, ushort.MaxValue),
+            Durability = (ushort)Math.Clamp(live.Durability, 0, ushort.MaxValue),
+            Cp = (ushort)Math.Min(live.CurrentCp, ushort.MaxValue),
+            InnerQuiet = (byte)effects.InnerQuiet,
+            WasteNot = (byte)effects.WasteNot,
+            Innovation = (byte)effects.Innovation,
+            Veneration = (byte)effects.Veneration,
+            GreatStrides = (byte)effects.GreatStrides,
+            MuscleMemory = (byte)effects.MuscleMemory,
+            Manipulation = (byte)effects.Manipulation,
+            TrainedPerfectionAvailable = ToByte(effects.TrainedPerfectionAvailable),
+            HeartAndSoulAvailable = ToByte(effects.HeartAndSoulAvailable),
+            QuickInnovationAvailable = ToByte(effects.QuickInnovationAvailable),
+            TrainedPerfectionActive = ToByte(effects.TrainedPerfectionActive),
+            HeartAndSoulActive = ToByte(effects.HeartAndSoulActive),
+            Combo = (byte)effects.Combo,
         };
 
-        var objective = new CraftObjective(
-            TargetQuality: adjusted.MaxQuality,
-            ExcludeFirstStepActions: live.Step > 1,
-            ExcludePrudent: live.HasBuff(CraftBuffIds.WasteNot) || live.HasBuff(CraftBuffIds.WasteNot2));
-
-        return Solve(adjusted, objective);
+        var buffer = new uint[MaxActions];
+        var result = raphael_solve_from_state(ref input, ref state, buffer, buffer.Length);
+        return ToSolution(result, buffer, input);
     }
 
     private static byte ToByte(bool value) => value ? (byte)1 : (byte)0;
@@ -150,8 +172,34 @@ public sealed class RaphaelSolver : ICraftSolver
         public byte ExcludePrudent;
     }
 
+    /// <summary>Must match the #[repr(C)] RaphaelLiveState struct in native/cielcraft-raphael/src/lib.rs.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RaphaelLiveState
+    {
+        public ushort Progress;
+        public ushort Quality;
+        public ushort Durability;
+        public ushort Cp;
+        public byte InnerQuiet;
+        public byte WasteNot;
+        public byte Innovation;
+        public byte Veneration;
+        public byte GreatStrides;
+        public byte MuscleMemory;
+        public byte Manipulation;
+        public byte TrainedPerfectionAvailable;
+        public byte HeartAndSoulAvailable;
+        public byte QuickInnovationAvailable;
+        public byte TrainedPerfectionActive;
+        public byte HeartAndSoulActive;
+        public byte Combo;
+    }
+
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     private static extern int raphael_solve(ref RaphaelInput input, [Out] uint[] actions, int capacity);
+
+    [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int raphael_solve_from_state(ref RaphaelInput input, ref RaphaelLiveState live, [Out] uint[] actions, int capacity);
 
     [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl)]
     private static extern int raphael_base_values(ref RaphaelInput input, ref ushort baseProgress, ref ushort baseQuality);

@@ -32,7 +32,7 @@ public sealed class SolverService
         this.solver = solver;
     }
 
-    public bool BeginSolveFromState(CraftSetup setup, CraftSnapshot live, int targetQuality)
+    public bool BeginSolveFromState(CraftSetup setup, CraftSnapshot live, int targetQuality, CraftSolveContext context)
     {
         lock (gate)
         {
@@ -45,11 +45,13 @@ public sealed class SolverService
             StatusText = "Re-solving from the current craft state...";
         }
 
+        var effects = CraftLiveEffects.FromSnapshot(live, setup, context);
         Plugin.Log.Information(
             $"[Raphael] Mid-craft re-solve: step {live.Step}, progress {live.Progress}/{live.MaxProgress}, " +
-            $"quality {live.Quality}/{targetQuality}, durability {live.Durability}, CP {live.CurrentCp}.");
+            $"quality {live.Quality}/{targetQuality}, durability {live.Durability}, CP {live.CurrentCp}; " +
+            $"effects {effects}.");
 
-        Task.Run(() => Finish(() => solver.SolveFromState(setup, live, targetQuality)));
+        Task.Run(() => Finish(() => solver.SolveFromState(setup, live, targetQuality, context)));
         return true;
     }
 

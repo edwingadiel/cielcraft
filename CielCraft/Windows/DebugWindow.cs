@@ -256,7 +256,12 @@ public class DebugWindow : Window, IDisposable
             {
                 var parts = new List<string>();
                 foreach (var buff in craft.Buffs)
-                    parts.Add(buff.Stacks > 0 ? $"{buff.StatusId}x{buff.Stacks}" : $"{buff.StatusId}");
+                {
+                    var stacks = buff.Stacks > 0 ? $"x{buff.Stacks}" : "";
+                    var steps = buff.RemainingSteps > 0 ? $" ({buff.RemainingSteps} steps)" : "";
+                    parts.Add($"{buff.StatusId}{stacks}{steps}");
+                }
+
                 ImGui.BulletText($"Buffs: {string.Join(", ", parts)}");
             }
         }

@@ -17,3 +17,8 @@ raphael-data = { git = "https://github.com/KonaeAkira/raphael-rs", rev = "def286
 [profile.release]
 opt-level = 3
 lto = "thin"
+
+# The solver is vendored (native/raphael-solver) with one addition:
+# MacroSolver::solve_from_state, needed for exact mid-craft re-solves.
+[patch."https://github.com/KonaeAkira/raphael-rs"]
+raphael-solver = { path = "../raphael-solver" }

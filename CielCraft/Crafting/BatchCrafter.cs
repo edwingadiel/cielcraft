@@ -389,7 +389,9 @@ public sealed class BatchCrafter : IDisposable
 
             if (midSolve)
             {
-                if (!solverService.BeginSolveFromState(setup, craft, solveTargetQuality))
+                var context = new CraftSolveContext(
+                    TrainedPerfectionAvailable: IsSpecialistActionReady(CraftActionData.TrainedPerfection, jobId));
+                if (!solverService.BeginSolveFromState(setup, craft, solveTargetQuality, context))
                     return;
             }
             else if (!solverService.BeginSolve(setup, new CraftObjective(

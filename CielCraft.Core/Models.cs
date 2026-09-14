@@ -48,7 +48,11 @@ public sealed record GatheringSnapshot(
     IReadOnlyList<GatheringItemSlot> Items);
 
 /// <summary>An active crafting buff (spec §10).</summary>
-public sealed record CraftBuff(uint StatusId, int Stacks);
+/// <summary>
+/// An active crafting status. Stacks is the status parameter (Inner Quiet
+/// stacks); RemainingSteps is the buff duration in steps, 0 when unknown.
+/// </summary>
+public sealed record CraftBuff(uint StatusId, int Stacks, int RemainingSteps = 0);
 
 /// <summary>Crafting status-effect ids.</summary>
 public static class CraftBuffIds
@@ -112,6 +116,22 @@ public sealed record CraftSnapshot(
         return false;
     }
 
+    public CraftBuff? FindBuff(uint statusId)
+    {
+        foreach (var buff in Buffs)
+        {
+            if (buff.StatusId == statusId)
+                return buff;
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Same set of statuses with the same stacks. Remaining durations are
+    /// ignored on purpose: this is the "did a non-step action land" signal,
+    /// and durations only change when a step advances.
+    /// </summary>
     public static bool BuffsEqual(IReadOnlyList<CraftBuff> a, IReadOnlyList<CraftBuff> b)
     {
         if (a.Count != b.Count)
@@ -119,7 +139,7 @@ public sealed record CraftSnapshot(
 
         for (var i = 0; i < a.Count; i++)
         {
-            if (a[i] != b[i])
+            if (a[i].StatusId != b[i].StatusId || a[i].Stacks != b[i].Stacks)
                 return false;
         }
 

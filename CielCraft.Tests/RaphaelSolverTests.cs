@@ -54,4 +54,48 @@ public class RaphaelSolverTests
 
         Assert.False(solution.Success);
     }
+
+    [Fact]
+    public void SolvesTheRemainderFromALiveState()
+    {
+        if (!RaphaelSolver.IsAvailable)
+            return;
+
+        // Mid-craft: progress half done, some quality, Inner Quiet 5, Manipulation ticking.
+        var live = new CraftSnapshot(
+            Setup.RecipeLevel, Step: 8, Progress: 2000, MaxProgress: Setup.MaxProgress,
+            Quality: 3000, MaxQuality: Setup.MaxQuality, Durability: 40, MaxDurability: Setup.MaxDurability,
+            CurrentCp: 350, MaxCp: Setup.Cp, Condition: CraftCondition.Normal)
+        {
+            Buffs =
+            [
+                new CraftBuff(CraftBuffIds.InnerQuiet, 5),
+                new CraftBuff(CraftBuffIds.Manipulation, 0, 4),
+            ],
+        };
+
+        var solution = new RaphaelSolver().SolveFromState(Setup, live, Setup.MaxQuality, CraftSolveContext.None);
+
+        Assert.True(solution.Success, solution.Error);
+        Assert.NotEmpty(solution.ActionIds);
+        // Past step 1, first-step-only actions can never appear.
+        Assert.DoesNotContain(100387u, solution.ActionIds); // Reflect
+        Assert.DoesNotContain(100379u, solution.ActionIds); // Muscle Memory
+        Assert.DoesNotContain(100283u, solution.ActionIds); // Trained Eye
+    }
+
+    [Fact]
+    public void RejectsAFinishedState()
+    {
+        if (!RaphaelSolver.IsAvailable)
+            return;
+
+        var finished = new CraftSnapshot(
+            Setup.RecipeLevel, 12, Setup.MaxProgress, Setup.MaxProgress, 0, Setup.MaxQuality, 30, Setup.MaxDurability,
+            200, Setup.Cp, CraftCondition.Normal);
+
+        var solution = new RaphaelSolver().SolveFromState(Setup, finished, Setup.MaxQuality, CraftSolveContext.None);
+
+        Assert.False(solution.Success);
+    }
 }

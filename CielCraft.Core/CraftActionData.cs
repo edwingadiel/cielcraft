@@ -2,14 +2,15 @@ namespace CielCraft.Core;
 
 /// <summary>
 /// Static knowledge about the actions Raphael emits, keyed by Raphael's ids.
-/// Costs and modifiers mirror raphael-sim; unbuffed gain per action is
-/// baseValue * modifier / 100 (buffs only increase it, so estimates built on
-/// this are safe underestimates).
+/// Costs and modifiers mirror raphael-sim. Progress estimates include only
+/// the buffs known to be active for the next action, so they never exceed
+/// the real gain.
 /// </summary>
 public static class CraftActionData
 {
     public const uint HeartAndSoul = 100419;
     public const uint QuickInnovation = 100459;
+    public const uint TrainedPerfection = 100475;
 
     /// <summary>Specialist one-shots; they do not advance the step counter.</summary>
     public static bool IsSpecialist(uint actionId) => actionId is HeartAndSoul or QuickInnovation;
@@ -57,14 +58,20 @@ public static class CraftActionData
             _ => 0,
         };
 
-        /// <summary>Unbuffed progress gain; Groundwork is halved below its durability cost.</summary>
-        public int ProgressGain(int baseProgress, byte level, int currentDurability)
+        /// <summary>
+        /// Progress gain for the next action: base × action efficiency ×
+        /// active progress buffs (Veneration +50%, Muscle Memory +100%),
+        /// floored as the game does. Groundwork is halved below its
+        /// durability cost.
+        /// </summary>
+        public int ProgressGain(int baseProgress, byte level, int currentDurability, bool veneration = false, bool muscleMemory = false)
         {
             var modifier = ProgressModifier(level);
             if (ActionId == 100403 && currentDurability < DurabilityCost)
                 modifier /= 2;
 
-            return baseProgress * modifier / 100;
+            var buffModifier = 10 + (muscleMemory ? 10 : 0) + (veneration ? 5 : 0);
+            return baseProgress * modifier * buffModifier / 1000;
         }
     }
 

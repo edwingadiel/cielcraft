@@ -25,7 +25,7 @@ DALAMUD_HOME="$HOME/Library/Application Support/CielCraftDev/Dalamud" dotnet bui
 
 ### Native Raphael solver
 
-Crafting rotations come from [Raphael](https://github.com/KonaeAkira/raphael-rs) (Apache-2.0), wrapped as a C ABI library in `native/cielcraft-raphael`. Build it with Rust:
+Crafting rotations come from [Raphael](https://github.com/KonaeAkira/raphael-rs) (Apache-2.0), wrapped as a C ABI library in `native/cielcraft-raphael`. The solver crate is vendored in `native/raphael-solver` with one addition (solving from a live mid-craft state; see its README). Build it with Rust:
 
 ```
 cargo build --release --manifest-path native/cielcraft-raphael/Cargo.toml

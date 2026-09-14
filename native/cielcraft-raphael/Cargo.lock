@@ -250,7 +250,6 @@ dependencies = [
 [[package]]
 name = "raphael-solver"
 version = "0.0.0"
-source = "git+https://github.com/KonaeAkira/raphael-rs?rev=def2860e5a2de4023fddc48e130f2d9b4b94710c#def2860e5a2de4023fddc48e130f2d9b4b94710c"
 dependencies = [
  "bitfield-struct",
  "bump-scope",
