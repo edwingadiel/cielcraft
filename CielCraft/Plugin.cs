@@ -61,6 +61,9 @@ public sealed class Plugin : IDalamudPlugin
     public Plugin()
     {
         Log = new Diagnostics.DiagnosticLog(PluginLog);
+        // Dalamud loads plugin assemblies from memory, so the native solver can't find itself
+        // via Assembly.Location; point it at the on-disk plugin folder instead.
+        CielCraft.Raphael.RaphaelSolver.LibraryDirectory = PluginInterface.AssemblyLocation.DirectoryName;
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         GameBridge = new DalamudGameBridge();
         RecipeProvider = new DalamudRecipeProvider(

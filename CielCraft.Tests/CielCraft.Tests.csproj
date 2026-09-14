@@ -16,6 +16,9 @@
   </ItemGroup>
   <ItemGroup>
     <!-- Host-platform native solver, if built locally (cargo release build in native/cielcraft-raphael). -->
+    <None Include="../native/cielcraft-raphael/target/release/cielcraft_raphael.dll"
+          Condition="Exists('../native/cielcraft-raphael/target/release/cielcraft_raphael.dll')"
+          CopyToOutputDirectory="PreserveNewest" Link="cielcraft_raphael.dll" />
     <None Include="../native/cielcraft-raphael/target/release/libcielcraft_raphael.dylib"
           Condition="Exists('../native/cielcraft-raphael/target/release/libcielcraft_raphael.dylib')"
           CopyToOutputDirectory="PreserveNewest" Link="libcielcraft_raphael.dylib" />

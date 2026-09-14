@@ -16,6 +16,13 @@ public sealed class RaphaelSolver : ICraftSolver
 
     private static readonly Lazy<bool> Available = new(ProbeNativeLibrary);
 
+    /// <summary>
+    /// Directory to probe first for the native library. Dalamud loads plugin assemblies from memory,
+    /// so <see cref="Assembly.Location"/> is empty in game; the plugin sets this from
+    /// <c>IDalamudPluginInterface.AssemblyLocation</c> before the solver is first used.
+    /// </summary>
+    public static string? LibraryDirectory { get; set; }
+
     public static bool IsAvailable => Available.Value;
 
     static RaphaelSolver()
@@ -129,20 +136,29 @@ public sealed class RaphaelSolver : ICraftSolver
         if (libraryName != LibraryName)
             return IntPtr.Zero;
 
-        var directory = Path.GetDirectoryName(assembly.Location);
-        if (directory == null)
-            return IntPtr.Zero;
-
-        foreach (var fileName in new[]
-                 {
-                     "cielcraft_raphael.dll",
-                     "libcielcraft_raphael.dylib",
-                     "libcielcraft_raphael.so",
-                 })
+        var candidates = new[]
         {
-            var path = Path.Combine(directory, fileName);
-            if (File.Exists(path) && NativeLibrary.TryLoad(path, out var handle))
-                return handle;
+            LibraryDirectory,
+            string.IsNullOrEmpty(assembly.Location) ? null : Path.GetDirectoryName(assembly.Location),
+            AppContext.BaseDirectory,
+        };
+
+        foreach (var directory in candidates)
+        {
+            if (string.IsNullOrEmpty(directory))
+                continue;
+
+            foreach (var fileName in new[]
+                     {
+                         "cielcraft_raphael.dll",
+                         "libcielcraft_raphael.dylib",
+                         "libcielcraft_raphael.so",
+                     })
+            {
+                var path = Path.Combine(directory, fileName);
+                if (File.Exists(path) && NativeLibrary.TryLoad(path, out var handle))
+                    return handle;
+            }
         }
 
         return IntPtr.Zero;
