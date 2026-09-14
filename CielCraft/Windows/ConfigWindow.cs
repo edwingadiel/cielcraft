@@ -7,13 +7,18 @@ namespace CielCraft.Windows;
 
 public class ConfigWindow : Window, IDisposable
 {
+    private readonly Plugin plugin;
     private readonly Configuration configuration;
+
+    private string foodSearch = "";
+    private System.Collections.Generic.IReadOnlyList<(uint ItemId, string Name)> foodResults = [];
 
     public ConfigWindow(Plugin plugin) : base("CielCraft Settings##Config")
     {
         Size = new Vector2(420, 420);
         SizeCondition = ImGuiCond.FirstUseEver;
 
+        this.plugin = plugin;
         configuration = plugin.Configuration;
     }
 
@@ -97,19 +102,43 @@ public class ConfigWindow : Window, IDisposable
             configuration.Save();
         }
 
-        var foodId = (int)configuration.FoodItemId;
-        ImGui.SetNextItemWidth(120);
-        if (ImGui.InputInt("Food item id (0 = off)", ref foodId))
+        ImGui.SetNextItemWidth(220);
+        if (ImGui.InputTextWithHint("##foodSearch", "Search food to maintain…", ref foodSearch, 64))
+            foodResults = plugin.RecipeProvider.SearchFood(foodSearch);
+
+        foreach (var food in foodResults)
         {
-            configuration.FoodItemId = (uint)Math.Max(0, foodId);
-            configuration.Save();
+            if (ImGui.Selectable($"{food.Name}##food{food.ItemId}"))
+            {
+                configuration.FoodItemId = food.ItemId;
+                configuration.Save();
+                foodSearch = "";
+                foodResults = [];
+            }
         }
 
-        var foodHq = configuration.FoodIsHq;
-        if (ImGui.Checkbox("Food is HQ", ref foodHq))
+        if (configuration.FoodItemId != 0)
         {
-            configuration.FoodIsHq = foodHq;
-            configuration.Save();
+            ImGui.TextColored(UiTheme.Accent, "◈");
+            ImGui.SameLine(0, 6);
+            ImGui.TextUnformatted(plugin.RecipeProvider.GetItemName(configuration.FoodItemId));
+            ImGui.SameLine(0, 10);
+            if (ImGui.SmallButton("×##clearFood"))
+            {
+                configuration.FoodItemId = 0;
+                configuration.Save();
+            }
+
+            var foodHq = configuration.FoodIsHq;
+            if (ImGui.Checkbox("Use the HQ version", ref foodHq))
+            {
+                configuration.FoodIsHq = foodHq;
+                configuration.Save();
+            }
+        }
+        else
+        {
+            ImGui.TextDisabled("No food configured — automation runs without a food buff.");
         }
 
         var chat = configuration.ChatNotifications;

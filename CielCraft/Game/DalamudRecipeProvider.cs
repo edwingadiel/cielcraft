@@ -144,6 +144,40 @@ public sealed class DalamudRecipeProvider : IRecipeProvider
         return results.Count > maxResults ? results.GetRange(0, maxResults) : results;
     }
 
+    private List<(uint ItemId, string Name)>? mealIndex;
+
+    /// <summary>Case-insensitive name search over food items (ItemUICategory Meal).</summary>
+    public IReadOnlyList<(uint ItemId, string Name)> SearchFood(string query, int maxResults = 8)
+    {
+        var needle = query.Trim();
+        if (needle.Length < 2)
+            return [];
+
+        if (mealIndex == null)
+        {
+            mealIndex = [];
+            foreach (var item in Plugin.DataManager.GetExcelSheet<Item>())
+            {
+                // ItemUICategory 46 = Meal.
+                if (item.ItemUICategory.RowId == 46)
+                    mealIndex.Add((item.RowId, item.Name.ExtractText()));
+            }
+        }
+
+        var results = new List<(uint ItemId, string Name)>();
+        foreach (var entry in mealIndex)
+        {
+            if (!entry.Name.Contains(needle, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            results.Add(entry);
+            if (results.Count >= maxResults)
+                break;
+        }
+
+        return results;
+    }
+
     /// <summary>Item-to-recipe index, built once; all recipes per item are kept.</summary>
     private void EnsureIndex()
     {

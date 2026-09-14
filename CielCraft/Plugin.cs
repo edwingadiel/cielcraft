@@ -92,12 +92,14 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.Draw += DrawUi;
         PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUi;
         PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
+        ClientState.Login += OnLogin;
 
         Log.Information("[Plugin] CielCraft loaded.");
     }
 
     public void Dispose()
     {
+        ClientState.Login -= OnLogin;
         WindowSystem.RemoveAllWindows();
 
         ProductionQueue.Dispose();
@@ -146,6 +148,12 @@ public sealed class Plugin : IDalamudPlugin
         GatheringController.Stop();
         CraftAutomator.Stop();
         Navigation.Stop();
+    }
+
+    private void OnLogin()
+    {
+        if (Configuration.OpenMainWindowOnLogin)
+            MainWindow.IsOpen = true;
     }
 
     private void DrawUi() => WindowSystem.Draw();
