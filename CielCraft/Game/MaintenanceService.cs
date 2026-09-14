@@ -1,5 +1,6 @@
 using System;
 using CielCraft.Core;
+using System.Collections.Generic;
 
 namespace CielCraft.Game;
 
@@ -261,5 +262,12 @@ public sealed class MaintenanceService
 
         lastAttemptAt = DateTime.UtcNow;
         action();
+    }
+
+    /// <summary>Internal state for the diagnostic report.</summary>
+    public IEnumerable<string> Describe()
+    {
+        yield return $"Phase {phase} since {phaseStartedAt:HH:mm:ss}Z; last attempt {lastAttemptAt:HH:mm:ss}Z; last idle check {lastIdleCheckAt:HH:mm:ss}Z; status: {StatusText}; blocked: {BlockedReason ?? "-"}; foodFailedThisSession {foodFailedThisSession}";
+        yield return $"Gear condition {gameBridge.GetLowestEquipmentConditionPercent():F0}% (auto-repair {configuration.AutoRepair}, threshold {configuration.RepairThresholdPercent}%); food item {configuration.FoodItemId} (HQ {configuration.FoodIsHq}), remaining {gameBridge.GetFoodBuffRemainingSeconds():F0}s";
     }
 }

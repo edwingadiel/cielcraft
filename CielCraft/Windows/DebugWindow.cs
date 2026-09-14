@@ -30,8 +30,17 @@ public class DebugWindow : Window, IDisposable
 
     public void Dispose() { }
 
+    private string logFilter = "";
+
     public override void Draw()
     {
+        if (UiTheme.TintedButton("Copy diagnostic report", UiTheme.Accent))
+            plugin.SaveAndCopyReport();
+        UiTheme.Tooltip("Copies a full state + log report to the clipboard and saves it in the plugin config folder (/cielcraft report). Paste it when reporting a problem.");
+        ImGui.SameLine();
+        ImGui.TextColored(UiTheme.Muted, $"log entries: {Plugin.Log.Snapshot().Count}");
+        ImGui.Spacing();
+
         if (!ImGui.BeginTabBar("##debugTabs"))
             return;
 
@@ -63,7 +72,51 @@ public class DebugWindow : Window, IDisposable
             ImGui.EndTabItem();
         }
 
+        if (ImGui.BeginTabItem("Log"))
+        {
+            DrawLog();
+            ImGui.EndTabItem();
+        }
+
         ImGui.EndTabBar();
+    }
+
+    private void DrawLog()
+    {
+        ImGui.SetNextItemWidth(260);
+        ImGui.InputTextWithHint("##logFilter", "filter (e.g. [Batch], [Raphael], ERR)", ref logFilter, 64);
+        ImGui.SameLine();
+        ImGui.TextColored(UiTheme.Muted, "newest last; times are UTC");
+
+        if (ImGui.BeginChild("##logEntries", new Vector2(0, 0), true))
+        {
+            var entries = Plugin.Log.Snapshot();
+            var shown = 0;
+            foreach (var entry in entries)
+            {
+                if (logFilter.Length > 0 && !entry.Message.Contains(logFilter, StringComparison.OrdinalIgnoreCase)
+                    && !entry.Level.Contains(logFilter, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                var color = entry.Level switch
+                {
+                    "ERR" => UiTheme.Danger,
+                    "WRN" => UiTheme.Warning,
+                    "DBG" => UiTheme.Muted,
+                    _ => new Vector4(0.90f, 0.90f, 0.92f, 1f),
+                };
+                ImGui.TextColored(color, entry.ToString());
+                shown++;
+            }
+
+            if (shown == 0)
+                ImGui.TextDisabled("Nothing logged yet.");
+
+            if (ImGui.GetScrollY() >= ImGui.GetScrollMaxY() - 4)
+                ImGui.SetScrollHereY(1.0f);
+        }
+
+        ImGui.EndChild();
     }
 
     private void DrawGathering()

@@ -92,6 +92,13 @@ five per-class Throttled/RetryInterval copies into a shared helper; a common
 status/transition base for the five state machines; move interference detection
 below ProductionRunner so standalone batches/gathers are covered too.
 
+## Testing
+
+In-game regression checklist: `docs/TESTPLAN.md`. Diagnostics: `/cielcraft report`
+(state of every layer + last 200 log lines, copied to the clipboard and saved
+in the config folder); debug window **Log** tab; tick exceptions are caught and
+logged once per 10 s per source instead of spamming every frame.
+
 ## Known validation-pending values
 
 Values that could not be verified offline and are confirmed at in-game gates:

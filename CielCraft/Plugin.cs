@@ -24,9 +24,12 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IAetheryteList AetheryteList { get; private set; } = null!;
     [PluginService] internal static IFramework Framework { get; private set; } = null!;
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
-    [PluginService] internal static IPluginLog Log { get; private set; } = null!;
+    [PluginService] internal static IPluginLog PluginLog { get; private set; } = null!;
     [PluginService] internal static IChatGui ChatGui { get; private set; } = null!;
     [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
+
+    /// <summary>All plugin logging goes through here so the diagnostic report can include it.</summary>
+    internal static Diagnostics.DiagnosticLog Log { get; private set; } = null!;
 
     private const string CommandName = "/cielcraft";
 
@@ -57,6 +60,7 @@ public sealed class Plugin : IDalamudPlugin
 
     public Plugin()
     {
+        Log = new Diagnostics.DiagnosticLog(PluginLog);
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         GameBridge = new DalamudGameBridge();
         RecipeProvider = new DalamudRecipeProvider(
@@ -86,7 +90,7 @@ public sealed class Plugin : IDalamudPlugin
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open the CielCraft window. \"/cielcraft config\" settings, \"/cielcraft debug\" debug window, \"/cielcraft stop\" emergency stop.",
+            HelpMessage = "Open the CielCraft window. \"/cielcraft config\" settings, \"/cielcraft debug\" debug window, \"/cielcraft report\" copy a diagnostic report, \"/cielcraft stop\" emergency stop.",
         });
 
         PluginInterface.UiBuilder.Draw += DrawUi;
@@ -131,6 +135,9 @@ public sealed class Plugin : IDalamudPlugin
             case "stop":
                 StopEverything();
                 break;
+            case "report":
+                SaveAndCopyReport();
+                break;
             default:
                 ToggleMainUi();
                 break;
@@ -149,6 +156,45 @@ public sealed class Plugin : IDalamudPlugin
         GatheringController.Stop();
         CraftAutomator.Stop();
         Navigation.Stop();
+    }
+
+    /// <summary>
+    /// Builds the diagnostic report, copies it to the clipboard and saves it
+    /// in the plugin config directory; returns the report text.
+    /// </summary>
+    public string SaveAndCopyReport()
+    {
+        var report = Diagnostics.DiagnosticReport.Build(this);
+
+        var copied = true;
+        try
+        {
+            Dalamud.Bindings.ImGui.ImGui.SetClipboardText(report);
+        }
+        catch (Exception e)
+        {
+            copied = false;
+            Log.Warning($"[Plugin] Could not copy the report to the clipboard: {e.Message}");
+        }
+
+        string? path = null;
+        try
+        {
+            var directory = PluginInterface.GetPluginConfigDirectory();
+            System.IO.Directory.CreateDirectory(directory);
+            path = System.IO.Path.Combine(directory, $"cielcraft-report-{DateTime.UtcNow:yyyyMMdd-HHmmss}.txt");
+            System.IO.File.WriteAllText(path, report);
+        }
+        catch (Exception e)
+        {
+            Log.Warning($"[Plugin] Could not save the report: {e.Message}");
+        }
+
+        ChatGui.Print(
+            (copied ? "Diagnostic report copied to the clipboard" : "Diagnostic report generated")
+            + (path != null ? $" and saved to {path}" : "") + ".",
+            "CielCraft");
+        return report;
     }
 
     private void OnLogin()

@@ -231,6 +231,18 @@ public sealed class CraftAutomator : IDisposable
 
     private void OnUpdate(IFramework framework)
     {
+        try
+        {
+            Tick(framework);
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.TickError(nameof(CraftAutomator), e);
+        }
+    }
+
+    private void Tick(IFramework framework)
+    {
         if (State != AutomationState.Running)
             return;
 
@@ -300,6 +312,10 @@ public sealed class CraftAutomator : IDisposable
 
         pendingConsume = decision.ConsumeFromPlan;
 
+        Plugin.Log.Information(
+            $"[Craft] Executing {CielCraft.Raphael.RaphaelActionNames.NameOf(decision.ActionId)} " +
+            $"(plan index {nextIndex}/{rotation.Count}, consumes {decision.ConsumeFromPlan}) as action {resolved.Value}.");
+
         if (!executor.TryExecute(resolved.Value, AdvancesStep(decision.ActionId)))
             Pause($"executor refused the action ({executor.LastResult})");
     }
@@ -320,5 +336,16 @@ public sealed class CraftAutomator : IDisposable
         State = state;
         StatusText = statusText;
         Plugin.Log.Information($"[Craft] {statusText}");
+    }
+
+    /// <summary>Internal state for the diagnostic report.</summary>
+    public IEnumerable<string> Describe()
+    {
+        yield return $"State {State} — {StatusText}";
+        yield return $"Plan index {nextIndex}/{rotation.Count}; job {classJobId}; adaptive {adaptive}; base progress {baseProgress}; level {crafterLevel}; target quality {targetQuality}; pendingConsume {pendingConsume}";
+        yield return $"waitingForReady {waitingForReady} (since {waitingSince:HH:mm:ss}Z); exhaustedAt {(exhaustedAt is { } at ? at.ToString("HH:mm:ss") + "Z" : "-")}";
+        if (rotation.Count > 0)
+            yield return "Rotation: " + string.Join(", ", rotation.Select((action, i) =>
+                (i == nextIndex ? ">" : "") + CielCraft.Raphael.RaphaelActionNames.NameOf(action)));
     }
 }

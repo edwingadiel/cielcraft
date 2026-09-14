@@ -2,6 +2,7 @@ using System;
 using CielCraft.Core;
 using CielCraft.Game;
 using Dalamud.Plugin.Services;
+using System.Collections.Generic;
 
 namespace CielCraft.Gathering;
 
@@ -170,6 +171,18 @@ public sealed class GatheringController : IDisposable
     }
 
     private void OnUpdate(IFramework framework)
+    {
+        try
+        {
+            Tick(framework);
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.TickError(nameof(GatheringController), e);
+        }
+    }
+
+    private void Tick(IFramework framework)
     {
         switch (State)
         {
@@ -567,5 +580,17 @@ public sealed class GatheringController : IDisposable
         State = state;
         StatusText = statusText;
         Plugin.Log.Information($"[Gather] {statusText}");
+    }
+
+    /// <summary>Internal state for the diagnostic report.</summary>
+    public IEnumerable<string> Describe()
+    {
+        yield return $"State {State} — {StatusText}";
+        yield return $"Requested item {requestedItemId}; chosen item {chosenItemId} slot {chosenSlot}; needed {(neededCount == int.MaxValue ? "unlimited" : neededCount.ToString())}; last node {LastNodeId}";
+        yield return node == null
+            ? "Node: none"
+            : $"Node: {node.Name} #{node.ObjectId} at {node.Position.X:F1}, {node.Position.Y:F1}, {node.Position.Z:F1} ({node.Distance:F1}y at selection)";
+        yield return $"Swings {gatherSwings}; awaitingSwing {awaitingSwing} (since {swingStartedAt:HH:mm:ss}Z); lastIntegrity {lastIntegrity}; baseline count {baselineCount}; gained {gainedCached} (at swing {gainedAtSwing}); yieldBuffUsed {yieldBuffUsed}; buffsBroken {buffsBroken}; pendingBuff {(pendingBuff is { } pending ? $"{pending.ActionId} (GP {pending.GpBefore}, integrity {pending.IntegrityBefore}, at {pending.At:HH:mm:ss}Z)" : "-")}";
+        yield return $"Phase since {phaseStartedAt:HH:mm:ss}Z; last attempt {lastAttemptAt:HH:mm:ss}Z; mountAttempts {mountAttempts}; flyBlocked {flyBlocked}; flyAttempted {flyAttempted}";
     }
 }

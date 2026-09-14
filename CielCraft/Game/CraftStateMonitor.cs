@@ -37,6 +37,18 @@ public sealed class CraftStateMonitor : IDisposable
 
     private void OnUpdate(IFramework framework)
     {
+        try
+        {
+            Tick(framework);
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.TickError(nameof(CraftStateMonitor), e);
+        }
+    }
+
+    private void Tick(IFramework framework)
+    {
         var isCrafting = gameBridge.IsCrafting;
 
         if (isCrafting && !wasCrafting)

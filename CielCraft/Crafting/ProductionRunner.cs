@@ -187,6 +187,18 @@ public sealed class ProductionRunner : IDisposable
 
     private void OnUpdate(IFramework framework)
     {
+        try
+        {
+            Tick(framework);
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.TickError(nameof(ProductionRunner), e);
+        }
+    }
+
+    private void Tick(IFramework framework)
+    {
         // Manual movement during phases where the character should be still
         // means the user has taken over (spec §49): step aside politely.
         if (State is ProductionState.PreparingStep or ProductionState.PreparingGather or ProductionState.WaitingForWindow
@@ -781,5 +793,39 @@ public sealed class ProductionRunner : IDisposable
     {
         configuration.SavedProduction = new Configuration.SavedProductionState();
         configuration.Save();
+    }
+
+    /// <summary>Internal state for the diagnostic report.</summary>
+    public IEnumerable<string> Describe()
+    {
+        yield return $"State {State} — {StatusText}";
+        if (plan != null)
+        {
+            yield return $"Plan: {recipeProvider.GetItemName(plan.TargetItemId)} (item {plan.TargetItemId}) ×{plan.TargetQuantity}; step {stepIndex + 1}/{plan.CraftSteps.Count}; replans {replanCount}; started {productionStartedAt:HH:mm:ss}Z";
+            for (var i = 0; i < plan.CraftSteps.Count; i++)
+            {
+                var step = plan.CraftSteps[i];
+                yield return $"  step {i + 1}{(i == stepIndex ? " (current)" : "")}: recipe {step.RecipeId} -> {recipeProvider.GetItemName(step.ItemId)} (item {step.ItemId}) ×{step.Crafts} crafts, yield {step.ResultAmount}";
+            }
+
+            foreach (var raw in plan.RawMaterials)
+                yield return $"  raw: {recipeProvider.GetItemName(raw.ItemId)} (item {raw.ItemId}) ×{raw.Amount}";
+        }
+
+        if (gatherQueue.Count > 0)
+        {
+            yield return $"Gather queue {gatherIndex}/{gatherQueue.Count}:";
+            for (var i = 0; i < gatherQueue.Count; i++)
+            {
+                var task = gatherQueue[i];
+                yield return $"  {i}{(i == gatherIndex ? " (current)" : "")}: {recipeProvider.GetItemName(task.ItemId)} (item {task.ItemId}) ×{task.Amount}; job {task.JobId}; territory {task.TerritoryId}; area {task.AreaPosition.X:F0},{task.AreaPosition.Y:F0}; windows {task.Windows.Count}";
+            }
+        }
+
+        yield return $"Phase since {phaseStartedAt:HH:mm:ss}Z; last attempt {lastAttemptAt:HH:mm:ss}Z; gearsetRequested {gearsetRequested}; sawLoadingScreen {sawLoadingScreen}; areaDestination {areaDestination?.ToString() ?? "-"}; lastNodeProbe {lastNodeProbe} at {lastNodeProbeAt:HH:mm:ss}Z";
+        yield return $"mountAttempts {mountAttempts}; flyBlocked {flyBlocked}; flyAttempted {flyAttempted}; interferenceAnchor {interferenceAnchor?.ToString() ?? "-"}";
+        yield return $"Target count initial {initialTargetCount} (HQ {initialHqCount}), now {(plan != null ? gameBridge.GetItemCount(plan.TargetItemId) : 0)}";
+        var saved = configuration.SavedProduction;
+        yield return $"Saved production: active {saved.Active}; item {saved.ItemId} ×{saved.Quantity}; initial count {saved.InitialCount}";
     }
 }

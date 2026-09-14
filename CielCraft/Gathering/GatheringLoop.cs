@@ -129,6 +129,18 @@ public sealed class GatheringLoop : IDisposable
 
     private void OnUpdate(IFramework framework)
     {
+        try
+        {
+            Tick(framework);
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.TickError(nameof(GatheringLoop), e);
+        }
+    }
+
+    private void Tick(IFramework framework)
+    {
         if (State != GatheringLoopState.Running)
             return;
 
@@ -280,5 +292,13 @@ public sealed class GatheringLoop : IDisposable
         State = state;
         StatusText = statusText;
         Plugin.Log.Information($"[Gather] {statusText}");
+    }
+
+    /// <summary>Internal state for the diagnostic report.</summary>
+    public IEnumerable<string> Describe()
+    {
+        yield return $"State {State} — {StatusText}";
+        yield return $"Item {itemId} ×{targetQuantity}: gathered {Gathered} (baseline {baselineCount}); consecutive failures {consecutiveFailures}; controllerActive {controllerActive}; blacklisted nodes {blacklistedNodes.Count}";
+        yield return $"noNodeSince {(noNodeSince == DateTime.MaxValue ? "-" : noNodeSince.ToString("HH:mm:ss") + "Z")}; last start attempt {lastStartAttempt:HH:mm:ss}Z; area center {areaCenter?.ToString() ?? "-"}; last cordial {lastCordialAt:HH:mm:ss}Z";
     }
 }

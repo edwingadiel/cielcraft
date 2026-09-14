@@ -505,6 +505,10 @@ public class MainWindow : Window, IDisposable
         if (ImGui.SmallButton("Settings"))
             plugin.ToggleConfigUi();
         ImGui.SameLine();
+        if (ImGui.SmallButton("Report"))
+            plugin.SaveAndCopyReport();
+        UiTheme.Tooltip("Copy a diagnostic report (state + recent log) to the clipboard for bug reports (/cielcraft report)");
+        ImGui.SameLine();
         if (ImGui.SmallButton("Stop everything"))
             plugin.StopEverything();
         UiTheme.Tooltip("Emergency stop: production, batch, gathering, navigation (/cielcraft stop)");

@@ -1,6 +1,8 @@
 using System;
 using System.Threading.Tasks;
 using CielCraft.Core;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace CielCraft.Crafting;
 
@@ -22,6 +24,10 @@ public sealed class SolverService
     private readonly object gate = new();
 
     private DateTime startedAt;
+    private string lastKind = "none";
+    private CraftSetup? lastSetup;
+    private CraftObjective? lastObjective;
+    private CraftLiveEffects? lastEffects;
 
     public SolverStatus Status { get; private set; } = SolverStatus.Idle;
     public CraftSolution? Solution { get; private set; }
@@ -46,6 +52,10 @@ public sealed class SolverService
         }
 
         var effects = CraftLiveEffects.FromSnapshot(live, setup, context);
+        lastKind = "mid-craft";
+        lastSetup = setup;
+        lastObjective = null;
+        lastEffects = effects;
         Plugin.Log.Information(
             $"[Raphael] Mid-craft re-solve: step {live.Step}, progress {live.Progress}/{live.MaxProgress}, " +
             $"quality {live.Quality}/{targetQuality}, durability {live.Durability}, CP {live.CurrentCp}; " +
@@ -79,7 +89,12 @@ public sealed class SolverService
         }
 
         Plugin.Log.Information($"[Raphael] {StatusText}");
+        if (result.Success)
+            Plugin.Log.Information($"[Raphael] Rotation: {Names(result.ActionIds)} (base progress {result.BaseProgress}, base quality {result.BaseQuality}).");
     }
+
+    private static string Names(IEnumerable<uint> actionIds) =>
+        string.Join(", ", actionIds.Select(CielCraft.Raphael.RaphaelActionNames.NameOf));
 
     public bool BeginSolve(CraftSetup setup, CraftObjective objective)
     {
@@ -94,6 +109,10 @@ public sealed class SolverService
             StatusText = "Solving...";
         }
 
+        lastKind = "full";
+        lastSetup = setup;
+        lastObjective = objective;
+        lastEffects = null;
         Plugin.Log.Information(
             $"[Raphael] Solve requested: rlvl {setup.RecipeLevel}, " +
             $"progress {setup.MaxProgress}, quality {setup.MaxQuality}, durability {setup.MaxDurability}, " +
@@ -102,5 +121,23 @@ public sealed class SolverService
 
         Task.Run(() => Finish(() => solver.Solve(setup, objective)));
         return true;
+    }
+
+    /// <summary>Internal state for the diagnostic report.</summary>
+    public IEnumerable<string> Describe()
+    {
+        yield return $"Status {Status} — {StatusText}";
+        if (lastSetup != null)
+            yield return $"Last request ({lastKind}): {lastSetup}";
+        if (lastObjective != null)
+            yield return $"Objective: {lastObjective}";
+        if (lastEffects != null)
+            yield return $"Live effects: {lastEffects}";
+
+        var current = Solution;
+        if (current != null)
+            yield return current.Success
+                ? $"Solution ({current.ActionIds.Count} actions, base {current.BaseProgress}/{current.BaseQuality}): {Names(current.ActionIds)}"
+                : $"Solution failed: {current.Error}";
     }
 }

@@ -57,3 +57,9 @@ then install CielCraft from `/xlplugins`. Releases are published by tagging (`gi
 - `CielCraft/Configuration.cs` — persisted plugin configuration
 - `CielCraft/Windows/` — ImGui windows (main + settings)
 - `CielCraft/CielCraft.json` — plugin manifest
+
+## Reporting a problem
+
+Run `/cielcraft report` (or the **Report** button in the main window footer, or **Copy diagnostic report** in the debug window). It copies a full diagnostic report to the clipboard and saves it under the plugin config folder. Paste it with a one-line description of what you were doing. The report contains settings, live game state, the internal state of every automation layer and the last 200 log lines; it does not contain your character name or world.
+
+The in-game test checklist is in [docs/TESTPLAN.md](docs/TESTPLAN.md).

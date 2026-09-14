@@ -2,6 +2,7 @@ using System;
 using CielCraft.Core;
 using CielCraft.Game;
 using Dalamud.Plugin.Services;
+using System.Collections.Generic;
 
 namespace CielCraft.Crafting;
 
@@ -86,6 +87,18 @@ public sealed class ActionExecutor : IDisposable
 
     private void OnUpdate(IFramework framework)
     {
+        try
+        {
+            Tick(framework);
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.TickError(nameof(ActionExecutor), e);
+        }
+    }
+
+    private void Tick(IFramework framework)
+    {
         if (State != ExecutorState.AwaitingResolution || baseline == null)
             return;
 
@@ -116,5 +129,13 @@ public sealed class ActionExecutor : IDisposable
         baseline = null;
 
         ActionResolved?.Invoke(outcome);
+    }
+
+    /// <summary>Internal state for the diagnostic report.</summary>
+    public IEnumerable<string> Describe()
+    {
+        yield return $"State {State}; last result: {LastResult}";
+        if (baseline != null)
+            yield return $"Awaiting resolution since {requestedAt:HH:mm:ss.fff}Z from step {baseline.Step} (expects step advance: {expectStepAdvance}; timeout {Timeout.TotalSeconds:F0}s)";
     }
 }

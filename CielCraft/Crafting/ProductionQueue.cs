@@ -2,6 +2,7 @@ using System;
 using CielCraft.Core;
 using CielCraft.Game;
 using Dalamud.Plugin.Services;
+using System.Collections.Generic;
 
 namespace CielCraft.Crafting;
 
@@ -103,6 +104,18 @@ public sealed class ProductionQueue : IDisposable
 
     private void OnUpdate(IFramework framework)
     {
+        try
+        {
+            Tick(framework);
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.TickError(nameof(ProductionQueue), e);
+        }
+    }
+
+    private void Tick(IFramework framework)
+    {
         if (!Running)
             return;
 
@@ -156,6 +169,17 @@ public sealed class ProductionQueue : IDisposable
         {
             Running = false;
             StatusText = $"Queue held: {runner.StatusText}";
+        }
+    }
+
+    /// <summary>Internal state for the diagnostic report.</summary>
+    public IEnumerable<string> Describe()
+    {
+        yield return $"Running {Running}; startedCurrent {startedCurrent}; status: {StatusText}";
+        for (var i = 0; i < configuration.QueueItems.Count; i++)
+        {
+            var entry = configuration.QueueItems[i];
+            yield return $"  {i}: {recipeProvider.GetItemName(entry.ItemId)} (item {entry.ItemId}) ×{entry.Quantity}{(IsInFlight(i) ? " (in flight)" : "")}";
         }
     }
 }

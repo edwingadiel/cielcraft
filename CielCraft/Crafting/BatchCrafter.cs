@@ -2,6 +2,7 @@ using System;
 using CielCraft.Core;
 using CielCraft.Game;
 using Dalamud.Plugin.Services;
+using System.Collections.Generic;
 
 namespace CielCraft.Crafting;
 
@@ -245,6 +246,18 @@ public sealed class BatchCrafter : IDisposable
     }
 
     private void OnUpdate(IFramework framework)
+    {
+        try
+        {
+            Tick(framework);
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.TickError(nameof(BatchCrafter), e);
+        }
+    }
+
+    private void Tick(IFramework framework)
     {
         var isCrafting = gameBridge.IsCrafting;
         var craftJustEnded = wasCrafting && !isCrafting;
@@ -651,4 +664,20 @@ public sealed class BatchCrafter : IDisposable
         StatusText = statusText;
         Plugin.Log.Information($"[Production] {statusText}");
     }
+
+    /// <summary>Internal state for the diagnostic report.</summary>
+    public IEnumerable<string> Describe()
+    {
+        yield return $"State {State} — {StatusText}";
+        yield return $"Crafts {CompletedCrafts}/{targetQuantity}; recipe {recipeId}; result item {resultItemId} ×{resultAmount}; baseline count {baselineItemCount}, now {(resultItemId != 0 ? gameBridge.GetItemCount(resultItemId) : 0)}";
+        yield return $"solveRequested {solveRequested}; synthesisFired {synthesisFired}; automatorStarted {automatorStarted}; wasCrafting {wasCrafting}; quickMode {quickMode}; quickDialogRequested {quickDialogRequested}; midSolve {midSolve}; midSolveTried {midSolveTried}";
+        yield return $"Target quality {solveTargetQuality}; wait started {waitStartedAt:HH:mm:ss}Z; quick last progress {quickLastProgressAt:HH:mm:ss}Z; last recipe open attempt {lastRecipeOpenAttempt:HH:mm:ss}Z";
+        yield return $"Solved setup: {solvedSetup?.ToString() ?? "none"}";
+        yield return $"Solution: {DescribeSolution(solution)}; mid-craft solution: {DescribeSolution(midSolution)}";
+    }
+
+    private static string DescribeSolution(CraftSolution? candidate) =>
+        candidate == null ? "none"
+        : candidate.Success ? $"{candidate.ActionIds.Count} actions (base {candidate.BaseProgress}/{candidate.BaseQuality})"
+        : $"failed: {candidate.Error}";
 }
