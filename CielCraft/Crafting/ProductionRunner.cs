@@ -53,6 +53,8 @@ public sealed class ProductionRunner : IDisposable
     private bool gearsetRequested;
     private bool sawLoadingScreen;
     private System.Numerics.Vector3? areaDestination;
+    private bool returnTeleport;      // Teleporting phase is the post-gather return to the aetheryte
+    private uint returnTerritoryId;
     private DateTime lastNodeProbeAt = DateTime.MinValue;
     private bool lastNodeProbe;
     private int initialTargetCount;
@@ -263,6 +265,15 @@ public sealed class ProductionRunner : IDisposable
         if (gameBridge.IsCrafting)
             return;
 
+        // A node window (left over from an earlier run, or opened by hand)
+        // pins the character; travel cannot start until it is closed and the
+        // gathering condition has cleared.
+        if (gameBridge.GetGatheringState() != null || gameBridge.IsGathering)
+        {
+            Throttled(gameBridge.CloseGatheringWindow);
+            return;
+        }
+
         if (!EnsureJob(task.JobId, "gathering job"))
             return;
 
@@ -295,16 +306,17 @@ public sealed class ProductionRunner : IDisposable
         }
 
         // Right zone but the node area may be far: approach it until nodes
-        // appear in the object table.
+        // appear in the object table. A visible node alone is not enough —
+        // a different node group can sit right next to the aetheryte.
         if (task.AreaPosition != default
-            && !NodeNearby())
+            && !(NearNodeArea(task) && NodeNearby()))
         {
             areaDestination = null;
             EnterPhase(ProductionState.MovingToArea, GatherText("Traveling to the node area for"));
             return;
         }
 
-        if (gatheringLoop.Start(task.ItemId, task.Amount, areaDestination))
+        if (gatheringLoop.Start(task.ItemId, task.Amount, AreaCenterFor(task)))
         {
             Plugin.Log.Information(
                 $"[Production] Gather task {gatherIndex + 1}/{gatherQueue.Count}: " +
@@ -330,7 +342,7 @@ public sealed class ProductionRunner : IDisposable
 
     private void TickTeleporting()
     {
-        var task = gatherQueue[gatherIndex];
+        var targetTerritory = returnTeleport ? returnTerritoryId : gatherQueue[gatherIndex].TerritoryId;
 
         if (DateTime.UtcNow - phaseStartedAt > TeleportTimeout)
         {
@@ -345,12 +357,40 @@ public sealed class ProductionRunner : IDisposable
         }
 
         if (sawLoadingScreen
-            && gameBridge.CurrentTerritoryId == task.TerritoryId
+            && gameBridge.CurrentTerritoryId == targetTerritory
             && gameBridge.GetPlayerState() != null)
         {
             EnterPreparing();
-            Transition(ProductionState.PreparingGather, GatherText("Arrived; preparing to gather"));
+            if (returnTeleport)
+            {
+                returnTeleport = false;
+                Transition(ProductionState.PreparingStep, StepText("Back at the aetheryte; preparing"));
+            }
+            else
+            {
+                Transition(ProductionState.PreparingGather, GatherText("Arrived; preparing to gather"));
+            }
         }
+    }
+
+    /// <summary>
+    /// Gathering ends wherever the last node happened to be — often next to
+    /// mobs. Teleport back to the zone's aetheryte before crafting so the
+    /// character idles somewhere safe; craft in place if no aetheryte is attuned.
+    /// </summary>
+    private void ReturnToAetheryteThenCraft()
+    {
+        var territory = gameBridge.CurrentTerritoryId;
+        sawLoadingScreen = false;
+        if (territory != 0 && gameBridge.TeleportToTerritory(territory))
+        {
+            returnTeleport = true;
+            returnTerritoryId = territory;
+            EnterPhase(ProductionState.Teleporting, StepText("Returning to the aetheryte before"));
+            return;
+        }
+
+        Transition(ProductionState.PreparingStep, StepText("Preparing"));
     }
 
     private void TickMovingToArea()
@@ -363,8 +403,9 @@ public sealed class ProductionRunner : IDisposable
             return;
         }
 
-        // A targetable node in the object table means we are close enough.
-        if (NodeNearby())
+        // A targetable node counts as "area reached" only once we are near the
+        // recorded area; nodes of another group can be visible on the way.
+        if (NodeNearby() && NearNodeArea(task))
         {
             navigation.Stop();
             EnterPreparing();
@@ -431,7 +472,7 @@ public sealed class ProductionRunner : IDisposable
                 areaDestination = null; // never reuse a previous task's area point
                 EnterPreparing();
                 if (gatherIndex >= gatherQueue.Count)
-                    Transition(ProductionState.PreparingStep, StepText("Preparing"));
+                    ReturnToAetheryteThenCraft();
                 else
                     Transition(ProductionState.PreparingGather, GatherText("Preparing to gather"));
                 break;
@@ -490,6 +531,50 @@ public sealed class ProductionRunner : IDisposable
         return lastNodeProbe;
     }
 
+    /// <summary>
+    /// Within twice the arrival range of the task's node area (the projected
+    /// mesh point once we have one, the exported X/Z position before that).
+    /// Tasks without an area position are always "near".
+    /// </summary>
+    private bool NearNodeArea(GatherTask task)
+    {
+        if (task.AreaPosition == default)
+            return true;
+
+        var player = gameBridge.GetPlayerState();
+        if (player == null)
+            return false;
+
+        var target = areaDestination is { } projected
+            ? new System.Numerics.Vector2(projected.X, projected.Z)
+            : task.AreaPosition;
+        var here = new System.Numerics.Vector2(player.Position.X, player.Position.Z);
+        return System.Numerics.Vector2.Distance(here, target) <= NodeAreaArrivalRange * 2;
+    }
+
+    /// <summary>
+    /// Area center handed to the gathering loop so it prefers that node group
+    /// and drifts back toward it between spawns: the projected point when we
+    /// traveled there, otherwise the exported position at the player's height.
+    /// </summary>
+    private System.Numerics.Vector3? AreaCenterFor(GatherTask task)
+    {
+        if (areaDestination != null)
+            return areaDestination;
+
+        if (task.AreaPosition == default)
+            return null;
+
+        var player = gameBridge.GetPlayerState();
+        if (player == null)
+            return null;
+
+        var approximate = new System.Numerics.Vector3(task.AreaPosition.X, player.Position.Y, task.AreaPosition.Y);
+        return navigation.IsReady
+            ? navigation.FindNearestMeshPoint(approximate, 40f, 500f) ?? approximate
+            : approximate;
+    }
+
     private string GatherText(string verb)
     {
         var task = gatherQueue[gatherIndex];
@@ -515,6 +600,15 @@ public sealed class ProductionRunner : IDisposable
 
         if (gameBridge.IsCrafting)
             return;
+
+        // The gather that fed this step usually ends mid-node; gearset and
+        // crafting-log commands are refused until the character has left it.
+        if (gameBridge.GetGatheringState() != null || gameBridge.IsGathering)
+        {
+            Throttled(gameBridge.CloseGatheringWindow);
+            phaseStartedAt = DateTime.UtcNow; // the prepare budget starts once we are free
+            return;
+        }
 
         if (!EnsureJob(recipe.ClassJobId))
             return;
@@ -590,6 +684,7 @@ public sealed class ProductionRunner : IDisposable
         gatherQueue.Clear();
         gatherIndex = 0;
         areaDestination = null; // a new plan never inherits a previous area point
+        returnTeleport = false;
         if (productionPlan.RawMaterials.Count == 0)
             return true;
 

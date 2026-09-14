@@ -135,6 +135,25 @@ against inventory, pause with a reason.
   retreat/heal rules, death handling, "someone else is here" etiquette.
   Combat-job gearsets and level gating decide feasibility per item.
 
+- [ ] 7.6 Teleport to the estate / home point for crafting (S) — after the
+  gather phase the runner already returns to the zone aetheryte (safe idle
+  spot); 2.0 should let the user pick where crafting happens (estate hall,
+  apartment, inn room) and teleport there before the first craft step.
+
+- [ ] 7.7 Solution cache (S) — the solver runs on every craft even when the
+  same recipe repeats with the same stats, buffs and initial quality. Key a
+  cache on the full CraftSetup + CraftObjective (stats, CP, food, specialist
+  flags, target/initial quality) and reuse the action list within a batch and
+  across sessions (persist in the config folder); invalidate on any key
+  change. Mid-craft recovery solves stay uncached (live state is unique).
+
+- [ ] 7.8 Rotation visibility and manual rotations (S–M) — show the solved
+  rotation (action list, expected progress/quality per step) in the main
+  window before and during a craft, not just in the log; and let the user
+  enter or paste a manual rotation (action names / Teamcraft macro format)
+  per recipe that replaces the solver when set, with the same adaptive
+  recovery on a bad condition.
+
 Cross-cutting for 2.0: the planner grows a "source" per missing material
 (gather / fish / buy / hunt / stored-in-retainer), chosen by preference and
 availability; the runner gets one phase per source. That is the point where

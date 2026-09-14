@@ -32,14 +32,23 @@ public interface IGameBridge
     /// <summary>True while a gather swing/action is animating.</summary>
     bool IsGatheringActionInProgress { get; }
 
-    /// <summary>Nearest targetable gathering point not in the excluded set, or null.</summary>
-    GatheringNodeSnapshot? FindNearestGatheringNode(IReadOnlyCollection<ulong>? excludedObjectIds = null);
+    /// <summary>
+    /// Nearest targetable gathering point not in the excluded set, or null.
+    /// Ranked by distance from <paramref name="origin"/> when given (so a node
+    /// group can be preferred over whatever happens to be next to the player);
+    /// the snapshot's Distance is always the player's distance.
+    /// </summary>
+    GatheringNodeSnapshot? FindNearestGatheringNode(
+        IReadOnlyCollection<ulong>? excludedObjectIds = null, System.Numerics.Vector3? origin = null);
 
     /// <summary>Targets and interacts with the object. False when it is gone.</summary>
     bool InteractWithObject(ulong objectId);
 
     /// <summary>Clicks an item slot in the open gathering window. False when not clickable.</summary>
     bool GatherSlot(int slotIndex);
+
+    /// <summary>Closes the gathering node window if it is open; the character cannot move while it is up.</summary>
+    void CloseGatheringWindow();
 
     /// <summary>True when the game reports the craft action as currently usable (CP, state, availability).</summary>
     bool IsCraftActionReady(uint craftActionId);
@@ -52,6 +61,9 @@ public interface IGameBridge
 
     /// <summary>Recipe currently selected in the crafting log; 0 when none.</summary>
     ushort SelectedRecipeId { get; }
+
+    /// <summary>Raw crafting-log selection fields, for the diagnostic report.</summary>
+    string DescribeRecipeSelection();
 
     /// <summary>Presses Synthesize on the open crafting log. True if the request was issued.</summary>
     bool StartSynthesis();

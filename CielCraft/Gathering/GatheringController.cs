@@ -1,4 +1,5 @@
 using System;
+using System.Linq;
 using CielCraft.Core;
 using CielCraft.Game;
 using Dalamud.Plugin.Services;
@@ -26,10 +27,13 @@ public enum GatheringState
 public sealed class GatheringController : IDisposable
 {
     private static readonly TimeSpan NavigateTimeout = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan InteractTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan InteractTimeout = TimeSpan.FromSeconds(20); // dismount + landing + interact
     private static readonly TimeSpan SwingTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan SlotPopulateTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(2);
-    private const float InteractRange = 3.0f;
+    // The game refuses to open a node from ~2.8y (observed in Western Thanalan);
+    // walk right up to it. MoveCloseTo aims for InteractRange - 0.5.
+    internal const float InteractRange = 2.0f;
 
     private readonly IGameBridge gameBridge;
     private readonly INavigationProvider navigation;
@@ -76,8 +80,16 @@ public sealed class GatheringController : IDisposable
     /// <summary>Object id of the node this run targeted; 0 before the first run.</summary>
     public ulong LastNodeId { get; private set; }
 
-    /// <summary>Gathers the nearest node. itemId 0 = first gatherable slot; needed caps GP spending decisions.</summary>
-    public bool Start(uint itemId, System.Collections.Generic.IReadOnlyCollection<ulong>? excludedNodes = null, int needed = int.MaxValue)
+    /// <summary>
+    /// Gathers the nearest node. itemId 0 = first gatherable slot; needed caps
+    /// GP spending decisions; preferNear ranks candidate nodes by distance
+    /// from that point (the recorded node area) instead of from the player.
+    /// </summary>
+    public bool Start(
+        uint itemId,
+        System.Collections.Generic.IReadOnlyCollection<ulong>? excludedNodes = null,
+        int needed = int.MaxValue,
+        System.Numerics.Vector3? preferNear = null)
     {
         if (State is GatheringState.MovingToNode or GatheringState.Interacting
             or GatheringState.GatheringNode or GatheringState.CollectableNode)
@@ -89,7 +101,15 @@ public sealed class GatheringController : IDisposable
             return false;
         }
 
-        node = gameBridge.FindNearestGatheringNode(excludedNodes);
+        // A window left open by a rejected node locks the character in place.
+        if (gameBridge.GetGatheringState() != null)
+        {
+            gameBridge.CloseGatheringWindow();
+            Transition(GatheringState.Idle, "Closing a stale gathering window.");
+            return false;
+        }
+
+        node = gameBridge.FindNearestGatheringNode(excludedNodes, preferNear);
         if (node == null)
         {
             Transition(GatheringState.Idle, "No targetable gathering node nearby.");
@@ -98,7 +118,7 @@ public sealed class GatheringController : IDisposable
 
         if (!navigation.IsReady && node.Distance > InteractRange)
         {
-            Transition(GatheringState.Idle, "Navigation is not ready and the node is out of reach.");
+            Transition(GatheringState.Idle, "Waiting for the navmesh to build; the node is out of reach.");
             return false;
         }
 
@@ -166,8 +186,20 @@ public sealed class GatheringController : IDisposable
     public void Stop()
     {
         navigation.Stop();
+        CloseNodeWindow();
         if (State is not (GatheringState.Idle or GatheringState.Completed or GatheringState.Failed))
             Transition(GatheringState.Idle, "Stopped by user.");
+    }
+
+    /// <summary>
+    /// The node window pins the character; never leave it up when this run is
+    /// over. Also fires while the gathering condition lingers after the window
+    /// was hidden, which is the stuck state a plain hide leaves behind.
+    /// </summary>
+    private void CloseNodeWindow()
+    {
+        if (gameBridge.GetGatheringState() != null || gameBridge.IsGathering)
+            gameBridge.CloseGatheringWindow();
     }
 
     private void OnUpdate(IFramework framework)
@@ -301,6 +333,15 @@ public sealed class GatheringController : IDisposable
         if (DateTime.UtcNow - phaseStartedAt > NavigateTimeout)
         {
             Fail($"could not reach the node within {NavigateTimeout.TotalSeconds:F0}s");
+            return;
+        }
+
+        // Still in gathering mode from the previous node (the window may
+        // already be hidden): the character cannot move until it clears.
+        if (gameBridge.IsGathering)
+        {
+            Throttled(CloseNodeWindow);
+            StatusText = $"Leaving the previous node before moving to {node.Name}...";
             return;
         }
 
@@ -504,11 +545,16 @@ public sealed class GatheringController : IDisposable
     private bool ChooseSlot(GatheringSnapshot gathering)
     {
         GatheringItemSlot? slot = null;
+        var requestedPresent = false;
         foreach (var candidate in gathering.Items)
         {
             if (requestedItemId != 0)
             {
-                if (candidate.ItemId == requestedItemId && candidate.Enabled)
+                if (candidate.ItemId != requestedItemId)
+                    continue;
+
+                requestedPresent = true;
+                if (candidate.Enabled)
                 {
                     slot = candidate;
                     break;
@@ -523,9 +569,21 @@ public sealed class GatheringController : IDisposable
 
         if (slot == null)
         {
+            // The window's item slots fill in over the first frames after it
+            // opens: the list is empty, or the item is listed but its checkbox
+            // is not clickable yet. Give them a moment before concluding the
+            // node is the wrong one.
+            var populating = gathering.Items.Count == 0 || requestedPresent || requestedItemId == 0;
+            if (populating && DateTime.UtcNow - phaseStartedAt < SlotPopulateTimeout)
+            {
+                StatusText = "Node open; waiting for the item list...";
+                return false;
+            }
+
+            var contents = string.Join(", ", gathering.Items.Select(i => $"{i.ItemId}{(i.Enabled ? "" : " (disabled)")}"));
             Fail(requestedItemId != 0
-                ? $"item {requestedItemId} is not gatherable at this node"
-                : "no gatherable item in this node");
+                ? $"item {requestedItemId} is not gatherable at this node (node holds: {contents})"
+                : $"no gatherable item in this node (node holds: {contents})");
             return false;
         }
 
@@ -573,7 +631,12 @@ public sealed class GatheringController : IDisposable
         action();
     }
 
-    private void Fail(string reason) => Transition(GatheringState.Failed, $"Failed: {reason}.");
+    private void Fail(string reason)
+    {
+        navigation.Stop();
+        CloseNodeWindow();
+        Transition(GatheringState.Failed, $"Failed: {reason}.");
+    }
 
     private void Transition(GatheringState state, string statusText)
     {

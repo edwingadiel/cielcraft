@@ -10,8 +10,11 @@ public sealed class DalamudGameBridge : IGameBridge
 {
     public bool IsLoggedIn => Plugin.ClientState.IsLoggedIn;
 
+    // ConditionFlag.Crafting is the crafting *stance*: it stays set after a
+    // synthesis finishes and the log reopens, so a batch would never see the
+    // craft end. A synthesis is running exactly while the Synthesis window is up.
     public bool IsCrafting =>
-        Plugin.Condition[ConditionFlag.Crafting] || Plugin.Condition[ConditionFlag.ExecutingCraftingAction];
+        IsAddonVisible("Synthesis") || Plugin.Condition[ConditionFlag.ExecutingCraftingAction];
 
     public bool IsPreparingToCraft => Plugin.Condition[ConditionFlag.PreparingToCraft];
 
@@ -45,13 +48,16 @@ public sealed class DalamudGameBridge : IGameBridge
 
     public bool IsGatheringActionInProgress => Plugin.Condition[ConditionFlag.ExecutingGatheringAction];
 
-    public GatheringNodeSnapshot? FindNearestGatheringNode(IReadOnlyCollection<ulong>? excludedObjectIds = null)
+    public GatheringNodeSnapshot? FindNearestGatheringNode(
+        IReadOnlyCollection<ulong>? excludedObjectIds = null, System.Numerics.Vector3? origin = null)
     {
         var player = Plugin.ObjectTable.LocalPlayer;
         if (player == null)
             return null;
 
+        var rankFrom = origin ?? player.Position;
         GatheringNodeSnapshot? nearest = null;
+        var nearestRank = float.MaxValue;
         foreach (var obj in Plugin.ObjectTable)
         {
             if (obj.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.GatheringPoint || !obj.IsTargetable)
@@ -60,12 +66,30 @@ public sealed class DalamudGameBridge : IGameBridge
             if (excludedObjectIds != null && excludedObjectIds.Contains(obj.GameObjectId))
                 continue;
 
-            var distance = System.Numerics.Vector3.Distance(player.Position, obj.Position);
-            if (nearest == null || distance < nearest.Distance)
+            var rank = System.Numerics.Vector3.Distance(rankFrom, obj.Position);
+            if (nearest == null || rank < nearestRank)
+            {
+                nearestRank = rank;
+                var distance = System.Numerics.Vector3.Distance(player.Position, obj.Position);
                 nearest = new GatheringNodeSnapshot(obj.GameObjectId, obj.Name.TextValue, obj.Position, distance);
+            }
         }
 
         return nearest;
+    }
+
+    public unsafe void CloseGatheringWindow()
+    {
+        // Callback -1 is the window's own close/cancel: the client tells the
+        // server we left the node and the Gathering condition clears ("You
+        // finish mining."). AtkUnitBase.Close only hides the window and leaves
+        // the character pinned in gathering mode — so fire the callback even
+        // when the addon is hidden, to recover from exactly that state.
+        var ptr = Plugin.GameGui.GetAddonByName("Gathering");
+        if (ptr.IsNull)
+            return;
+
+        ((FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)ptr.Address)->FireCallbackInt(-1);
     }
 
     public unsafe bool InteractWithObject(ulong objectId)
@@ -160,9 +184,82 @@ public sealed class DalamudGameBridge : IGameBridge
     {
         get
         {
+            // The recipe highlighted in the open crafting log lives on the agent.
+            // RecipeNote.ActiveCraftRecipeId only fills in once a synthesis is
+            // actually running, so on its own it reads 0 while the log sits on a
+            // recipe with Synthesize enabled (observed: the runner never started).
+            var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentRecipeNote.Instance();
+            if (agent != null && agent->AgentInterface.IsAgentActive() && agent->ActiveCraftRecipeId != 0)
+                return (ushort)agent->ActiveCraftRecipeId;
+
             var recipeNote = FFXIVClientStructs.FFXIV.Client.Game.UI.RecipeNote.Instance();
-            return recipeNote != null ? recipeNote->ActiveCraftRecipeId : (ushort)0;
+            if (recipeNote != null && recipeNote->ActiveCraftRecipeId != 0)
+                return recipeNote->ActiveCraftRecipeId;
+
+            // On this client neither struct field is populated while the log
+            // merely sits on a recipe (all read 0 with Synthesize enabled), so
+            // fall back to what the window shows: result name + craft type,
+            // preferring the recipe this plugin last asked the log to open.
+            var addon = GetRecipeNote();
+            if (addon == null || agent == null || addon->SelectedRecipeName == null)
+                return 0;
+
+            var name = Dalamud.Utility.Utf8StringExtensions.ExtractText(addon->SelectedRecipeName->NodeText).Trim();
+            if (name.Length == 0)
+                return 0;
+
+            var craftType = (uint)agent->SelectedCraftType;
+            var recipes = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Recipe>();
+            if (lastOpenedRecipeId != 0
+                && recipes.TryGetRow(lastOpenedRecipeId, out var opened)
+                && opened.CraftType.RowId == craftType
+                && opened.ItemResult.RowId != 0
+                && opened.ItemResult.Value.Name.ExtractText() == name)
+                return (ushort)lastOpenedRecipeId;
+
+            recipeByTypeAndName ??= BuildRecipeNameIndex(recipes);
+            return recipeByTypeAndName.TryGetValue((craftType, name), out var id) ? id : (ushort)0;
         }
+    }
+
+    private uint lastOpenedRecipeId;
+    private Dictionary<(uint CraftType, string Name), ushort>? recipeByTypeAndName;
+
+    /// <summary>(craft type, result item name) → lowest recipe id; resolves the crafting log's displayed recipe.</summary>
+    private static Dictionary<(uint CraftType, string Name), ushort> BuildRecipeNameIndex(
+        Lumina.Excel.ExcelSheet<Lumina.Excel.Sheets.Recipe> recipes)
+    {
+        var index = new Dictionary<(uint, string), ushort>();
+        foreach (var row in recipes)
+        {
+            if (row.ItemResult.RowId == 0)
+                continue;
+
+            index.TryAdd((row.CraftType.RowId, row.ItemResult.Value.Name.ExtractText()), (ushort)row.RowId);
+        }
+
+        return index;
+    }
+
+    public unsafe string DescribeRecipeSelection()
+    {
+        var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentRecipeNote.Instance();
+        var recipeNote = FFXIVClientStructs.FFXIV.Client.Game.UI.RecipeNote.Instance();
+        var addon = GetRecipeNote();
+        var agentPart = agent == null
+            ? "agent null"
+            : $"agent active {agent->AgentInterface.IsAgentActive()}, agent.ActiveCraftRecipeId {agent->ActiveCraftRecipeId}, " +
+              $"SelectedCraftType {agent->SelectedCraftType}, SelectedRecipeCategory {agent->SelectedRecipeCategory}, " +
+              $"SelectedRecipeIndex {agent->SelectedRecipeIndex}";
+        var notePart = recipeNote == null
+            ? "recipeNote null"
+            : $"recipeNote.ActiveCraftRecipeId {recipeNote->ActiveCraftRecipeId}, CraftingRecipeId {recipeNote->CraftingRecipeId}, " +
+              $"ActiveCraftItemRequired {recipeNote->ActiveCraftItemRequired}";
+        var addonPart = addon == null
+            ? "addon hidden"
+            : $"addon name '{(addon->SelectedRecipeName != null ? Dalamud.Utility.Utf8StringExtensions.ExtractText(addon->SelectedRecipeName->NodeText) : "-")}', " +
+              $"synthesize button {(addon->SynthesizeButton == null ? "null" : addon->SynthesizeButton->IsEnabled ? "enabled" : "disabled")}";
+        return $"{agentPart}; {notePart}; {addonPart}";
     }
 
     public unsafe bool StartSynthesis()
@@ -236,7 +333,10 @@ public sealed class DalamudGameBridge : IGameBridge
     {
         var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentRecipeNote.Instance();
         if (agent != null)
+        {
+            lastOpenedRecipeId = recipeId;
             agent->OpenRecipeByRecipeId(recipeId);
+        }
     }
 
     public unsafe void CloseRecipeNote()
@@ -539,11 +639,12 @@ public sealed class DalamudGameBridge : IGameBridge
     public unsafe bool FillHqIngredients()
     {
         var recipeNote = FFXIVClientStructs.FFXIV.Client.Game.UI.RecipeNote.Instance();
-        if (recipeNote == null || recipeNote->ActiveCraftRecipeId == 0 || !IsAddonVisible("RecipeNote"))
+        var recipeId = SelectedRecipeId;
+        if (recipeNote == null || recipeId == 0 || !IsAddonVisible("RecipeNote"))
             return false;
 
         if (!Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Recipe>()
-                .TryGetRow(recipeNote->ActiveCraftRecipeId, out var recipe))
+                .TryGetRow(recipeId, out var recipe))
             return false;
 
         var nq = recipeNote->CraftIngredientNQAmounts;

@@ -51,6 +51,7 @@ public static class DiagnosticReport
             sb.AppendLine($"Territory {player.TerritoryId} at {player.Position.X:F1}, {player.Position.Y:F1}, {player.Position.Z:F1}; mounted {bridge.IsMounted}; between areas {bridge.IsBetweenAreas}; free bag slots {bridge.GetFreeInventorySlots()}");
             sb.AppendLine($"Crafting {bridge.IsCrafting}; preparing to craft {bridge.IsPreparingToCraft}; gathering {bridge.IsGathering}; gather action in progress {bridge.IsGatheringActionInProgress}");
             sb.AppendLine($"Crafting log ready {bridge.IsReadyToStartCraft}; selected recipe {bridge.SelectedRecipeId}; quick synth available {bridge.IsQuickSynthAvailable}, active {bridge.IsQuickSynthesisActive}; quick gathering {bridge.IsQuickGatheringEnabled}");
+            sb.AppendLine($"Recipe selection: {bridge.DescribeRecipeSelection()}");
             sb.AppendLine($"Windows: " + string.Join(", ",
                 new[] { "RecipeNote", "Synthesis", "SynthesisSimple", "SynthesisSimpleDialog", "Gathering", "GatheringMasterpiece", "Repair", "SelectYesno", "Materialize" }
                     .Select(name => $"{name}={(bridge.IsAddonVisible(name) ? "open" : "-")}")));

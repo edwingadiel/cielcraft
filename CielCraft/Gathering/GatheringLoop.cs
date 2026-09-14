@@ -33,6 +33,7 @@ public sealed class GatheringLoop : IDisposable
     private readonly HashSet<ulong> blacklistedNodes = [];
 
     private static readonly TimeSpan NoNodeTimeout = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan NavmeshTimeout = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan StartRetryInterval = TimeSpan.FromSeconds(2);
 
     private uint itemId;
@@ -41,6 +42,7 @@ public sealed class GatheringLoop : IDisposable
     private int consecutiveFailures;
     private bool controllerActive;
     private DateTime noNodeSince = DateTime.MaxValue;
+    private DateTime navmeshWaitSince = DateTime.MaxValue;
     private DateTime lastStartAttempt = DateTime.MinValue;
     private System.Numerics.Vector3? areaCenter;
     private DateTime lastCordialAt = DateTime.MinValue;
@@ -89,6 +91,8 @@ public sealed class GatheringLoop : IDisposable
         baselineCount = gameBridge.GetItemCount(itemId);
         consecutiveFailures = 0;
         controllerActive = false;
+        noNodeSince = DateTime.MaxValue;
+        navmeshWaitSince = DateTime.MaxValue;
         blacklistedNodes.Clear();
 
         Transition(GatheringLoopState.Running, $"Gathering item {itemId} ×{quantity}.");
@@ -154,6 +158,17 @@ public sealed class GatheringLoop : IDisposable
             if (gathered >= targetQuantity)
             {
                 controller.Stop();
+
+                // The target is usually reached mid-node. The close request can
+                // be ignored while a swing animates, so keep asking (once a
+                // second) and only report completion once the character is free.
+                if (gameBridge.GetGatheringState() != null || gameBridge.IsGathering)
+                {
+                    gameBridge.CloseGatheringWindow();
+                    StatusText = $"Gathered {gathered}/{targetQuantity}; leaving the node...";
+                    return;
+                }
+
                 Transition(GatheringLoopState.Completed, $"Completed: {gathered}/{targetQuantity} gathered.");
                 return;
             }
@@ -229,7 +244,40 @@ public sealed class GatheringLoop : IDisposable
 
         lastStartAttempt = DateTime.UtcNow;
 
-        if (controller.Start(itemId, blacklistedNodes, targetQuantity - Gathered))
+        // Still at the previous node (window up, or the gathering condition
+        // not yet cleared after closing it): the character is pinned until it
+        // is gone, so nothing can start.
+        if (gameBridge.GetGatheringState() != null || gameBridge.IsGathering)
+        {
+            gameBridge.CloseGatheringWindow();
+            StatusText = $"{ProgressText()} Leaving the previous node...";
+            return;
+        }
+
+        // vnavmesh rebuilds its mesh after every zone change (the first visit
+        // to a zone can take a minute or more). The no-node clock must not run
+        // while nodes are merely out of walking reach.
+        if (!navigation.IsReady && !NodeInReach())
+        {
+            if (navmeshWaitSince == DateTime.MaxValue)
+            {
+                navmeshWaitSince = DateTime.UtcNow;
+                Plugin.Log.Information("[Gather] Waiting for the navmesh to build before approaching a node.");
+            }
+
+            noNodeSince = DateTime.MaxValue;
+            if (DateTime.UtcNow - navmeshWaitSince > NavmeshTimeout)
+                Transition(
+                    GatheringLoopState.Failed,
+                    $"Failed: the navmesh did not become ready within {NavmeshTimeout.TotalMinutes:F0} minutes.");
+            else
+                StatusText = $"{ProgressText()} Waiting for the navmesh to build...";
+            return;
+        }
+
+        navmeshWaitSince = DateTime.MaxValue;
+
+        if (controller.Start(itemId, blacklistedNodes, targetQuantity - Gathered, areaCenter))
         {
             controllerActive = true;
             noNodeSince = DateTime.MaxValue;
@@ -287,6 +335,11 @@ public sealed class GatheringLoop : IDisposable
 
     private string ProgressText() => $"Gathered {Gathered}/{targetQuantity} of item {itemId}.";
 
+    /// <summary>A usable node is close enough to interact with without navigation.</summary>
+    private bool NodeInReach() =>
+        gameBridge.FindNearestGatheringNode(blacklistedNodes, areaCenter) is { } nearest
+        && nearest.Distance <= GatheringController.InteractRange;
+
     private void Transition(GatheringLoopState state, string statusText)
     {
         State = state;
@@ -299,6 +352,6 @@ public sealed class GatheringLoop : IDisposable
     {
         yield return $"State {State} — {StatusText}";
         yield return $"Item {itemId} ×{targetQuantity}: gathered {Gathered} (baseline {baselineCount}); consecutive failures {consecutiveFailures}; controllerActive {controllerActive}; blacklisted nodes {blacklistedNodes.Count}";
-        yield return $"noNodeSince {(noNodeSince == DateTime.MaxValue ? "-" : noNodeSince.ToString("HH:mm:ss") + "Z")}; last start attempt {lastStartAttempt:HH:mm:ss}Z; area center {areaCenter?.ToString() ?? "-"}; last cordial {lastCordialAt:HH:mm:ss}Z";
+        yield return $"noNodeSince {(noNodeSince == DateTime.MaxValue ? "-" : noNodeSince.ToString("HH:mm:ss") + "Z")}; navmeshWaitSince {(navmeshWaitSince == DateTime.MaxValue ? "-" : navmeshWaitSince.ToString("HH:mm:ss") + "Z")}; last start attempt {lastStartAttempt:HH:mm:ss}Z; area center {areaCenter?.ToString() ?? "-"}; last cordial {lastCordialAt:HH:mm:ss}Z";
     }
 }

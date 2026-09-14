@@ -57,6 +57,9 @@ public sealed class BatchCrafter : IDisposable
     private bool midSolveTried;
     private bool midSolve;
     private DateTime lastRecipeOpenAttempt = DateTime.MinValue;
+    private DateTime verifyUntil = DateTime.MinValue; // pending inventory verification of a finished craft
+    private DateTime lastSynthesisPress = DateTime.MinValue;
+    private static readonly TimeSpan SynthesisRetryInterval = TimeSpan.FromSeconds(3);
 
     public BatchState State { get; private set; } = BatchState.Idle;
     public string StatusText { get; private set; } = "Idle.";
@@ -148,6 +151,7 @@ public sealed class BatchCrafter : IDisposable
         automatorStarted = false;
         wasCrafting = gameBridge.IsCrafting;
         waitStartedAt = DateTime.UtcNow;
+        verifyUntil = DateTime.MinValue;
 
         quickMode = quickSynth && !gameBridge.IsCrafting && gameBridge.IsQuickSynthAvailable;
         if (quickMode)
@@ -239,6 +243,7 @@ public sealed class BatchCrafter : IDisposable
     {
         automator.Stop();
         maintenance.Abort();
+        verifyUntil = DateTime.MinValue;
         if (State is BatchState.QuickStarting or BatchState.QuickRunning)
             gameBridge.CancelQuickSynthesis();
         if (State is not (BatchState.Idle or BatchState.Completed or BatchState.Failed))
@@ -262,6 +267,13 @@ public sealed class BatchCrafter : IDisposable
         var isCrafting = gameBridge.IsCrafting;
         var craftJustEnded = wasCrafting && !isCrafting;
         wasCrafting = isCrafting;
+
+        // A finished craft whose inventory update has not landed yet.
+        if (verifyUntil != DateTime.MinValue)
+        {
+            TryVerifyCraft();
+            return;
+        }
 
         // A craft can end while the batch is paused (in-flight last action);
         // its verification must not be lost or the count drifts by one.
@@ -366,6 +378,11 @@ public sealed class BatchCrafter : IDisposable
             var craft = craftMonitor.Current;
             var player = gameBridge.GetPlayerState();
             if (craft == null || player == null)
+                return;
+
+            // The Synthesis window's numbers fill in a frame or two after the
+            // craft starts; solving from zeros only yields "no solution".
+            if (craft.MaxProgress <= 0 || craft.MaxQuality <= 0 || craft.MaxDurability <= 0)
                 return;
 
             // Specialist one-shots: usable at craft start only when the job is
@@ -513,6 +530,7 @@ public sealed class BatchCrafter : IDisposable
                 {
                     synthesisFired = true;
                     waitStartedAt = DateTime.UtcNow;
+                    lastSynthesisPress = DateTime.UtcNow;
                     Plugin.Log.Information($"[Production] Starting synthesis of recipe {recipeId}.");
                 }
 
@@ -526,7 +544,20 @@ public sealed class BatchCrafter : IDisposable
         }
 
         if (DateTime.UtcNow - waitStartedAt > StartTimeout)
+        {
             Fail("synthesis did not start after pressing Synthesize");
+            return;
+        }
+
+        // A press made right after the previous craft is swallowed by the
+        // completion animation (observed: the log was ready, nothing started).
+        // Press again every few seconds until the craft begins or we time out.
+        if (DateTime.UtcNow - lastSynthesisPress > SynthesisRetryInterval && gameBridge.IsReadyToStartCraft)
+        {
+            lastSynthesisPress = DateTime.UtcNow;
+            if (gameBridge.StartSynthesis())
+                Plugin.Log.Information($"[Production] Synthesis has not started yet; pressing Synthesize again.");
+        }
     }
 
     private void TickCrafting(bool isCrafting, bool craftJustEnded)
@@ -609,17 +640,30 @@ public sealed class BatchCrafter : IDisposable
             return;
         }
 
+        // The inventory update can land a few frames after the Synthesis
+        // window closes; keep checking briefly before calling it a failure.
+        verifyUntil = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+        TryVerifyCraft();
+    }
+
+    private void TryVerifyCraft()
+    {
         if (resultItemId != 0)
         {
             var expected = baselineItemCount + (CompletedCrafts + 1) * Math.Max(resultAmount, 1);
             var actual = gameBridge.GetItemCount(resultItemId);
             if (actual < expected)
             {
+                if (DateTime.UtcNow < verifyUntil)
+                    return;
+
+                verifyUntil = DateTime.MinValue;
                 Pause($"inventory verification failed (item {resultItemId}: have {actual}, expected {expected})");
                 return;
             }
         }
 
+        verifyUntil = DateTime.MinValue;
         CompletedCrafts++;
         Plugin.Log.Information($"[Production] Craft {CompletedCrafts}/{targetQuantity} verified.");
 
