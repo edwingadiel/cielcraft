@@ -97,8 +97,8 @@ Idle).
 | C5 | Gather ×5 (debug Gathering tab) | while walking to a node |
 | C6 | Gather ×5 | mid-swing (the moment after clicking the item) |
 | C7 | Gather ×5 | between nodes (after a node is exhausted) |
-| C8 | Run plan with a gathering step | while teleporting / on the loading screen |
-| C9 | Run plan | during the job switch (PreparingStep) |
+| C8 | Run with a gathering step | while teleporting / on the loading screen |
+| C9 | Run | during the job switch (PreparingStep) |
 
 **C10 ★. Stop while queued** — Queue two targets, Run queue, then press Stop
 everything during the first target. Expect: the queue holds, the first entry is
@@ -127,7 +127,7 @@ moving when it opens.
 ## E. Production runner and queue
 
 **E1. Full production run** — Main window → Target: an item with at least one
-sub-craft and one gatherable raw material you do *not* have. Plan → Run plan.
+sub-craft and one gatherable raw material you do *not* have. Run (Preview shows the plan without starting).
 Expect: gather → sub-craft (quick synth if enabled) → final craft → Completed
 with the chat summary. Take a report at the end even on success; the runner
 section shows the full plan and timings.

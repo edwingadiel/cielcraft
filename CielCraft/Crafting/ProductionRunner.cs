@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using CielCraft.Core;
 using CielCraft.Game;
 using Dalamud.Plugin.Services;
@@ -113,6 +114,15 @@ public sealed class ProductionRunner : IDisposable
 
         if (!TryBuildGatherQueue(productionPlan))
             return false;
+
+        // Pre-flight: every job the plan needs must have a gearset, or the run
+        // dies 15s into a step with a vague message (roadmap 7.9).
+        var jobWithoutGearset = FindJobWithoutGearset(productionPlan);
+        if (jobWithoutGearset != null)
+        {
+            Transition(ProductionState.Idle, $"No gearset for {jobWithoutGearset}. Save one in the Gear Set list, then run again.");
+            return false;
+        }
 
         if (gameBridge.IsCrafting)
         {
@@ -539,6 +549,34 @@ public sealed class ProductionRunner : IDisposable
         });
         return false;
     }
+
+    /// <summary>Name of the first craft or gather job in the plan with no gearset; null when all are covered.</summary>
+    private string? FindJobWithoutGearset(ProductionPlan productionPlan)
+    {
+        var jobs = new List<uint>();
+        foreach (var step in productionPlan.CraftSteps)
+        {
+            var info = recipeProvider.GetRecipeById(step.RecipeId);
+            if (info != null)
+                jobs.Add(info.ClassJobId);
+        }
+
+        foreach (var task in gatherQueue)
+            jobs.Add(task.JobId);
+
+        foreach (var jobId in jobs.Distinct())
+        {
+            if (jobId != 0 && !gameBridge.HasGearsetForJob(jobId))
+                return JobName(jobId);
+        }
+
+        return null;
+    }
+
+    private static string JobName(uint jobId) =>
+        Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.ClassJob>().TryGetRow(jobId, out var row)
+            ? row.Abbreviation.ExtractText()
+            : $"job {jobId}";
 
     /// <summary>Object-table scans are costly; cache "is a node visible?" for a second.</summary>
     private bool NodeNearby()

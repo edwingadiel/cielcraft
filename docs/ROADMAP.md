@@ -147,6 +147,10 @@ against inventory, pause with a reason.
   across sessions (persist in the config folder); invalidate on any key
   change. Mid-craft recovery solves stay uncached (live state is unique).
 
+- [x] 7.9 Pre-flight gearset check (S) — refuse to start a plan whose craft or
+  gather jobs have no gearset, naming the job, instead of failing 15s into
+  the step. Done 2026-09-14.
+
 - [ ] 7.8 Rotation visibility and manual rotations (S–M) — show the solved
   rotation (action list, expected progress/quality per step) in the main
   window before and during a craft, not just in the log; and let the user

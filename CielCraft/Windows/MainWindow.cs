@@ -238,24 +238,33 @@ public class MainWindow : Window, IDisposable
         var haveTarget = EffectiveRecipeId != 0;
         var raphael = CielCraft.Raphael.RaphaelSolver.IsAvailable;
 
-        using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!haveTarget))
+        // Run resolves the plan itself; Preview only shows it. A separate
+        // "plan first" click was pure ceremony.
+        using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!haveTarget || !raphael))
         {
-            if (UiTheme.TintedButton("Plan", UiTheme.Info))
+            if (UiTheme.TintedButton("Run", UiTheme.Success))
+            {
                 ComputePlan();
-        }
-
-        UiTheme.Tooltip("Resolve sub-recipes, inventory, and missing materials");
-
-        ImGui.SameLine();
-        var canRun = plan != null && raphael
-                     && (plan.RawMaterials.Count == 0 || plugin.Navigation.IsAvailable);
-        using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!canRun))
-        {
-            if (UiTheme.TintedButton("Run plan", UiTheme.Success) && plan != null)
-                runner.Start(plan);
+                if (plan != null)
+                {
+                    if (plan.RawMaterials.Count > 0 && !plugin.Navigation.IsAvailable)
+                        planError = "Missing materials need vnavmesh to gather; install it or gather them by hand first.";
+                    else if (!runner.Start(plan))
+                        planError = runner.StatusText;
+                }
+            }
         }
 
         UiTheme.Tooltip("Gather missing materials, craft intermediates, then the target");
+
+        ImGui.SameLine();
+        using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!haveTarget))
+        {
+            if (UiTheme.TintedButton("Preview", UiTheme.Info))
+                ComputePlan();
+        }
+
+        UiTheme.Tooltip("Show what Run would gather and craft, without starting");
 
         ImGui.SameLine();
         var canBatch = raphael && (gameBridge.IsReadyToStartCraft

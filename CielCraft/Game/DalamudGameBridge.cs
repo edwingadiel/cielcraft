@@ -184,24 +184,28 @@ public sealed class DalamudGameBridge : IGameBridge
     {
         get
         {
-            // The recipe highlighted in the open crafting log lives on the agent.
-            // RecipeNote.ActiveCraftRecipeId only fills in once a synthesis is
-            // actually running, so on its own it reads 0 while the log sits on a
-            // recipe with Synthesize enabled (observed: the runner never started).
+            // RecipeNote.ActiveCraftRecipeId is the recipe of the synthesis in
+            // progress — and it keeps that value after the craft ends, so it
+            // is only trustworthy while a synthesis is actually running.
+            // (Observed: it still read Iron Ingot while the log sat on Titanium
+            // Gold Nugget, and the runner kept reopening the recipe forever.)
+            var recipeNote = FFXIVClientStructs.FFXIV.Client.Game.UI.RecipeNote.Instance();
+            if (IsCrafting && recipeNote != null && recipeNote->ActiveCraftRecipeId != 0)
+                return recipeNote->ActiveCraftRecipeId;
+
+            // Otherwise the answer is whatever the open crafting log shows.
+            var addon = GetRecipeNote();
+            if (addon == null)
+                return 0;
+
             var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentRecipeNote.Instance();
             if (agent != null && agent->AgentInterface.IsAgentActive() && agent->ActiveCraftRecipeId != 0)
                 return (ushort)agent->ActiveCraftRecipeId;
 
-            var recipeNote = FFXIVClientStructs.FFXIV.Client.Game.UI.RecipeNote.Instance();
-            if (recipeNote != null && recipeNote->ActiveCraftRecipeId != 0)
-                return recipeNote->ActiveCraftRecipeId;
-
-            // On this client neither struct field is populated while the log
-            // merely sits on a recipe (all read 0 with Synthesize enabled), so
-            // fall back to what the window shows: result name + craft type,
-            // preferring the recipe this plugin last asked the log to open.
-            var addon = GetRecipeNote();
-            if (addon == null || agent == null || addon->SelectedRecipeName == null)
+            // On this client that agent field reads 0 while the log merely sits
+            // on a recipe, so resolve from the displayed result name + craft
+            // type, preferring the recipe this plugin last asked the log to open.
+            if (agent == null || addon->SelectedRecipeName == null)
                 return 0;
 
             var name = Dalamud.Utility.Utf8StringExtensions.ExtractText(addon->SelectedRecipeName->NodeText).Trim();
