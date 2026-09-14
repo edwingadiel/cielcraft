@@ -34,6 +34,7 @@ public sealed class BatchCrafter : IDisposable
     private readonly SolverService solverService;
     private readonly Game.DalamudRecipeProvider recipeProvider;
     private readonly Configuration configuration;
+    private readonly Game.MaintenanceService maintenance;
 
     private int targetQuantity;
     private ushort recipeId;
@@ -58,9 +59,11 @@ public sealed class BatchCrafter : IDisposable
         CraftAutomator automator,
         SolverService solverService,
         Game.DalamudRecipeProvider recipeProvider,
-        Configuration configuration)
+        Configuration configuration,
+        Game.MaintenanceService maintenance)
     {
         this.configuration = configuration;
+        this.maintenance = maintenance;
         this.gameBridge = gameBridge;
         this.craftMonitor = craftMonitor;
         this.automator = automator;
@@ -409,8 +412,35 @@ public sealed class BatchCrafter : IDisposable
         return resolved != null && gameBridge.IsCraftActionReady(resolved.Value);
     }
 
+    private DateTime lastRecipeOpenAttempt = DateTime.MinValue;
+
     private void TickStartingCraft(bool isCrafting)
     {
+        if (!isCrafting && !synthesisFired)
+        {
+            // Repair gear / refresh food between crafts (roadmap 6.1/6.2).
+            if (maintenance.Tick())
+            {
+                StatusText = maintenance.StatusText;
+                waitStartedAt = DateTime.UtcNow;
+                return;
+            }
+
+            if (maintenance.BlockedReason != null)
+            {
+                Pause(maintenance.BlockedReason);
+                return;
+            }
+
+            // Maintenance may have closed the crafting log; reopen our recipe.
+            if (!gameBridge.IsReadyToStartCraft && recipeId != 0
+                && DateTime.UtcNow - lastRecipeOpenAttempt > TimeSpan.FromSeconds(2))
+            {
+                lastRecipeOpenAttempt = DateTime.UtcNow;
+                gameBridge.OpenRecipe(recipeId);
+            }
+        }
+
         if (isCrafting)
         {
             // Craft #(CompletedCrafts+1) has begun.
@@ -431,6 +461,9 @@ public sealed class BatchCrafter : IDisposable
                 }
 
                 recipeId = gameBridge.SelectedRecipeId;
+                if (configuration.PreferHqMaterials)
+                    gameBridge.FillHqIngredients();
+
                 if (gameBridge.StartSynthesis())
                 {
                     synthesisFired = true;

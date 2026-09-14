@@ -29,6 +29,7 @@ public sealed class GatheringLoop : IDisposable
     private readonly GatheringController controller;
     private readonly Core.INavigationProvider navigation;
     private readonly Configuration configuration;
+    private readonly Game.MaintenanceService maintenance;
     private readonly HashSet<ulong> blacklistedNodes = [];
 
     private static readonly TimeSpan NoNodeTimeout = TimeSpan.FromSeconds(45);
@@ -53,8 +54,10 @@ public sealed class GatheringLoop : IDisposable
         IGameBridge gameBridge,
         GatheringController controller,
         Core.INavigationProvider navigation,
-        Configuration configuration)
+        Configuration configuration,
+        Game.MaintenanceService maintenance)
     {
+        this.maintenance = maintenance;
         this.gameBridge = gameBridge;
         this.controller = controller;
         this.navigation = navigation;
@@ -137,6 +140,24 @@ public sealed class GatheringLoop : IDisposable
         }
 
         TryCordial();
+
+        // Between-node maintenance (repair/food) — never while a node run is live.
+        var nodeRunActive = controller.State is GatheringState.MovingToNode
+            or GatheringState.Interacting or GatheringState.GatheringNode or GatheringState.CollectableNode;
+        if (!nodeRunActive)
+        {
+            if (maintenance.Tick())
+            {
+                StatusText = maintenance.StatusText;
+                return;
+            }
+
+            if (maintenance.BlockedReason != null)
+            {
+                Pause(maintenance.BlockedReason);
+                return;
+            }
+        }
 
         switch (controller.State)
         {

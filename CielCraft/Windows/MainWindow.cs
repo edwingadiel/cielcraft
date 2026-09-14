@@ -41,6 +41,23 @@ public class MainWindow : Window, IDisposable
 
     public void Dispose() { }
 
+    /// <summary>Draws the item's game icon inline, followed by SameLine.</summary>
+    private void ItemIcon(uint itemId, float size = 20f)
+    {
+        var iconId = plugin.RecipeProvider.GetItemIconId(itemId);
+        if (iconId == 0)
+            return;
+
+        var wrap = Plugin.TextureProvider
+            .GetFromGameIcon(new Dalamud.Interface.Textures.GameIconLookup(iconId))
+            .GetWrapOrDefault();
+        if (wrap == null)
+            return;
+
+        ImGui.Image(wrap.Handle, new Vector2(size, size));
+        ImGui.SameLine(0, 5);
+    }
+
     private uint EffectiveRecipeId => searchTarget?.RecipeId ?? gameBridge.SelectedRecipeId;
 
     public override void Draw()
@@ -109,6 +126,7 @@ public class MainWindow : Window, IDisposable
                 "##searchResults", new Vector2(-1, Math.Min(searchResults.Count, 6) * 24f + 8), true);
             foreach (var result in searchResults)
             {
+                ItemIcon(result.ItemId, 18f);
                 if (ImGui.Selectable($"{result.Name}##r{result.RecipeId}"))
                 {
                     searchTarget = (result.RecipeId, result.Name);
@@ -150,6 +168,20 @@ public class MainWindow : Window, IDisposable
     {
         var runner = plugin.ProductionRunner;
         var batch = plugin.BatchCrafter;
+
+        // Interrupted-run banner (roadmap 6.3).
+        var saved = plugin.Configuration.SavedProduction;
+        if (saved.Active && runner.State is ProductionState.Idle)
+        {
+            ImGui.TextColored(UiTheme.Warning,
+                $"Unfinished production: {plugin.RecipeProvider.GetItemName(saved.ItemId)} ×{saved.Quantity}");
+            if (UiTheme.TintedButton("Resume##saved", UiTheme.Success))
+                runner.TryResumeSaved();
+            ImGui.SameLine();
+            if (UiTheme.TintedButton("Discard##saved", UiTheme.Danger))
+                runner.DiscardSaved();
+            ImGui.Spacing();
+        }
 
         var runnerActive = runner.State is not (ProductionState.Idle or ProductionState.Completed or ProductionState.Failed);
         var batchActive = batch.State is not (BatchState.Idle or BatchState.Completed or BatchState.Failed);
@@ -232,6 +264,21 @@ public class MainWindow : Window, IDisposable
 
         UiTheme.Tooltip("Craft the crafting-log selection repeatedly (no sub-recipes)");
 
+        ImGui.SameLine();
+        using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!haveTarget))
+        {
+            if (UiTheme.TintedButton("Queue +", UiTheme.Muted))
+            {
+                var recipe = plugin.RecipeProvider.GetRecipeById(EffectiveRecipeId);
+                if (recipe != null)
+                    plugin.ProductionQueue.Add(recipe.ResultItemId, batchQuantity);
+            }
+        }
+
+        UiTheme.Tooltip("Add the current target and quantity to the production queue");
+
+        DrawQueue();
+
         if (runner.State is ProductionState.Completed or ProductionState.Failed)
             DrawStateBadge(runner.State.ToString(), false, runner.StatusText);
         else if (batch.State is BatchState.Completed or BatchState.Failed)
@@ -241,6 +288,42 @@ public class MainWindow : Window, IDisposable
             ImGui.TextColored(UiTheme.Danger, planError);
 
         DrawPlanPreview();
+    }
+
+    private void DrawQueue()
+    {
+        var queue = plugin.ProductionQueue;
+        var items = plugin.Configuration.QueueItems;
+        if (items.Count == 0 && !queue.Running)
+            return;
+
+        ImGui.Spacing();
+        ImGui.TextColored(UiTheme.Muted, $"Queue ({items.Count})");
+        ImGui.SameLine();
+        if (queue.Running)
+        {
+            if (ImGui.SmallButton("Hold##queue"))
+                queue.StopQueue();
+        }
+        else if (items.Count > 0 && ImGui.SmallButton("Run queue"))
+        {
+            queue.StartQueue();
+        }
+
+        for (var i = 0; i < items.Count; i++)
+        {
+            ItemIcon(items[i].ItemId, 18f);
+            ImGui.TextUnformatted($"{plugin.RecipeProvider.GetItemName(items[i].ItemId)} ×{items[i].Quantity}");
+            ImGui.SameLine();
+            if (ImGui.SmallButton($"×##q{i}"))
+            {
+                queue.RemoveAt(i);
+                break;
+            }
+        }
+
+        if (queue.StatusText.Length > 0)
+            ImGui.TextColored(UiTheme.Muted, queue.StatusText);
     }
 
     private void ComputePlan()
@@ -280,6 +363,7 @@ public class MainWindow : Window, IDisposable
         {
             ImGui.TextColored(UiTheme.Faint, "  ▸");
             ImGui.SameLine(0, 4);
+            ItemIcon(step.ItemId, 18f);
             ImGui.TextUnformatted($"{provider.GetItemName(step.ItemId)} ×{step.TotalProduced}");
             ImGui.SameLine(0, 6);
             ImGui.TextColored(UiTheme.Muted, $"({step.Crafts} crafts)");
@@ -368,6 +452,7 @@ public class MainWindow : Window, IDisposable
             {
                 ImGui.TableNextRow();
                 ImGui.TableNextColumn();
+                ItemIcon(requirement.ItemId, 18f);
                 ImGui.TextUnformatted(requirement.Name);
                 ImGui.TableNextColumn();
                 ImGui.TextUnformatted($"{requirement.RequiredFor(batchQuantity)}");

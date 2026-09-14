@@ -60,8 +60,21 @@ This tracks the remaining work toward 1.0. Sizes: S / M / L.
 - [x] 5.2 Weekly scheduled CI against the latest Dalamud distrib to catch API drift (S)
 - [x] 5.3 UI polish to spec §44–46 (plan preview, live production panel, debug errors) (M)
 
+## Phase 6 — Unattended reliability & polish
+
+- [x] 6.1 Auto-repair with Dark Matter below a configurable gear-condition threshold
+- [x] 6.2 Auto-food: keep a configured food buff active during automation
+- [x] 6.3 Resume after reload: interrupted production persisted and offered on load
+- [x] 6.4 User-interference detection: manual movement in stationary phases pauses politely
+- [x] 6.5 Chat notifications + end-of-run summary (produced, HQ count, elapsed)
+- [x] 6.6 Item icons in search, materials, plan preview, and queue
+- [x] 6.7 HQ-material auto-fill before each synthesis (config-gated)
+- [x] 6.8 Multi-target production queue (persisted, sequential, holds on failure)
+
 ## Known validation-pending values
 
 Values that could not be verified offline and are confirmed at in-game gates:
-crafting-log callbacks (8 = synthesize — validated; 9 = quick synthesis — pending),
-general action ids (9 = mount roulette, 23 = dismount — pending).
+crafting-log callbacks (8 = synthesize, 9 = quick synthesis — validated),
+general action ids (9 = mount roulette, 23 = dismount — validated; 6 = repair — pending),
+repair-addon callbacks (0 = repair all, -1 = close; SelectYesno 0 = yes — pending),
+RecipeNote NQ/HQ ingredient amount spans as the HQ-fill mechanism (pending).

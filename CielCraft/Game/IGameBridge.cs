@@ -62,6 +62,9 @@ public interface IGameBridge
     /// <summary>Total NQ+HQ count of the item in the player inventory.</summary>
     int GetItemCount(uint itemId);
 
+    /// <summary>HQ-only count of the item in the player inventory.</summary>
+    int GetHqItemCount(uint itemId);
+
     /// <summary>
     /// Ingredient lines of a recipe with live inventory counts; empty when the
     /// recipe id is unknown.
@@ -132,4 +135,24 @@ public interface IGameBridge
 
     /// <summary>Item count across saddlebags and cached retainer pages (read-only awareness).</summary>
     int GetStoredItemCount(uint itemId);
+
+    /// <summary>Lowest condition of equipped gear, 0-100.</summary>
+    float GetLowestEquipmentConditionPercent();
+
+    /// <summary>Opens the self-repair window (general action).</summary>
+    void OpenRepairWindow();
+
+    bool IsAddonVisible(string addonName);
+
+    /// <summary>Fires an integer callback on a visible addon. False when it is not open.</summary>
+    bool FireAddonCallbackInt(string addonName, int value);
+
+    /// <summary>Seconds left on the Well Fed buff; 0 when not fed.</summary>
+    float GetFoodBuffRemainingSeconds();
+
+    /// <summary>
+    /// Fills the selected recipe's ingredient slots with as many HQ materials
+    /// as owned (NQ for the remainder). False when no recipe is selected.
+    /// </summary>
+    bool FillHqIngredients();
 }

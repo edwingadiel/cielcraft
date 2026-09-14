@@ -184,6 +184,12 @@ public sealed class DalamudGameBridge : IGameBridge
                + inventory->GetInventoryItemCount(itemId, true);
     }
 
+    public unsafe int GetHqItemCount(uint itemId)
+    {
+        var inventory = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+        return inventory == null ? 0 : inventory->GetInventoryItemCount(itemId, true);
+    }
+
     public IReadOnlyList<IngredientRequirement> GetRecipeRequirements(ushort recipeId)
     {
         var recipes = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Recipe>();
@@ -474,6 +480,96 @@ public sealed class DalamudGameBridge : IGameBridge
         }
 
         return total;
+    }
+
+    public unsafe float GetLowestEquipmentConditionPercent()
+    {
+        var inventory = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+        if (inventory == null)
+            return 100f;
+
+        var container = inventory->GetInventoryContainer(
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.EquippedItems);
+        if (container == null)
+            return 100f;
+
+        var lowest = 100f;
+        for (var i = 0; i < container->Size; i++)
+        {
+            var item = container->GetInventorySlot(i);
+            if (item == null || item->ItemId == 0)
+                continue;
+
+            // Condition is stored as 0..30000 (= 0..100%).
+            lowest = System.Math.Min(lowest, item->Condition / 300f);
+        }
+
+        return lowest;
+    }
+
+    public unsafe void OpenRepairWindow()
+    {
+        var actionManager = FFXIVClientStructs.FFXIV.Client.Game.ActionManager.Instance();
+        // General action 6 = Repair.
+        actionManager->UseAction(FFXIVClientStructs.FFXIV.Client.Game.ActionType.GeneralAction, 6);
+    }
+
+    public bool IsAddonVisible(string addonName)
+    {
+        var ptr = Plugin.GameGui.GetAddonByName(addonName);
+        return !ptr.IsNull && ptr.IsVisible;
+    }
+
+    public unsafe bool FireAddonCallbackInt(string addonName, int value)
+    {
+        var ptr = Plugin.GameGui.GetAddonByName(addonName);
+        if (ptr.IsNull || !ptr.IsVisible)
+            return false;
+
+        ((FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)ptr.Address)->FireCallbackInt(value);
+        return true;
+    }
+
+    public float GetFoodBuffRemainingSeconds()
+    {
+        var player = Plugin.ObjectTable.LocalPlayer;
+        if (player == null)
+            return 0f;
+
+        foreach (var status in player.StatusList)
+        {
+            // 48 = Well Fed.
+            if (status.StatusId == 48)
+                return System.Math.Max(0f, status.RemainingTime);
+        }
+
+        return 0f;
+    }
+
+    public unsafe bool FillHqIngredients()
+    {
+        var recipeNote = FFXIVClientStructs.FFXIV.Client.Game.UI.RecipeNote.Instance();
+        if (recipeNote == null || recipeNote->ActiveCraftRecipeId == 0 || !IsAddonVisible("RecipeNote"))
+            return false;
+
+        var requirements = GetRecipeRequirements(recipeNote->ActiveCraftRecipeId);
+        var nq = recipeNote->CraftIngredientNQAmounts;
+        var hq = recipeNote->CraftIngredientHQAmounts;
+
+        for (var i = 0; i < requirements.Count && i < nq.Length && i < hq.Length; i++)
+        {
+            var required = requirements[i].AmountPerCraft;
+            var inventory = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+            var hqOwned = inventory == null
+                ? 0
+                : inventory->GetInventoryItemCount(requirements[i].ItemId, true);
+
+            var hqUse = (byte)System.Math.Min(required, hqOwned);
+            hq[i] = hqUse;
+            nq[i] = (byte)(required - hqUse);
+        }
+
+        return true;
     }
 
     private static unsafe FFXIVClientStructs.FFXIV.Client.UI.AddonGathering* GetGatheringAddon()

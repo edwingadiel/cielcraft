@@ -72,5 +72,53 @@ public class ConfigWindow : Window, IDisposable
         }
 
         ImGui.TextDisabled("Solve and craft toward this fraction of the recipe's maximum\nquality instead of always aiming for 100%.");
+
+        var preferHq = configuration.PreferHqMaterials;
+        if (ImGui.Checkbox("Fill HQ materials automatically", ref preferHq))
+        {
+            configuration.PreferHqMaterials = preferHq;
+            configuration.Save();
+        }
+
+        UiTheme.SectionHeader("Unattended runs");
+
+        var autoRepair = configuration.AutoRepair;
+        if (ImGui.Checkbox("Self-repair with Dark Matter", ref autoRepair))
+        {
+            configuration.AutoRepair = autoRepair;
+            configuration.Save();
+        }
+
+        var threshold = configuration.RepairThresholdPercent;
+        ImGui.SetNextItemWidth(160);
+        if (ImGui.SliderInt("Repair below %", ref threshold, 5, 90))
+        {
+            configuration.RepairThresholdPercent = Math.Clamp(threshold, 5, 90);
+            configuration.Save();
+        }
+
+        var foodId = (int)configuration.FoodItemId;
+        ImGui.SetNextItemWidth(120);
+        if (ImGui.InputInt("Food item id (0 = off)", ref foodId))
+        {
+            configuration.FoodItemId = (uint)Math.Max(0, foodId);
+            configuration.Save();
+        }
+
+        var foodHq = configuration.FoodIsHq;
+        if (ImGui.Checkbox("Food is HQ", ref foodHq))
+        {
+            configuration.FoodIsHq = foodHq;
+            configuration.Save();
+        }
+
+        var chat = configuration.ChatNotifications;
+        if (ImGui.Checkbox("Chat notifications", ref chat))
+        {
+            configuration.ChatNotifications = chat;
+            configuration.Save();
+        }
+
+        ImGui.TextDisabled("Completed/paused/failed production is announced in the game chat.");
     }
 }

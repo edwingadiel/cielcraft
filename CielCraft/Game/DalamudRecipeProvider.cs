@@ -81,6 +81,21 @@ public sealed class DalamudRecipeProvider : IRecipeProvider
         return info;
     }
 
+    private readonly Dictionary<uint, ushort> icons = new();
+
+    /// <summary>The item's game icon id; 0 when unknown.</summary>
+    public ushort GetItemIconId(uint itemId)
+    {
+        if (icons.TryGetValue(itemId, out var cached))
+            return cached;
+
+        var icon = Plugin.DataManager.GetExcelSheet<Item>().TryGetRow(itemId, out var item)
+            ? item.Icon
+            : (ushort)0;
+        icons[itemId] = icon;
+        return icon;
+    }
+
     public string GetItemName(uint itemId)
     {
         if (names.TryGetValue(itemId, out var cached))

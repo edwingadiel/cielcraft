@@ -54,7 +54,10 @@ public sealed class ProductionRunner : IDisposable
     private bool sawLoadingScreen;
     private System.Numerics.Vector3? areaDestination;
     private int initialTargetCount;
+    private int initialHqCount;
+    private DateTime productionStartedAt;
     private int replanCount;
+    private System.Numerics.Vector3? interferenceAnchor;
     private int mountAttempts;
     private bool flyBlocked;
     private bool flyAttempted;
@@ -114,7 +117,10 @@ public sealed class ProductionRunner : IDisposable
         plan = productionPlan;
         stepIndex = 0;
         initialTargetCount = gameBridge.GetItemCount(productionPlan.TargetItemId);
+        initialHqCount = HqCountOfTarget();
+        productionStartedAt = DateTime.UtcNow;
         replanCount = 0;
+        SaveProgress(active: true);
         EnterPreparing();
 
         if (gatherQueue.Count > 0)
@@ -179,6 +185,30 @@ public sealed class ProductionRunner : IDisposable
 
     private void OnUpdate(IFramework framework)
     {
+        // Manual movement during phases where the character should be still
+        // means the user has taken over (spec §49): step aside politely.
+        if (State is ProductionState.PreparingStep or ProductionState.PreparingGather or ProductionState.WaitingForWindow
+            && !gameBridge.IsCrafting && !gameBridge.IsBetweenAreas && !navigation.IsMoving)
+        {
+            var position = gameBridge.GetPlayerState()?.Position;
+            if (position != null)
+            {
+                if (interferenceAnchor is { } anchor
+                    && System.Numerics.Vector3.Distance(anchor, position.Value) > 3f)
+                {
+                    interferenceAnchor = null;
+                    Pause("manual movement detected");
+                    return;
+                }
+
+                interferenceAnchor ??= position;
+            }
+        }
+        else
+        {
+            interferenceAnchor = null;
+        }
+
         switch (State)
         {
             case ProductionState.PreparingGather:
@@ -656,8 +686,85 @@ public sealed class ProductionRunner : IDisposable
 
     private void Transition(ProductionState state, string statusText)
     {
+        var previous = State;
         State = state;
         StatusText = statusText;
         Plugin.Log.Information($"[Production] {statusText}");
+
+        if (state is ProductionState.Completed or ProductionState.Failed or ProductionState.Idle)
+            SaveProgress(active: false);
+
+        if (previous != state && configuration.ChatNotifications)
+        {
+            switch (state)
+            {
+                case ProductionState.Completed when plan != null:
+                    Plugin.ChatGui.Print(BuildSummary(), "CielCraft");
+                    break;
+                case ProductionState.Failed:
+                case ProductionState.Paused:
+                    Plugin.ChatGui.Print(statusText, "CielCraft");
+                    break;
+            }
+        }
+    }
+
+    /// <summary>End-of-run summary (roadmap 6.5).</summary>
+    private string BuildSummary()
+    {
+        var produced = Math.Max(0, gameBridge.GetItemCount(plan!.TargetItemId) - initialTargetCount);
+        var hq = Math.Max(0, HqCountOfTarget() - initialHqCount);
+        var elapsed = DateTime.UtcNow - productionStartedAt;
+        var name = recipeProvider.GetItemName(plan.TargetItemId);
+        return $"Production complete: {produced}× {name}" +
+               (hq > 0 ? $" ({hq} HQ)" : "") +
+               $" in {(int)elapsed.TotalMinutes}m {elapsed.Seconds}s.";
+    }
+
+    private int HqCountOfTarget() => plan == null ? 0 : gameBridge.GetHqItemCount(plan.TargetItemId);
+
+    /// <summary>Persists the run so a reload/crash can offer resume (roadmap 6.3).</summary>
+    private void SaveProgress(bool active)
+    {
+        if (plan == null)
+            return;
+
+        configuration.SavedProduction = new Configuration.SavedProductionState
+        {
+            Active = active,
+            ItemId = plan.TargetItemId,
+            Quantity = plan.TargetQuantity,
+            InitialCount = initialTargetCount,
+        };
+        configuration.Save();
+    }
+
+    /// <summary>Resumes a persisted run by re-planning what is still missing.</summary>
+    public bool TryResumeSaved()
+    {
+        var saved = configuration.SavedProduction;
+        if (!saved.Active || saved.ItemId == 0)
+            return false;
+
+        var produced = Math.Max(0, gameBridge.GetItemCount(saved.ItemId) - saved.InitialCount);
+        var remaining = saved.Quantity - produced;
+        if (remaining <= 0)
+        {
+            DiscardSaved();
+            Transition(ProductionState.Completed, "Saved production was already complete.");
+            return true;
+        }
+
+        var resumedPlan = DependencyResolver.Resolve(
+            saved.ItemId, remaining, recipeProvider, gameBridge.GetItemCount);
+        Plugin.Log.Information(
+            $"[Production] Resuming saved production: {recipeProvider.GetItemName(saved.ItemId)} ×{remaining} remaining.");
+        return Start(resumedPlan);
+    }
+
+    public void DiscardSaved()
+    {
+        configuration.SavedProduction = new Configuration.SavedProductionState();
+        configuration.Save();
     }
 }

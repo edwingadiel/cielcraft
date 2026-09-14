@@ -25,6 +25,8 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IFramework Framework { get; private set; } = null!;
     [PluginService] internal static IDataManager DataManager { get; private set; } = null!;
     [PluginService] internal static IPluginLog Log { get; private set; } = null!;
+    [PluginService] internal static IChatGui ChatGui { get; private set; } = null!;
+    [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
 
     private const string CommandName = "/cielcraft";
 
@@ -41,6 +43,8 @@ public sealed class Plugin : IDalamudPlugin
     public INavigationProvider Navigation { get; init; }
     public Gathering.GatheringController GatheringController { get; init; }
     public Gathering.GatheringLoop GatheringLoop { get; init; }
+    public MaintenanceService Maintenance { get; init; }
+    public ProductionQueue ProductionQueue { get; init; }
 
     public readonly WindowSystem WindowSystem = new("CielCraft");
     private ConfigWindow ConfigWindow { get; init; }
@@ -61,12 +65,16 @@ public sealed class Plugin : IDalamudPlugin
         ActionExecutor = new ActionExecutor(GameBridge, CraftMonitor);
         SolverService = new SolverService(new CielCraft.Raphael.RaphaelSolver());
         CraftAutomator = new CraftAutomator(GameBridge, CraftMonitor, ActionExecutor, Configuration);
-        BatchCrafter = new BatchCrafter(GameBridge, CraftMonitor, CraftAutomator, SolverService, RecipeProvider, Configuration);
+        Maintenance = new MaintenanceService(GameBridge, Configuration);
+        BatchCrafter = new BatchCrafter(
+            GameBridge, CraftMonitor, CraftAutomator, SolverService, RecipeProvider, Configuration, Maintenance);
         Navigation = new Navigation.VNavmeshProvider();
         GatheringController = new Gathering.GatheringController(GameBridge, Navigation, Configuration);
-        GatheringLoop = new Gathering.GatheringLoop(GameBridge, GatheringController, Navigation, Configuration);
+        GatheringLoop = new Gathering.GatheringLoop(
+            GameBridge, GatheringController, Navigation, Configuration, Maintenance);
         ProductionRunner = new ProductionRunner(
             GameBridge, BatchCrafter, RecipeProvider, GatheringLoop, GatheringDatabase, Navigation, Configuration);
+        ProductionQueue = new ProductionQueue(GameBridge, ProductionRunner, RecipeProvider, Configuration);
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);
@@ -92,6 +100,7 @@ public sealed class Plugin : IDalamudPlugin
     {
         WindowSystem.RemoveAllWindows();
 
+        ProductionQueue.Dispose();
         GatheringLoop.Dispose();
         GatheringController.Dispose();
         ProductionRunner.Dispose();
@@ -130,6 +139,7 @@ public sealed class Plugin : IDalamudPlugin
     public void StopEverything()
     {
         Log.Information("[Plugin] Emergency stop requested.");
+        ProductionQueue.StopQueue();
         ProductionRunner.Stop();
         BatchCrafter.Stop();
         GatheringLoop.Stop();
