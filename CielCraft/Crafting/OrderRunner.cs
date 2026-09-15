@@ -37,6 +37,22 @@ public sealed class OrderRunner
     private bool startedCurrent;     // the runner was handed the current group's plan
     private DateTime startedAt = DateTime.MinValue;
 
+    // HQ intermediates (7.22): the group's plan is checked off the framework
+    // thread ("reachable from zero?") before the runner gets it; the book is
+    // Running meanwhile with startedCurrent false.
+    private System.Threading.Tasks.Task<ProductionPlan>? hqPending;
+    private GroupPlan? hqPendingGroupPlan;
+    private DateTime hqPendingSince;
+
+    /// <summary>The 7.22 pass; exposed for the report and for a cache-only re-apply after a replan.</summary>
+    public HqIntermediatePlanner HqPlanner { get; }
+
+    /// <param name="solverService">
+    /// The solver the HQ-intermediates pass asks (7.22); null builds a
+    /// detached instance over a memory-only cache. Passing the plugin's
+    /// service is better: rotations solved while planning are then in the
+    /// cache the batch reads at synthesis start.
+    /// </param>
     public OrderRunner(
         ProductionRunner runner,
         DalamudRecipeProvider recipeProvider,
@@ -45,7 +61,8 @@ public sealed class OrderRunner
         Func<CharacterCapabilities> capabilities,
         IUserNotifier notifier,
         ILog log,
-        IClock clock)
+        IClock clock,
+        SolverService? solverService = null)
     {
         this.runner = runner;
         this.recipeProvider = recipeProvider;
@@ -55,6 +72,14 @@ public sealed class OrderRunner
         this.notifier = notifier;
         this.log = log;
         this.clock = clock;
+
+        if (solverService == null)
+        {
+            var version = typeof(Plugin).Assembly.GetName().Version?.ToString() ?? "unknown";
+            solverService = new SolverService(new CielCraft.Raphael.RaphaelSolver(), new SolutionCache(version, path: null), log);
+        }
+
+        HqPlanner = new HqIntermediatePlanner(solverService, recipeProvider, configuration, log);
     }
 
     public OrderRunState State { get; private set; } = OrderRunState.Idle;
@@ -84,6 +109,13 @@ public sealed class OrderRunner
     {
         if (State == OrderRunState.Running)
             return true;
+
+        // The current group is still being checked for HQ intermediates (7.22): let it finish.
+        if (hqPending != null)
+        {
+            SetRunning($"Group {GroupLabel()}: still checking whether its quality targets are reachable from NQ intermediates...");
+            return true;
+        }
 
         if (State == OrderRunState.Held && startedCurrent)
         {
@@ -147,6 +179,9 @@ public sealed class OrderRunner
         if (startedCurrent)
             runner.Stop();
 
+        // A pending HQ check finishes in the background; its answer is dropped.
+        hqPending = null;
+        hqPendingGroupPlan = null;
         startedCurrent = false;
         CurrentGroup = null;
         CurrentPlan = null;
@@ -156,8 +191,19 @@ public sealed class OrderRunner
             log.Information("[Orders] Stopped.");
     }
 
-    /// <summary>Plan a group without starting it (Preview). Gather orders (7.1) plan when the node data knows the item.</summary>
-    public GroupPlan Preview(OrderGroup group) =>
+    /// <summary>
+    /// Plan a group without starting it (Preview). Gather orders (7.1) plan
+    /// when the node data knows the item. HQ intermediates (7.22) appear when
+    /// the session already knows the answer for the recipe (a run or an
+    /// earlier check); a preview never solves.
+    /// </summary>
+    public GroupPlan Preview(OrderGroup group)
+    {
+        var planned = Plan(group);
+        return planned.Plan == null ? planned : planned with { Plan = HqPlanner.ApplyCached(planned.Plan) };
+    }
+
+    private GroupPlan Plan(OrderGroup group) =>
         OrderPlanner.PlanGroup(group, recipeProvider, gameBridge.GetItemCount, capabilities(), runner.IsGatherable);
 
     /// <summary>Drive one frame. Exceptions are logged (rate-limited) and swallowed so one bad frame never kills the run.</summary>
@@ -175,6 +221,16 @@ public sealed class OrderRunner
 
     private void OnTick()
     {
+        // Crafter stats per job for the HQ-intermediates pass (7.22): a
+        // cheap per-frame read, and the run itself visits every job it needs.
+        HqPlanner.RememberStats(gameBridge.GetPlayerState());
+
+        if (hqPending != null && State is OrderRunState.Running or OrderRunState.Held)
+        {
+            TickHqPending();
+            return;
+        }
+
         if (State != OrderRunState.Running || !startedCurrent)
             return;
 
@@ -230,7 +286,7 @@ public sealed class OrderRunner
 
             // Fresh planning per group: the inventory read happens now, so
             // restock orders see what earlier groups produced.
-            var groupPlan = Preview(group);
+            var groupPlan = Plan(group);
             if (groupPlan.IsEmpty)
             {
                 log.Information(
@@ -242,23 +298,20 @@ public sealed class OrderRunner
             groupIndex = i;
             CurrentGroup = group;
             CurrentPlan = groupPlan;
-            if (!runner.Start(groupPlan.Plan!))
+
+            // HQ intermediates (7.22): "reachable from zero?" needs solves
+            // that take seconds, so the plan is handed to the runner from the
+            // tick once the check finishes; the book counts as running.
+            if (HqPlanner.Prepare(groupPlan.Plan!) is { } snapshot)
             {
-                State = OrderRunState.Held;
-                StatusText = $"Held: {runner.StatusText}";
-                log.Information($"[Orders] Could not start group \"{group.Name}\": {runner.StatusText}");
-                return false;
+                hqPendingGroupPlan = groupPlan;
+                hqPendingSince = clock.UtcNow;
+                hqPending = System.Threading.Tasks.Task.Run(() => HqPlanner.Apply(snapshot));
+                SetRunning($"Group {GroupLabel()}: checking whether its quality targets are reachable from NQ intermediates...");
+                return true;
             }
 
-            startedCurrent = true;
-            var planned = groupPlan.Orders.Count(o => o.Planned);
-            SetRunning(
-                $"Group {GroupLabel()}: {planned} order(s), {groupPlan.Plan!.CraftSteps.Count} craft step(s)" +
-                (groupPlan.Plan.RawMaterials.Count > 0 ? $", {groupPlan.Plan.RawMaterials.Count} material(s) to gather" : "") +
-                (Book.Perpetual ? $"; cycle {Cycle + 1}" : "") + ".");
-            if (configuration.ChatNotifications)
-                notifier.Notify(NotificationKind.Info, $"Orders: starting group \"{group.Name}\" ({planned} order(s)).");
-            return true;
+            return StartPlanned(groupPlan);
         }
 
         // Past the last group.
@@ -296,6 +349,69 @@ public sealed class OrderRunner
         return false;
     }
 
+    /// <summary>Hands the (checked) plan of the current group to the production runner.</summary>
+    private bool StartPlanned(GroupPlan groupPlan)
+    {
+        var group = groupPlan.Group;
+        CurrentPlan = groupPlan;
+        if (!runner.Start(groupPlan.Plan!))
+        {
+            State = OrderRunState.Held;
+            StatusText = $"Held: {runner.StatusText}";
+            log.Information($"[Orders] Could not start group \"{group.Name}\": {runner.StatusText}");
+            return false;
+        }
+
+        startedCurrent = true;
+        var planned = groupPlan.Orders.Count(o => o.Planned);
+        var hqCrafts = groupPlan.Plan!.CraftSteps.Sum(s => s.HqCrafts);
+        SetRunning(
+            $"Group {GroupLabel()}: {planned} order(s), {groupPlan.Plan.CraftSteps.Count} craft step(s)" +
+            (hqCrafts > 0 ? $" ({hqCrafts} HQ intermediate craft(s))" : "") +
+            (groupPlan.Plan.RawMaterials.Count > 0 ? $", {groupPlan.Plan.RawMaterials.Count} material(s) to gather" : "") +
+            (Book.Perpetual ? $"; cycle {Cycle + 1}" : "") + ".");
+        if (configuration.ChatNotifications)
+            notifier.Notify(NotificationKind.Info, $"Orders: starting group \"{group.Name}\" ({planned} order(s)).");
+        return true;
+    }
+
+    /// <summary>The HQ-intermediates check of the current group finished (or failed): start the group with what it decided.</summary>
+    private void TickHqPending()
+    {
+        var pending = hqPending!;
+        var groupPlan = hqPendingGroupPlan!;
+        if (!pending.IsCompleted)
+        {
+            var waited = clock.UtcNow - hqPendingSince;
+            StatusText = $"Group {GroupLabel()}: checking whether its quality targets are reachable from NQ intermediates ({(int)waited.TotalSeconds}s)...";
+            return;
+        }
+
+        hqPending = null;
+        hqPendingGroupPlan = null;
+
+        var plan = groupPlan.Plan!;
+        if (pending.IsFaulted)
+        {
+            var error = pending.Exception?.InnerException ?? pending.Exception;
+            log.Warning($"[Production] HQ intermediates: the check threw ({error?.GetType().Name}: {error?.Message}); running the plan with quick intermediates.");
+        }
+        else
+        {
+            plan = pending.Result;
+        }
+
+        // A Hold pressed during the check still lets the current group run
+        // (it is the current group), but nothing further starts after it.
+        var wasHeld = State == OrderRunState.Held;
+        if (StartPlanned(groupPlan with { Plan = plan }) && wasHeld)
+        {
+            State = OrderRunState.Held;
+            StatusText = $"Held; group {GroupLabel()} finishes, then nothing more starts.";
+            log.Information($"[Orders] {StatusText}");
+        }
+    }
+
     private void SetRunning(string statusText)
     {
         State = OrderRunState.Running;
@@ -318,7 +434,9 @@ public sealed class OrderRunner
     public IEnumerable<string> Describe()
     {
         yield return $"Orders {State} — {StatusText}";
-        yield return $"groupIndex {groupIndex}; startedCurrent {startedCurrent}; cycle {Cycle}; perpetual {Book.Perpetual}; started {(startedAt == DateTime.MinValue ? "-" : startedAt.ToString("HH:mm:ss") + "Z")}";
+        yield return $"groupIndex {groupIndex}; startedCurrent {startedCurrent}; hqPending {hqPending != null}; cycle {Cycle}; perpetual {Book.Perpetual}; started {(startedAt == DateTime.MinValue ? "-" : startedAt.ToString("HH:mm:ss") + "Z")}";
+        foreach (var line in HqPlanner.Describe())
+            yield return "  " + line;
 
         var groups = Book.Groups;
         for (var i = 0; i < groups.Count; i++)

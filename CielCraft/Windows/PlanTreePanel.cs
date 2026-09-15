@@ -74,7 +74,9 @@ public sealed class PlanTreePanel
         }
 
         ImGui.TextColored(UiTheme.Muted,
-            $"{plan.Targets.Count} target(s) · {plan.CraftSteps.Count} step(s), {current.TotalCrafts} craft(s) · {plan.RawMaterials.Count} raw material(s)"
+            $"{plan.Targets.Count} target(s) · {plan.CraftSteps.Count} step(s), {current.TotalCrafts} craft(s)"
+            + (current.TotalHqCrafts > 0 ? $" ({current.TotalHqCrafts} HQ intermediate)" : "")
+            + $" · {plan.RawMaterials.Count} raw material(s)"
             + (progress != null && plan.CraftSteps.Count > 0 ? $" · step {Math.Min(progress.CompletedSteps + 1, plan.CraftSteps.Count)}/{plan.CraftSteps.Count}" : ""));
         ImGui.Spacing();
 
