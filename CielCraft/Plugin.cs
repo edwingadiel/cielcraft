@@ -51,6 +51,9 @@ public sealed class Plugin : IDalamudPlugin
     public INavigationProvider Navigation { get; init; }
     /// <summary>The combat plugin that fights for a hunt (roadmap 7.5); none = hunting stays off.</summary>
     public Combat.CombatDriverSelector CombatDrivers { get; init; }
+    /// <summary>Monster drops (roadmap 7.5): the bundled drop table, remembered spots and the hunt source.</summary>
+    public CombatDatabase CombatDatabase { get; init; }
+    public Sourcing.CombatSource CombatSource { get; init; }
     public Gathering.GatheringController GatheringController { get; init; }
     public Gathering.GatheringLoop GatheringLoop { get; init; }
     public MaintenanceService Maintenance { get; init; }
@@ -146,8 +149,15 @@ public sealed class Plugin : IDalamudPlugin
         FishingSource = new Sourcing.FishingSource(
             GameBridge, FishingDatabase, FishingController, Log, SystemClock.Instance,
             baitVendor: VendorSource, zoneName: GatheringDatabase.GetTerritoryName);
-        // Gil before scrips, then the rod, retainers last: a node, a vendor or an exchange beats a bell trip.
-        var sources = new IMaterialSource[] { VendorSource, ExchangeSource, FishingSource, RetainerSource };
+        // Combat drops (7.5): opt-in, and nothing is offered without a combat plugin.
+        CombatDatabase = CombatDatabase.FromBundle(
+            PluginInterface.AssemblyLocation.DirectoryName, new SheetZoneDirectory(), Configuration, Log, SystemClock.Instance,
+            GameBridge.CanTeleportTo, () => GameBridge.CurrentTerritoryId, Configuration.Save);
+        CombatSource = new Sourcing.CombatSource(
+            CombatDatabase, () => CombatDrivers.Current, new Combat.HuntBridgeAdapter(GameBridge), Navigation, Configuration,
+            Log, SystemClock.Instance, () => Capabilities.Current, RecipeProvider.GetItemName);
+        // Gil before scrips, then the rod, retainers, and a fight last: every other source beats one.
+        var sources = new IMaterialSource[] { VendorSource, ExchangeSource, FishingSource, RetainerSource, CombatSource };
         Windows.PlanTreePanel.UseSources(sources);
         GatheringController = new Gathering.GatheringController(
             GameBridge, Navigation, Configuration, Log, SystemClock.Instance, () => Capabilities.Current, gatheringCatalog);

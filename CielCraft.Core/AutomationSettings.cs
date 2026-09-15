@@ -146,6 +146,17 @@ public class AutomationSettings
     /// place to correct a wrong pairing or add a fish the table does not know.
     /// </summary>
     public System.Collections.Generic.Dictionary<uint, FishingBaitChoice> FishingBait { get; set; } = new();
+
+    // ---- M4 package A: remembered hunt spots (roadmap 7.5) ----
+
+    /// <summary>
+    /// Where a monster was actually found and killed (roadmap 7.5). The
+    /// bundled drop table only knows the zone; a spot remembered in game —
+    /// by the hunt run when a fight succeeds, or by the Hunting panel's
+    /// "remember this spot" button — is the first place the next hunt goes,
+    /// which turns a zone sweep into a teleport and a short ride.
+    /// </summary>
+    public System.Collections.Generic.List<HuntSpot> HuntSpots { get; set; } = [];
 }
 
 /// <summary>
@@ -157,6 +168,34 @@ public sealed class FishingBaitChoice
     public uint BaitItemId { get; set; }
 
     public uint MoochFromItemId { get; set; }
+}
+
+/// <summary>
+/// One remembered monster location (roadmap 7.5). Plain mutable data with
+/// float components rather than a Vector3 so the configuration serializer
+/// round-trips it like every other settings type.
+/// </summary>
+[System.Serializable]
+public sealed class HuntSpot
+{
+    /// <summary>BNpcName row of the monster, which is how the object table is searched.</summary>
+    public uint BNpcNameId { get; set; }
+
+    public uint TerritoryId { get; set; }
+
+    public float X { get; set; }
+
+    public float Y { get; set; }
+
+    public float Z { get; set; }
+
+    /// <summary>When the spot was last confirmed; the most recent one wins when several are remembered.</summary>
+    public DateTime RememberedAtUtc { get; set; }
+
+    /// <summary>How often a hunt has found the monster here; ties between spots go to the better-used one.</summary>
+    public int Hits { get; set; } = 1;
+
+    public System.Numerics.Vector3 Position => new(X, Y, Z);
 }
 
 /// <summary>Which turn-ins the collectables planner prefers when several earn the scrips an order needs (roadmap 7.17).</summary>

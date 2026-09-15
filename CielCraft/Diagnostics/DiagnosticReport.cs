@@ -112,6 +112,9 @@ public static class DiagnosticReport
 
         Section(sb, "Combat driver (7.5)");
         Lines(sb, plugin.CombatDrivers.Describe);
+        Lines(sb, plugin.CombatSource.Describe);
+        if (plugin.CombatSource.CurrentRun is { } hunt)
+            Lines(sb, hunt.Describe);
 
         Section(sb, "Retainers and cleanup (7.17)");
         Lines(sb, plugin.RetainerDatabase.Describe);

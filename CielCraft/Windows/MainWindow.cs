@@ -141,7 +141,11 @@ public class MainWindow : Window, IDisposable
         spiritbond = new SpiritbondPanel(plugin);
         schedule = new SchedulePanel(plugin);
         inventory = new InventoryPanel(plugin, plugin.RetainerDatabase, plugin.InventoryKeeper);
-        hunting = new HuntPanel(plugin, plugin.CombatDrivers);
+        hunting = new HuntPanel(plugin, plugin.CombatDrivers)
+        {
+            Spots = plugin.CombatDatabase,
+            ActiveRun = () => plugin.CombatSource.CurrentRun, // the runner ticks it; the page only shows it
+        };
         setup = new SetupPanel(plugin, ShowPage);
         debug = new DebugPanel(plugin);
         settings = new SettingsPanel(plugin);

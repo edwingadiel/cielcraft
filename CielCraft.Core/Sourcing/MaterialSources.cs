@@ -17,6 +17,9 @@ public enum MaterialSourceKind
 
     /// <summary>A retainer's inventory or venture.</summary>
     Retainer,
+
+    /// <summary>A monster drop, fought with a combat plugin driving the rotation (roadmap 7.5).</summary>
+    Hunt,
 }
 
 /// <summary>
