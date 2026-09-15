@@ -129,7 +129,7 @@ public sealed class Plugin : IDalamudPlugin
         // Material sources beyond nodes (M3), asked in this order for what no node yields.
         VendorSource = new Sourcing.VendorSource(
             new ShopDatabase(GameBridge, NpcDatabase), NpcDatabase, NpcInteractor, GameBridge, Configuration,
-            Log, SystemClock.Instance, RecipeProvider.GetItemName);
+            Log, SystemClock.Instance, RecipeProvider.GetItemName, Configuration.Save);
         RetainerDatabase = new RetainerDatabase(GameBridge);
         RetainerSource = new Sourcing.RetainerSource(
             GameBridge, RetainerDatabase, Configuration, Log, SystemClock.Instance, NpcInteractor, RecipeProvider.GetItemName);

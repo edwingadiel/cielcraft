@@ -285,6 +285,17 @@ internal sealed class SettingsPanel
             v => { configuration.BuyWhenGatherable = v; Save(); },
             "Prefer the shop trip over the node for cheap materials; gil rules above still apply.");
 
+        if (configuration.AbsentVendorNpcs.Count > 0)
+        {
+            ImGui.TextDisabled($"{configuration.AbsentVendorNpcs.Count} vendor(s) skipped because nobody stood at their placement (seasonal merchants).");
+            ImGui.SameLine();
+            if (ImGui.SmallButton("Retry them"))
+            {
+                configuration.AbsentVendorNpcs.Clear();
+                Save();
+            }
+        }
+
         UiTheme.SectionHeader("Repairs (7.3a)");
         UiTheme.Toggle("Walk to a mender when there is no Dark Matter", configuration.MenderRepair,
             v => { configuration.MenderRepair = v; Save(); },

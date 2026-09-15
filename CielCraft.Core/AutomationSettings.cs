@@ -96,6 +96,14 @@ public class AutomationSettings
     /// <summary>Walk to a mender when self-repair finds no Dark Matter (roadmap 7.3a).</summary>
     public bool MenderRepair { get; set; } = true;
 
+    /// <summary>
+    /// Vendor NPCs (ENpcResident ids) that were not in the world when a trip
+    /// reached their placement — seasonal and event merchants the sheets list
+    /// all year (the "festive fisher", 2026-09-15). Never offered again; clear
+    /// the list to retry them.
+    /// </summary>
+    public System.Collections.Generic.List<uint> AbsentVendorNpcs { get; set; } = [];
+
     /// <summary>How the collectables-for-scrips planner picks turn-ins (roadmap 7.17).</summary>
     public ScripSourcePreference ScripSourcePreference { get; set; } = ScripSourcePreference.Cheapest;
 

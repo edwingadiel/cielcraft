@@ -91,6 +91,7 @@ public sealed class VendorSource : IMaterialSource, IRunBudget
     private readonly IGameBridge gameBridge;
     private readonly AutomationSettings settings;
     private readonly ILog log;
+    private readonly Action? persist; // saves the settings after a vendor is marked absent
     private readonly IClock clock;
     private readonly Func<uint, string> itemName;
 
@@ -105,8 +106,10 @@ public sealed class VendorSource : IMaterialSource, IRunBudget
         AutomationSettings settings,
         ILog log,
         IClock clock,
-        Func<uint, string>? itemName = null)
+        Func<uint, string>? itemName = null,
+        Action? persist = null)
     {
+        this.persist = persist;
         this.shops = shops;
         this.npcs = npcs;
         this.interactor = interactor;
@@ -194,6 +197,10 @@ public sealed class VendorSource : IMaterialSource, IRunBudget
     {
         foreach (var vendor in shops.FindVendors(itemId))
         {
+            // A merchant that was not there last time (seasonal) is skipped for good.
+            if (settings.AbsentVendorNpcs.Contains(vendor.NpcId))
+                continue;
+
             // FindVendors already ranks by reachability; the first entry that
             // is actually reachable is the one to use.
             if (VendorOrdering.IsReachable(vendor, gameBridge.CurrentTerritoryId, gameBridge.CanTeleportTo))
@@ -201,6 +208,17 @@ public sealed class VendorSource : IMaterialSource, IRunBudget
         }
 
         return null;
+    }
+
+    /// <summary>The trip reached the placement and found no such NPC: remember it so the next plan takes another vendor or another source.</summary>
+    public void MarkAbsent(ShopVendor vendor)
+    {
+        if (settings.AbsentVendorNpcs.Contains(vendor.NpcId))
+            return;
+
+        settings.AbsentVendorNpcs.Add(vendor.NpcId);
+        persist?.Invoke();
+        log.Warning($"[Vendor] {vendor.NpcName} ({vendor.ZoneName}) is not in the world; not offered again (Settings › Sourcing lists absent vendors).");
     }
 
     /// <summary>Booked when a run starts and corrected to the real spend when it ends.</summary>
@@ -436,6 +454,16 @@ public sealed class VendorRun : AutomationMachine<VendorRunState>, ISourceRun
                                 (menuScript ? "with the \"Purchase\" menu option." : "as a shop that opens directly."));
                     interactor.Stop();
                     StartInteraction(target);
+                    return;
+                }
+
+                // The placement is right but nobody stands there: a seasonal
+                // merchant. Remember it and let the next plan pick another
+                // vendor or another source.
+                if (interactor.FailureReason.Contains("is not in the object table", StringComparison.Ordinal))
+                {
+                    source.MarkAbsent(vendor!);
+                    Fail($"{vendor!.NpcName} is not in the world (a seasonal vendor?); it will not be offered again — run again for another source");
                     return;
                 }
 
