@@ -12,7 +12,7 @@ namespace CielCraft.Diagnostics;
 /// without access to dalamud.log. Thread-safe (solver callbacks log from a
 /// worker thread).
 /// </summary>
-public sealed class DiagnosticLog
+public sealed class DiagnosticLog : Core.ILog
 {
     public const int Capacity = 500;
     private static readonly TimeSpan TickErrorRepeatInterval = TimeSpan.FromSeconds(10);
