@@ -86,7 +86,7 @@ public sealed class Plugin : IDalamudPlugin
         SolverService = new SolverService(new CielCraft.Raphael.RaphaelSolver(), LoadSolutionCache(), Log);
         CraftAutomator = new CraftAutomator(
             GameBridge, CraftMonitor, ActionExecutor, Configuration, actionResolver, Log, SystemClock.Instance);
-        Maintenance = new MaintenanceService(GameBridge, Configuration, Log, SystemClock.Instance);
+        Maintenance = new MaintenanceService(GameBridge, Configuration, Log, SystemClock.Instance, RecipeProvider.GetItemName);
         BatchCrafter = new BatchCrafter(
             GameBridge, CraftMonitor, CraftAutomator, SolverService, RecipeProvider, Configuration, Maintenance,
             actionResolver, Log, SystemClock.Instance);
