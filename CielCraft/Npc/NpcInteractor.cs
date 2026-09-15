@@ -181,6 +181,16 @@ public sealed class NpcInteractor : AutomationMachine<NpcInteractionState>, INpc
         if (target == null)
             return;
 
+        // Telepo is refused while the crafting log is up ("Unable to execute
+        // command", seen 2026-09-15 when a vendor trip followed a craft):
+        // close it before casting, like the runner does for its own teleports.
+        if (gameBridge.IsPreparingToCraft || gameBridge.IsAddonVisible("RecipeNote"))
+        {
+            attempts.Try(gameBridge.CloseRecipeNote);
+            StatusText = $"Closing the crafting log before teleporting to {target.Name}.";
+            return;
+        }
+
         if (Clock.UtcNow - phaseStartedAt > TeleportTimeout)
         {
             Fail("the teleport did not complete (cast interrupted or loading took too long)");
