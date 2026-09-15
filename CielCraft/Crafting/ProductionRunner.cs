@@ -55,6 +55,7 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
     private int gatherIndex;
     private DateTime phaseStartedAt;
     private bool gearsetRequested;
+    private bool keepSavedOnIdle;     // a gentle stop leaves the run resumable
     private bool sawLoadingScreen;
     private System.Numerics.Vector3? areaDestination;
     private bool returnTeleport;      // Teleporting phase is the post-gather return to the aetheryte
@@ -72,6 +73,9 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
     private sealed record GatherTask(uint ItemId, int Amount, uint JobId, uint TerritoryId, System.Numerics.Vector2 AreaPosition, IReadOnlyList<EtWindow> Windows);
 
     public int CompletedSteps => stepIndex;
+
+    /// <summary>"Stop gently" (roadmap 7.20): finish the current step or gather task, then stop with the run left resumable.</summary>
+    public bool StopAfterStep { get; private set; }
     public int TotalSteps => plan?.CraftSteps.Count ?? 0;
 
     public ProductionRunner(
@@ -148,6 +152,7 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
 
         plan = productionPlan;
         stepIndex = 0;
+        StopAfterStep = false;
         initialTargetCount = gameBridge.GetItemCount(productionPlan.TargetItemId);
         initialHqCount = HqCountOfTarget();
         productionStartedAt = Clock.UtcNow;
@@ -209,8 +214,21 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         }
     }
 
+    /// <summary>Request a gentle stop; a second call cancels it. No-op unless a run is active.</summary>
+    public void StopGently()
+    {
+        if (State is ProductionState.Idle or ProductionState.Completed or ProductionState.Failed)
+            return;
+
+        StopAfterStep = !StopAfterStep;
+        Log.Information(StopAfterStep
+            ? "[Production] Will stop after the current step."
+            : "[Production] Gentle stop cancelled.");
+    }
+
     public void Stop()
     {
+        StopAfterStep = false;
         batchCrafter.Stop();
         gatheringLoop.Stop();
         travel.Stop();
@@ -495,6 +513,12 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
                 gatherIndex++;
                 areaDestination = null; // never reuse a previous task's area point
                 EnterPreparing();
+                if (StopAfterStep)
+                {
+                    StopGentlyNow($"after gather task {gatherIndex}/{gatherQueue.Count}");
+                    break;
+                }
+
                 if (gatherIndex >= gatherQueue.Count)
                     ReturnToAetheryteThenCraft();
                 else
@@ -716,6 +740,12 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         {
             case BatchState.Completed:
                 stepIndex++;
+                if (StopAfterStep && stepIndex < plan!.CraftSteps.Count)
+                {
+                    StopGentlyNow($"after step {stepIndex}/{TotalSteps}");
+                    break;
+                }
+
                 if (stepIndex >= plan!.CraftSteps.Count)
                 {
                     Transition(ProductionState.Completed, $"Completed all {TotalSteps} steps.");
@@ -865,11 +895,23 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
 
     private void Fail(string reason) => Transition(ProductionState.Failed, $"Failed: {reason}.");
 
+    /// <summary>The gentle stop lands here between steps: idle, but with the run saved as resumable.</summary>
+    private void StopGentlyNow(string where)
+    {
+        StopAfterStep = false;
+        keepSavedOnIdle = true;
+        Transition(ProductionState.Idle, $"Stopped gently {where}; Resume continues from here.");
+        notifier.Notify(NotificationKind.Completed, StatusText);
+    }
+
     /// <summary>Persist the run state on terminal transitions and tell the user about milestones (roadmap 6.5).</summary>
     protected override void OnTransitioned(ProductionState previous, ProductionState current)
     {
         if (current is ProductionState.Completed or ProductionState.Failed or ProductionState.Idle)
-            SaveProgress(active: false);
+        {
+            SaveProgress(active: current == ProductionState.Idle && keepSavedOnIdle);
+            keepSavedOnIdle = false;
+        }
 
         if (previous == current || !configuration.ChatNotifications)
             return;
@@ -877,11 +919,11 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         switch (current)
         {
             case ProductionState.Completed when plan != null:
-                notifier.Print(BuildSummary());
+                notifier.Notify(NotificationKind.Completed, BuildSummary());
                 break;
             case ProductionState.Failed:
             case ProductionState.Paused:
-                notifier.Print(StatusText);
+                notifier.Notify(NotificationKind.Attention, StatusText);
                 break;
         }
     }

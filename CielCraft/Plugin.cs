@@ -69,12 +69,12 @@ public sealed class Plugin : IDalamudPlugin
     {
         Log = new Diagnostics.DiagnosticLog(PluginLog);
         Driver = new Infrastructure.FrameworkDriver(Framework);
-        Notifier = new Infrastructure.ChatNotifier(ChatGui);
         // Dalamud loads plugin assemblies from memory, so the native solver can't find itself
         // via Assembly.Location; point it at the on-disk plugin folder instead.
         CielCraft.Raphael.RaphaelSolver.LibraryDirectory = PluginInterface.AssemblyLocation.DirectoryName;
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         GameBridge = new DalamudGameBridge();
+        Notifier = new Infrastructure.ChatNotifier(ChatGui, Configuration, GameBridge, Log);
         RecipeProvider = new DalamudRecipeProvider(
             () => GameBridge.CurrentClassJobId, jobId => GameBridge.HasGearsetForJob(jobId), () => Capabilities.Current);
         GatheringDatabase = new GatheringDatabase(() => Capabilities.Current);
@@ -139,6 +139,7 @@ public sealed class Plugin : IDalamudPlugin
         ActionExecutor.Dispose();
         CraftMonitor.Dispose();
         Driver.Dispose();
+        Notifier.Dispose();
 
         ConfigWindow.Dispose();
         MainWindow.Dispose();

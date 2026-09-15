@@ -622,6 +622,35 @@ public sealed class DalamudGameBridge : IGameBridge
         actionManager->UseAction(FFXIVClientStructs.FFXIV.Client.Game.ActionType.GeneralAction, 6);
     }
 
+    public unsafe bool PlaySoundEffect(int soundEffectNumber)
+    {
+        if (soundEffectNumber is < 1 or > 16)
+            return false;
+
+        // The sound function hangs off any addon; the chat log is up whenever
+        // a character is logged in. <se.N> is system sound id 36 + N.
+        var ptr = Plugin.GameGui.GetAddonByName("ChatLog");
+        if (ptr.IsNull)
+            return false;
+
+        ((FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)ptr.Address)->PlaySoundEffect(36 + soundEffectNumber);
+        return true;
+    }
+
+    public unsafe void ExecuteChatCommand(string command)
+    {
+        var uiModule = FFXIVClientStructs.FFXIV.Client.System.Framework.Framework.Instance()->GetUIModule();
+        var text = FFXIVClientStructs.FFXIV.Client.System.String.Utf8String.FromString(command);
+        try
+        {
+            uiModule->GetRaptureShellModule()->ExecuteCommandInner(text, uiModule);
+        }
+        finally
+        {
+            text->Dtor(true);
+        }
+    }
+
     public bool IsAddonVisible(string addonName)
     {
         var ptr = Plugin.GameGui.GetAddonByName(addonName);

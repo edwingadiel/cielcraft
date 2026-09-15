@@ -52,6 +52,7 @@ public sealed class TravelDriver
     private readonly ILog log;
     private readonly string logPrefix;
     private readonly Throttle attempts;
+    private readonly Random random;
 
     private Vector3 destination;
     private float arriveWithin;
@@ -64,8 +65,9 @@ public sealed class TravelDriver
     private bool flyBlocked;
     private string what = "";
 
-    public TravelDriver(INavigationProvider navigation, ITravelBridge bridge, IClock clock, ILog log, string logPrefix)
+    public TravelDriver(INavigationProvider navigation, ITravelBridge bridge, IClock clock, ILog log, string logPrefix, Random? random = null)
     {
+        this.random = random ?? Random.Shared;
         this.navigation = navigation;
         this.bridge = bridge;
         this.clock = clock;
@@ -179,7 +181,7 @@ public sealed class TravelDriver
             flyAttempted = fly;
             if (fly && precise)
             {
-                var landing = navigation.FindPointOnFloor(destination, LandingRange) ?? destination;
+                var landing = navigation.FindPointOnFloor(RandomLandingSpot(), LandingRange) ?? destination;
                 navigation.MoveCloseTo(landing, 3f, fly: true);
             }
             else if (fly)
@@ -193,6 +195,18 @@ public sealed class TravelDriver
 
             StatusText = $"Moving to {what} ({distance:F0}y away{(fly ? ", flying" : "")}).";
         });
+    }
+
+    /// <summary>
+    /// A different spot around the target each time (roadmap 7.20): several
+    /// characters landing on the exact node coordinate look like bots, and
+    /// the walk-up leg makes the last stretch precise anyway.
+    /// </summary>
+    internal Vector3 RandomLandingSpot()
+    {
+        var angle = random.NextDouble() * Math.PI * 2;
+        var radius = LandingRange * (0.4 + 0.6 * random.NextDouble());
+        return destination + new Vector3((float)(Math.Cos(angle) * radius), 0f, (float)(Math.Sin(angle) * radius));
     }
 
     private void Fail(string reason)

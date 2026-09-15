@@ -39,6 +39,18 @@ public class Configuration : IPluginConfiguration
     /// <summary>Print production milestones (completed/paused/failed) to the game chat.</summary>
     public bool ChatNotifications { get; set; } = true;
 
+    /// <summary>In-game sound effect (&lt;se.1&gt;..&lt;se.16&gt;) on completion or a stop that needs the user; 0 = off (roadmap 7.20).</summary>
+    public int AlertSoundEffect { get; set; } = 0;
+
+    /// <summary>Read completion/attention notifications aloud through Windows speech (roadmap 7.20).</summary>
+    public bool SpeakAlerts { get; set; } = false;
+
+    /// <summary>Exit the game once the last production (and the queue) completes (roadmap 7.20).</summary>
+    public bool ExitGameWhenDone { get; set; } = false;
+
+    /// <summary>The first-run setup checklist was dismissed (roadmap 7.20).</summary>
+    public bool SetupCompleted { get; set; } = false;
+
     /// <summary>Fill HQ materials into the synthesis automatically before each craft.</summary>
     public bool PreferHqMaterials { get; set; } = true;
 

@@ -148,6 +148,12 @@ public interface IGameBridge : ITravelBridge
     /// <summary>Opens the self-repair window (general action).</summary>
     void OpenRepairWindow();
 
+    /// <summary>Plays an in-game system sound effect (&lt;se.N&gt;, 1..16). False when nothing could play it.</summary>
+    bool PlaySoundEffect(int soundEffectNumber);
+
+    /// <summary>Runs a text command ("/shutdown") as if typed into the chat box.</summary>
+    void ExecuteChatCommand(string command);
+
     bool IsAddonVisible(string addonName);
 
     /// <summary>Fires an integer callback on a visible addon. False when it is not open.</summary>
