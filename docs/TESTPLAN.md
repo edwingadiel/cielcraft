@@ -232,6 +232,53 @@ run nothing exits. Watch: the log has `[Finish] Exiting the game in 5s` then
 Expect: each landing is a few yards to a different side of the node, never
 on top of it, and the walk-up still opens the node.
 
+## J. Orders (roadmap 7.13)
+
+**J1. Migration** — With items still in the old queue, reload the plugin.
+Expect: they appear as a group named `Queue` in the Orders panel (Absolute /
+Any), the old queue is gone, and the report's saved-production line still
+reads.
+
+**J2. Group planned together** — One group: `Cobalt Tungsten Ingot ×2` and
+another recipe that also uses a Tungsten-based intermediate (or any two items
+sharing a sub-craft). Click **Preview**.
+Expect: the shared intermediate appears once with the summed craft count;
+raw materials are summed; each order shows its planned quantity.
+
+**J3. Restock** — Order `Iron Ingot`, amount mode **Restock**, amount = (owned + 2).
+Expect: Preview shows planned 2. Set amount ≤ owned: the order reads
+`already stocked` and the group is skipped when run. Run orders: exactly 2
+are crafted and the run completes.
+
+**J4. Materials only** — Order an item with two craftable intermediates,
+tick **Materials only**, Run orders.
+Expect: the intermediates are crafted (and missing raws gathered), the final
+item is never crafted, and the summary says so.
+
+**J5. Force HQ** — Order ×2 of a recipe the character can HQ reliably, mode
+**Force HQ**, with enough materials for at least four crafts.
+Expect: every craft solves at 100 %; an NQ result is logged as not counting
+and the batch keeps going until the HQ count has risen by 2; the run stops
+with a clear message if materials run out first.
+
+**J6. Quick synth mode** — Order ×3 of an intermediate the character has
+crafted before, mode **Quick synth**.
+Expect: the final step quick-synthesizes (no rotation), three items result.
+Repeat with a never-crafted recipe: it falls back to a normal craft.
+
+**J7. Groups in sequence, hold, perpetual** — Two groups (small orders). Run
+orders; click **Hold** during group 1.
+Expect: group 1 finishes, group 2 does not start, status says held; **Run
+orders** again starts group 2. Tick **Perpetual** with a Restock order that
+is already stocked: after the last group the book restarts, logs the cycle,
+finds nothing to do and idles (no craft loop).
+
+**J8. Import / export** — Export JSON to the clipboard, delete a group,
+import JSON (append) → the group is back. Paste a Teamcraft "copy as text"
+list (with Final items / Items / Crystals sections) and import.
+Expect: one new group with the final items as orders; unresolved names
+listed in red and skipped.
+
 ---
 
 ## What to paste
