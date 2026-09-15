@@ -15,6 +15,15 @@
     <ProjectReference Include="../CielCraft.Raphael/CielCraft.Raphael.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!--
+      MaintenanceService and the bridge interface depend only on Core, so they
+      compile straight into the tests (roadmap 7.2 MaintenanceTests) without
+      a reference to the Dalamud-bound plugin project.
+    -->
+    <Compile Include="../CielCraft/Game/IGameBridge.cs" Link="Seams/IGameBridge.cs" />
+    <Compile Include="../CielCraft/Game/MaintenanceService.cs" Link="Seams/MaintenanceService.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- Host-platform native solver, if built locally (cargo release build in native/cielcraft-raphael). -->
     <None Include="../native/cielcraft-raphael/target/release/cielcraft_raphael.dll"
           Condition="Exists('../native/cielcraft-raphael/target/release/cielcraft_raphael.dll')"

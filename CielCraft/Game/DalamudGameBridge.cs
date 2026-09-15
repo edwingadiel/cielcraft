@@ -955,6 +955,144 @@ public sealed class DalamudGameBridge : IGameBridge
         return true;
     }
 
+    // ---- Materia extraction (roadmap 7.2) ----
+
+    public unsafe IReadOnlyList<EquippedSpiritbond> GetEquipmentSpiritbond()
+    {
+        var inventory = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+        if (inventory == null)
+            return [];
+
+        var container = inventory->GetInventoryContainer(
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.EquippedItems);
+        if (container == null)
+            return [];
+
+        var result = new List<EquippedSpiritbond>();
+        for (var i = 0; i < container->Size; i++)
+        {
+            var item = container->GetInventorySlot(i);
+            if (item == null || item->ItemId == 0)
+                continue;
+
+            // The same field carries collectability on collectables; equipped
+            // gear only ever holds spiritbond (0..10000 = 0..100%).
+            result.Add(new EquippedSpiritbond(i, item->ItemId, item->GetSpiritbondOrCollectability()));
+        }
+
+        return result;
+    }
+
+    public IReadOnlyList<int> GetSpiritbondReadySlots()
+    {
+        var ready = new List<int>();
+        foreach (var piece in GetEquipmentSpiritbond())
+        {
+            if (piece.IsFull)
+                ready.Add(piece.Slot);
+        }
+
+        return ready;
+    }
+
+    private uint? materiaExtractionActionId;
+
+    /// <summary>
+    /// GeneralAction row of "Materia Extraction", resolved by name once (the
+    /// sheet says 14; Repair above is row 6). 0 when the name is not found.
+    /// </summary>
+    private uint MateriaExtractionActionId
+    {
+        get
+        {
+            if (materiaExtractionActionId is { } cached)
+                return cached;
+
+            uint found = 0;
+            foreach (var row in Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.GeneralAction>())
+            {
+                if (row.Name.ExtractText() == "Materia Extraction")
+                {
+                    found = row.RowId;
+                    break;
+                }
+            }
+
+            if (found == 0)
+                Plugin.Log.Warning("[Maintenance] General action \"Materia Extraction\" not found in the GeneralAction sheet.");
+            materiaExtractionActionId = found;
+            return found;
+        }
+    }
+
+    public unsafe bool OpenMaterialize()
+    {
+        var id = MateriaExtractionActionId;
+        var actionManager = FFXIVClientStructs.FFXIV.Client.Game.ActionManager.Instance();
+        if (id == 0 || actionManager == null)
+            return false;
+
+        actionManager->UseAction(FFXIVClientStructs.FFXIV.Client.Game.ActionType.GeneralAction, id);
+        return true;
+    }
+
+    public unsafe bool ExtractMateria(int slot)
+    {
+        var ptr = Plugin.GameGui.GetAddonByName("Materialize");
+        if (ptr.IsNull || !ptr.IsVisible)
+            return false;
+
+        // The row-select command Artisan fires on the Materialize list:
+        // (2, index). The index is taken as the equipment slot; the
+        // maintenance phase verifies the outcome by the spiritbond dropping.
+        var addon = (FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)ptr.Address;
+        var values = stackalloc FFXIVClientStructs.FFXIV.Component.GUI.AtkValue[2];
+        values[0].Type = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int;
+        values[0].Int = 2;
+        values[1].Type = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.UInt;
+        values[1].UInt = (uint)System.Math.Max(0, slot);
+        addon->FireCallback(2, values, false);
+        return true;
+    }
+
+    private bool confirmMaterializeByButton;
+
+    public unsafe bool ConfirmMaterializeDialog()
+    {
+        var ptr = Plugin.GameGui.GetAddonByName("MaterializeDialog");
+        if (ptr.IsNull || !ptr.IsVisible)
+            return false;
+
+        // Two known ways to say Yes: the dialog's callback 0 (older Artisan)
+        // and its YesButton (ECommons' AddonMaster; the button field is in the
+        // installed ClientStructs). Alternate between them on retries so a
+        // wrong guess costs one retry interval, not the whole phase.
+        var addon = (FFXIVClientStructs.FFXIV.Client.UI.AddonMaterializeDialog*)ptr.Address;
+        confirmMaterializeByButton = !confirmMaterializeByButton;
+        if (confirmMaterializeByButton && addon->YesButton != null && addon->YesButton->IsEnabled)
+            return ReplayButtonClick(&addon->AtkUnitBase, addon->YesButton);
+
+        addon->AtkUnitBase.FireCallbackInt(0);
+        return true;
+    }
+
+    // No ConditionFlag names the extraction; Artisan treats Occupied39 as
+    // "extracting materia" and that is what the wait phase keys off.
+    public bool IsMaterializing => Plugin.Condition[ConditionFlag.Occupied39];
+
+    public unsafe void CloseMaterialize()
+    {
+        var dialog = Plugin.GameGui.GetAddonByName("MaterializeDialog");
+        if (!dialog.IsNull && dialog.IsVisible)
+        {
+            var addon = (FFXIVClientStructs.FFXIV.Client.UI.AddonMaterializeDialog*)dialog.Address;
+            if (addon->NoButton == null || !ReplayButtonClick(&addon->AtkUnitBase, addon->NoButton))
+                addon->AtkUnitBase.FireCallbackInt(-1);
+        }
+
+        FireAddonCallbackInt("Materialize", -1);
+    }
+
     /// <summary>Per-slot required / NQ / HQ selection of the selected recipe, for reports about "did not become ready".</summary>
     private unsafe string DescribeIngredientAssignment()
     {

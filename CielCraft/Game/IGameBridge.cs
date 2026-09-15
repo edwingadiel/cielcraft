@@ -193,4 +193,37 @@ public interface IGameBridge : ITravelBridge
 
     /// <summary>Every ingredient of the selected recipe has NQ+HQ assigned up to its required amount.</summary>
     bool AreIngredientsAssigned();
+
+    // ---- Materia extraction (roadmap 7.2) ----
+
+    /// <summary>Spiritbond of every equipped piece (0..10000 = 0..100%), by equipment slot; empty slots omitted.</summary>
+    IReadOnlyList<EquippedSpiritbond> GetEquipmentSpiritbond();
+
+    /// <summary>Equipment slots whose piece is at 100% spiritbond, in slot order; empty when none.</summary>
+    IReadOnlyList<int> GetSpiritbondReadySlots();
+
+    /// <summary>Opens the Materialize window (general action "Materia Extraction"). False when the action is unknown to the sheets.</summary>
+    bool OpenMaterialize();
+
+    /// <summary>Selects the equipment slot's row in the open Materialize window, which raises MaterializeDialog. False when the window is not open.</summary>
+    bool ExtractMateria(int slot);
+
+    /// <summary>Presses Yes on the open MaterializeDialog. False when it is not open.</summary>
+    bool ConfirmMaterializeDialog();
+
+    /// <summary>The extraction is playing out (the character is occupied by it).</summary>
+    bool IsMaterializing { get; }
+
+    /// <summary>Dismisses MaterializeDialog (No) and the Materialize window, whichever are open.</summary>
+    void CloseMaterialize();
+}
+
+/// <summary>One equipped piece's spiritbond (roadmap 7.2): the equipment slot, the item and 0..10000.</summary>
+public sealed record EquippedSpiritbond(int Slot, uint ItemId, int Spiritbond)
+{
+    public const int Full = 10000;
+
+    public bool IsFull => Spiritbond >= Full;
+
+    public float Percent => Spiritbond / 100f;
 }
