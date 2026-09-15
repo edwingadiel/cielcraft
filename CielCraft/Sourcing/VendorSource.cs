@@ -435,8 +435,13 @@ public sealed class VendorRun : AutomationMachine<VendorRunState>, ISourceRun
     private void StartInteraction(NpcTarget target)
     {
         phaseStartedAt = Clock.UtcNow;
+        // A merchant with several shops lists them by their GilShop names
+        // ("Purchase Fishing Tackle", "Purchase Disciple of the Hand Tools" —
+        // Syneyhil, 2026-09-15): pick the one that sells the item, not the
+        // first "Purchase" entry.
+        var option = string.IsNullOrWhiteSpace(vendor!.ShopName) ? "Purchase" : vendor.ShopName;
         var script = menuScript
-            ? (IReadOnlyList<DialogStep>)[new SelectOption("Purchase"), new WaitForAddon("Shop")]
+            ? (IReadOnlyList<DialogStep>)[new SelectOption(option), new WaitForAddon("Shop")]
             : [new WaitForAddon("Shop")];
         if (!interactor.Start(target, script, $"buy {offer.Amount}× {itemName(offer.ItemId)} from {vendor!.NpcName}"))
         {
