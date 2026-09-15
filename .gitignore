@@ -14,3 +14,6 @@ Thumbs.db
 
 # Rust build output
 native/cielcraft-raphael/target/
+
+# Claude Code session files and agent worktrees
+.claude/

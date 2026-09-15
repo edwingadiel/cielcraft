@@ -142,7 +142,7 @@ against inventory, pause with a reason.
   spot); 2.0 should let the user pick where crafting happens (estate hall,
   apartment, inn room) and teleport there before the first craft step.
 
-- [ ] 7.7 Solution cache (S) — the solver runs on every craft even when the
+- [x] 7.7 Solution cache (S) — done 2026-09-15 (M0); — the solver runs on every craft even when the
   same recipe repeats with the same stats, buffs and initial quality. Key a
   cache on the full CraftSetup + CraftObjective (stats, CP, food, specialist
   flags, target/initial quality) and reuse the action list within a batch and
