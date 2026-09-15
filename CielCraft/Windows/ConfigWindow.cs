@@ -53,6 +53,13 @@ public class ConfigWindow : Window, IDisposable
 
         ImGui.TextDisabled("Bulk-produce intermediate materials with quick synthesis\n(much faster; intermediates come out normal quality).");
 
+        if (ImGui.Button("Clear solution cache"))
+            plugin.SolverService.ClearCache();
+
+        ImGui.SameLine(0, 10);
+        ImGui.TextDisabled($"{plugin.SolverService.Cache.Count} cached rotations");
+        ImGui.TextDisabled("Solved rotations are reused when a recipe repeats with the same\nstats; clearing forces a fresh solve for every craft.");
+
         UiTheme.SectionHeader("Gathering");
         var buffs = configuration.UseGatheringBuffs;
         if (ImGui.Checkbox("Gathering yield/integrity actions", ref buffs))

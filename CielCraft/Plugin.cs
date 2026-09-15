@@ -70,7 +70,7 @@ public sealed class Plugin : IDalamudPlugin
             () => GameBridge.CurrentClassJobId, jobId => GameBridge.HasGearsetForJob(jobId));
         CraftMonitor = new CraftStateMonitor(GameBridge);
         ActionExecutor = new ActionExecutor(GameBridge, CraftMonitor);
-        SolverService = new SolverService(new CielCraft.Raphael.RaphaelSolver());
+        SolverService = new SolverService(new CielCraft.Raphael.RaphaelSolver(), LoadSolutionCache());
         CraftAutomator = new CraftAutomator(GameBridge, CraftMonitor, ActionExecutor, Configuration);
         Maintenance = new MaintenanceService(GameBridge, Configuration);
         BatchCrafter = new BatchCrafter(
@@ -226,6 +226,30 @@ public sealed class Plugin : IDalamudPlugin
             + (path != null ? $" and saved to {path}" : "") + ".",
             "CielCraft");
         return report;
+    }
+
+    /// <summary>
+    /// Cached rotations live next to the config (roadmap 7.7), tagged with the
+    /// plugin version so a newer solver starts fresh. An unreadable file only
+    /// costs a re-solve, so it is logged and skipped.
+    /// </summary>
+    private static SolutionCache LoadSolutionCache()
+    {
+        var version = typeof(Plugin).Assembly.GetName().Version?.ToString() ?? "unknown";
+        var path = System.IO.Path.Combine(PluginInterface.GetPluginConfigDirectory(), "solutions.json");
+        var cache = new SolutionCache(version, path);
+        try
+        {
+            var loaded = cache.Load();
+            if (loaded > 0)
+                Log.Information($"[Raphael] Loaded {loaded} cached rotations.");
+        }
+        catch (Exception e)
+        {
+            Log.Warning($"[Raphael] Could not load the solution cache ({e.Message}); starting empty.");
+        }
+
+        return cache;
     }
 
     private void OnLogin()
