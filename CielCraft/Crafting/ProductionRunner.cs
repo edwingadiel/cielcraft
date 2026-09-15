@@ -167,7 +167,10 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
     public int CompletedSteps => stepIndex;
 
     /// <summary>Whether MIN/BTN can gather the item, per the node data; what the order planner needs for gather orders (7.1).</summary>
-    public bool IsGatherable(uint itemId) => gatheringDatabase.GetGatheringJob(itemId) != null;
+    public bool IsGatherable(uint itemId) => gatheringDatabase.GetGatheringJob(itemId) != null || ExtraGatherable?.Invoke(itemId) == true;
+
+    /// <summary>Items a source other than a node "gathers" for a Gather order (fish, 7.4); set by the plugin.</summary>
+    public Func<uint, bool>? ExtraGatherable { get; set; }
 
     /// <summary>"Stop gently" (roadmap 7.20): finish the current step or gather task, then stop with the run left resumable.</summary>
     public bool StopAfterStep { get; private set; }

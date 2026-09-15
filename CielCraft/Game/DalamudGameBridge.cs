@@ -2071,4 +2071,89 @@ public sealed class DalamudGameBridge : IGameBridge
 
         return -1;
     }
+
+    // ---- Fishing (7.4) ----
+
+    /// <summary>
+    /// The game's fishing event handler, or null when it is not up. Path read
+    /// from the installed ClientStructs on 2026-09-15:
+    /// <c>EventFramework.Instance()->EventHandlerModule.FishingEventHandler</c>.
+    /// </summary>
+    private static unsafe FFXIVClientStructs.FFXIV.Client.Game.Event.FishingEventHandler* GetFishingHandler()
+    {
+        var framework = FFXIVClientStructs.FFXIV.Client.Game.Event.EventFramework.Instance();
+        return framework == null ? null : framework->EventHandlerModule.FishingEventHandler;
+    }
+
+    public unsafe FishingSnapshot? GetFishingState()
+    {
+        var handler = GetFishingHandler();
+        if (handler == null)
+            return null;
+
+        var bait = FFXIVClientStructs.FFXIV.Client.Game.UI.PlayerState.Instance();
+        return new FishingSnapshot(
+            PhaseOf(handler->State),
+            handler->CanFish,
+            handler->CanMoochPreviousCatch,
+            handler->CanMooch2PreviousCatch,
+            bait == null ? 0 : bait->FishingBait,
+            // The tug ("!", "!!", "!!!") is not stored on any struct in the
+            // installed ClientStructs — FishingHookStrength is a bare enum with
+            // no field referencing it — so it can only be observed by hooking
+            // the bite event, as AutoHook does. Unknown means "plain Hook".
+            FishingTug.Unknown);
+    }
+
+    private static FishingPhase PhaseOf(FFXIVClientStructs.FFXIV.Client.Game.Event.FishingState state) => state switch
+    {
+        FFXIVClientStructs.FFXIV.Client.Game.Event.FishingState.None => FishingPhase.None,
+        FFXIVClientStructs.FFXIV.Client.Game.Event.FishingState.CastingOut => FishingPhase.CastingOut,
+        FFXIVClientStructs.FFXIV.Client.Game.Event.FishingState.PullingPoleIn => FishingPhase.PullingPoleIn,
+        FFXIVClientStructs.FFXIV.Client.Game.Event.FishingState.Quitting => FishingPhase.Quitting,
+        FFXIVClientStructs.FFXIV.Client.Game.Event.FishingState.PoleReady => FishingPhase.PoleReady,
+        FFXIVClientStructs.FFXIV.Client.Game.Event.FishingState.Bite => FishingPhase.Bite,
+        FFXIVClientStructs.FFXIV.Client.Game.Event.FishingState.Hooking => FishingPhase.Hooking,
+        FFXIVClientStructs.FFXIV.Client.Game.Event.FishingState.ReleasingCatch => FishingPhase.ReleasingCatch,
+        FFXIVClientStructs.FFXIV.Client.Game.Event.FishingState.ConfirmingCollectable => FishingPhase.ConfirmingCollectable,
+        FFXIVClientStructs.FFXIV.Client.Game.Event.FishingState.AmbitiousLure => FishingPhase.Lure,
+        FFXIVClientStructs.FFXIV.Client.Game.Event.FishingState.ModestLure => FishingPhase.Lure,
+        FFXIVClientStructs.FFXIV.Client.Game.Event.FishingState.LineInWater => FishingPhase.LineInWater,
+        _ => FishingPhase.Unknown,
+    };
+
+    public bool IsFishing => Plugin.Condition[ConditionFlag.Fishing];
+
+    public unsafe bool SelectBait(uint baitItemId)
+    {
+        if (baitItemId == 0)
+            return false;
+
+        var handler = GetFishingHandler();
+        if (handler == null)
+        {
+            // The fishing event handler is only created once the character has
+            // fished this session; until then, using the bait item from the bag
+            // is the same thing the Fishing Log's "Apply" does.
+            return UseItem(baitItemId);
+        }
+
+        // ChangeBait takes the bait's item id (ClientStructs doc comment).
+        handler->ChangeBait((int)baitItemId);
+        return true;
+    }
+
+    public unsafe float GetMainHandConditionPercent()
+    {
+        var inventory = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+        var container = inventory == null
+            ? null
+            : inventory->GetInventoryContainer(FFXIVClientStructs.FFXIV.Client.Game.InventoryType.EquippedItems);
+        if (container == null || container->Size == 0)
+            return 100f;
+
+        // Slot 0 of EquippedItems is the main hand (the rod).
+        var item = container->GetInventorySlot(0);
+        return item == null || item->ItemId == 0 ? 100f : item->Condition / 300f;
+    }
 }

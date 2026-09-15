@@ -106,6 +106,10 @@ public static class DiagnosticReport
         Section(sb, "Exchanges (7.17)");
         Lines(sb, plugin.ExchangeDatabase.Describe);
 
+        Section(sb, "Fishing (7.4)");
+        Lines(sb, plugin.FishingController.Describe);
+        Lines(sb, plugin.FishingDatabase.Describe);
+
         Section(sb, "Retainers and cleanup (7.17)");
         Lines(sb, plugin.RetainerDatabase.Describe);
         Lines(sb, plugin.RetainerSource.Describe);

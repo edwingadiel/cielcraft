@@ -63,6 +63,10 @@ public sealed class Plugin : IDalamudPlugin
     /// <summary>Scrip / tomestone / Grand Company exchanges as a material source (roadmap 7.17).</summary>
     public Sourcing.ExchangeSource ExchangeSource { get; init; }
     public ExchangeDatabase ExchangeDatabase { get; init; }
+    /// <summary>Fishing (roadmap 7.4): spots, bait and the rod loop; a material source for fish.</summary>
+    public FishingDatabase FishingDatabase { get; init; }
+    public Fishing.FishingController FishingController { get; init; }
+    public Sourcing.FishingSource FishingSource { get; init; }
     public RetainerDatabase RetainerDatabase { get; init; }
     /// <summary>Storage rules, desynthesis and trash cleanup after a run (roadmap 7.17).</summary>
     public Sourcing.InventoryKeeper InventoryKeeper { get; init; }
@@ -127,8 +131,17 @@ public sealed class Plugin : IDalamudPlugin
         ExchangeSource = new Sourcing.ExchangeSource(
             ExchangeDatabase, GameBridge, NpcInteractor, NpcDatabase, () => Configuration, () => Capabilities.Current,
             Log, SystemClock.Instance, tickNpc: true); // the driver does not tick the interactor; each run does
-        // Gil before scrips, retainers last: a node, a vendor or an exchange beats a bell trip.
-        var sources = new IMaterialSource[] { VendorSource, ExchangeSource, RetainerSource };
+        FishingDatabase = new FishingDatabase(
+            new FishingSheetReader(), () => Capabilities.Current, GameBridge.CanTeleportTo, Configuration.FishingBait);
+        FishingController = new Fishing.FishingController(
+            GameBridge, Navigation, Configuration, FishingDatabase, Log, SystemClock.Instance,
+            FishingSheetReader.CreateActionCatalog(Log), new Fishing.AutoHookIpc(), () => Capabilities.Current,
+            GatheringDatabase.GetTerritoryName, gatheringCatalog.Cordials);
+        FishingSource = new Sourcing.FishingSource(
+            GameBridge, FishingDatabase, FishingController, Log, SystemClock.Instance,
+            baitVendor: VendorSource, zoneName: GatheringDatabase.GetTerritoryName);
+        // Gil before scrips, then the rod, retainers last: a node, a vendor or an exchange beats a bell trip.
+        var sources = new IMaterialSource[] { VendorSource, ExchangeSource, FishingSource, RetainerSource };
         Windows.PlanTreePanel.UseSources(sources);
         // Gathering action ids resolved by name from the Action sheet (7.14); one catalogue for the controller, the loop and the settings page.
         var gatheringCatalog = new Gathering.GatheringActionCatalog(Log);
@@ -140,7 +153,10 @@ public sealed class Plugin : IDalamudPlugin
             () => Capabilities.Current, gatheringCatalog);
         ProductionRunner = new ProductionRunner(
             GameBridge, BatchCrafter, RecipeProvider, GatheringLoop, GatheringDatabase, Maintenance, Navigation, Configuration,
-            Capabilities, Log, SystemClock.Instance, Notifier, sources);
+            Capabilities, Log, SystemClock.Instance, Notifier, sources)
+        {
+            ExtraGatherable = FishingDatabase.IsFish, // a Gather order for a fish plans (7.4); the rod is a source
+        };
         SocialGuard = new Social.SocialGuard(this, GameBridge, Configuration);
         OrderRunner = new OrderRunner(
             ProductionRunner, RecipeProvider, GameBridge, Configuration, () => Capabilities.Current, Notifier, Log, SystemClock.Instance,

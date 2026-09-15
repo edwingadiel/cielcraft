@@ -582,6 +582,12 @@ public class ScripPlannerTests
         private static NotImplementedException Unexpected() => new("the exchange must not touch this");
 
         // ---- stubs for members other packages added (merge) ----
+        public FishingSnapshot? GetFishingState() => throw Unexpected();
+        public float GetMainHandConditionPercent() => throw Unexpected();
+        public bool IsFishing => throw Unexpected();
+        public bool SelectBait(uint baitItemId) => throw Unexpected();
+
+        // ---- stubs for members other packages added (merge) ----
         public bool AdvanceTalk() => throw Unexpected();
         public bool AssignVenture(uint ventureTaskId) => throw Unexpected();
         public bool BuyFromShop(uint itemId, int count) => throw Unexpected();

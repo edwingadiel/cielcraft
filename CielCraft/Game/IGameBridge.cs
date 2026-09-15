@@ -372,7 +372,92 @@ public interface IGameBridge : ITravelBridge
 
     /// <summary>Closes the CollectablesShop window if it is open.</summary>
     void CloseCollectablesShop();
+    // ---- Fishing (7.4) ----
+
+    /// <summary>
+    /// Live fishing state from the game's fishing event handler
+    /// (FFXIVClientStructs <c>EventFramework.EventHandlerModule.FishingEventHandler</c>);
+    /// null when the handler is not up (not logged in, not a fisher).
+    /// </summary>
+    FishingSnapshot? GetFishingState();
+
+    /// <summary>The fishing condition is set (the line is out or the pole is ready).</summary>
+    bool IsFishing { get; }
+
+    /// <summary>
+    /// Applies a bait by item id (<c>FishingEventHandler.ChangeBait</c>). True
+    /// when the request was issued; the caller verifies with
+    /// <see cref="FishingSnapshot.BaitItemId"/>.
+    /// </summary>
+    bool SelectBait(uint baitItemId);
+
+    /// <summary>Condition of the equipped main hand (the rod), 0-100; 100 when nothing is equipped.</summary>
+    float GetMainHandConditionPercent();
 }
+
+/// <summary>
+/// The game's fishing phases (ClientStructs <c>FishingState</c>, read
+/// 2026-09-15). <see cref="Unknown"/> covers values a future patch adds.
+/// </summary>
+public enum FishingPhase
+{
+    None,
+    CastingOut,
+
+    /// <summary>The line comes back in: no bite, a fish slipped, a catch just landed, or Rest.</summary>
+    PullingPoleIn,
+    Quitting,
+
+    /// <summary>The standby "gathering" condition: rod out, ready to cast.</summary>
+    PoleReady,
+    Bite,
+
+    /// <summary>Hooking and the reeling-in that follows.</summary>
+    Hooking,
+    ReleasingCatch,
+    ConfirmingCollectable,
+
+    /// <summary>Ambitious / Modest Lure animation.</summary>
+    Lure,
+
+    /// <summary>The line is in the water (or air, or sand): actually fishing.</summary>
+    LineInWater,
+    Unknown,
+}
+
+/// <summary>
+/// How hard the fish tugs (ClientStructs <c>FishingHookStrength</c>): picks
+/// Precision vs Powerful Hookset. No struct field carries it in the installed
+/// ClientStructs, so the bridge answers <see cref="Unknown"/> unless a tug
+/// source (AutoHook) supplies one — the controller then plain-Hooks.
+/// </summary>
+public enum FishingTug
+{
+    Unknown,
+
+    /// <summary>"!" — Precision Hookset.</summary>
+    Light,
+
+    /// <summary>"!!" — Powerful Hookset.</summary>
+    Strong,
+
+    /// <summary>"!!!" — legendary; Powerful Hookset.</summary>
+    Legendary,
+}
+
+/// <summary>
+/// One frame of the fishing event handler (roadmap 7.4). CanFish is the
+/// game's own "you are at a fishing hole"; the mooch flags say whether the
+/// last catch can be mooched; BaitItemId is the applied bait
+/// (<c>PlayerState.FishingBait</c>).
+/// </summary>
+public sealed record FishingSnapshot(
+    FishingPhase Phase,
+    bool CanFish,
+    bool CanMooch,
+    bool CanMooch2,
+    uint BaitItemId,
+    FishingTug Tug = FishingTug.Unknown);
 
 /// <summary>One equipped piece's spiritbond (roadmap 7.2): the equipment slot, the item and 0..10000.</summary>
 public sealed record EquippedSpiritbond(int Slot, uint ItemId, int Spiritbond)

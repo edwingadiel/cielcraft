@@ -87,6 +87,12 @@ public class VendorSourceTests
         private static NotImplementedException Unexpected() => new("the vendor run must not touch this");
 
         // ---- stubs for members other packages added (merge) ----
+        public FishingSnapshot? GetFishingState() => throw Unexpected();
+        public float GetMainHandConditionPercent() => throw Unexpected();
+        public bool IsFishing => throw Unexpected();
+        public bool SelectBait(uint baitItemId) => throw Unexpected();
+
+        // ---- stubs for members other packages added (merge) ----
         public void CloseCollectablesShop() => throw Unexpected();
         public void CloseExchangeShop() => throw Unexpected();
         public bool ExchangeBuy(uint shopId, uint itemId, int count) => throw Unexpected();

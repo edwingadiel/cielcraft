@@ -36,6 +36,17 @@
     <Compile Include="../CielCraft/Sourcing/ExchangeSource.cs" Link="Seams/ExchangeSource.cs" />
   </ItemGroup>
   <ItemGroup>
+    <!--
+      Fishing (roadmap 7.4). The database's lookups, the controller and the
+      material source depend only on Core and the bridge interface; the Lumina
+      half lives in Game/FishingSheetReader.cs and stays out of the tests.
+    -->
+    <Compile Include="../CielCraft/Game/FishingDatabase.cs" Link="Seams/FishingDatabase.cs" />
+    <Compile Include="../CielCraft/Fishing/FishingActions.cs" Link="Seams/FishingActions.cs" />
+    <Compile Include="../CielCraft/Fishing/FishingController.cs" Link="Seams/FishingController.cs" />
+    <Compile Include="../CielCraft/Sourcing/FishingSource.cs" Link="Seams/FishingSource.cs" />
+  </ItemGroup>
+  <ItemGroup>
     <!-- Host-platform native solver, if built locally (cargo release build in native/cielcraft-raphael). -->
     <None Include="../native/cielcraft-raphael/target/release/cielcraft_raphael.dll"
           Condition="Exists('../native/cielcraft-raphael/target/release/cielcraft_raphael.dll')"
