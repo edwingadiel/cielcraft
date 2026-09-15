@@ -321,8 +321,11 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
             gearsetRequested = false;
             EnterPhase(FishingRunState.PreparingJob, "Resuming: back onto FSH first.");
         }
-        else if (bridge.IsFishing)
+        else if (bridge.IsFishing || bridge.IsGathering)
         {
+            // The rod is still out (the stance raises Gathering, the line in
+            // the water Fishing): the character cannot walk anyway, and the
+            // water was in range here, so cast from where it stands.
             EnterPhase(FishingRunState.Fishing, "Resuming at the rod.");
         }
         else if (bridge.CurrentTerritoryId != plan.Spot.TerritoryId)
@@ -340,7 +343,7 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         travel.Stop();
         navigation.Stop();
         DisengageAutoHook();
-        if (bridge.IsFishing)
+        if (bridge.IsFishing || bridge.IsGathering) // the stance alone raises Gathering
             bridge.ExecuteCraftAction(catalog.Id(FishAction.Quit));
 
         pending = null;

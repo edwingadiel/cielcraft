@@ -139,7 +139,21 @@ against inventory, pause with a reason.
   that chains a bait purchase, fish as Gather orders; AutoHook over IPC
   when installed. The tug is not exposed by the client structs, so without
   AutoHook every bite is a plain Hook; spearfishing, Ocean Fishing and the
-  Diadem are refused / not handled. Not yet run in game (test plan X).
+  Diadem are refused / not handled. Run in game 2026-09-15 (test plan X1):
+  the whole chain works — bait bought on the way, FSH gearset, teleport,
+  travel to the hole, bait applied, Cast / Hook at a human pace, catches
+  counted by bag delta, the 30-cast safety net. Fixed on the way: seasonal
+  vendors retired by name, the shop-name menu option for multi-shop
+  merchants, the bait run finishes (shop closed) before the gearset, the
+  hole's destination snapped to the navmesh floor, a probe ring around the
+  marker when "no water in casting range", a rod left out is put away
+  before a teleport, and a sourced task is handed over before the
+  node-window check. Follow-ups: remember the ring point that found water
+  per spot (probing costs ~25 s per visit); a Settings row for the
+  FishingBait overrides (today only the config file); the bundled bait
+  table is wrong for Brass Loach at The Vein with Moth Pupa (30 casts, none)
+  and Striped Goby is listed with Lugworm (ocean bait) — the table needs a
+  pass against the fish guide.
 - [x] 7.5 Combat drops (XL) — done 2026-09-15 (docs/design/m4.md), dormant until
   a combat plugin is installed: (1) data — `tools/refresh-drops.ps1` builds
   the bundled `Data/drops.json` from Garland Tools (152 craft-ingredient

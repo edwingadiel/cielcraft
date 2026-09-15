@@ -728,9 +728,13 @@ Vein.` → `Heading for The Vein.` → `Moth Pupa on; fishing for Brass Loach.`
 (1/3, 1 casts).` … → `3/3 caught; putting the rod away.` → `Quit — action
 299` → `Completed: 3/3 Brass Loach in N casts.` About 1.5 s between casts,
 never two actions in one frame. The spot's world coordinates are the
-likeliest thing to be wrong (`/cielcraft report` › Fishing prints them):
-`Paused: there is no water in casting range …` means the unpacking is off
-— walk to the water and `/cielcraft resume`.
+likeliest thing to be wrong (`/cielcraft report` › Fishing prints them).
+The sheet marker sits near the hole, not on its bank: `No water in casting
+range here; trying 12y at 45° from the marker (2/16)` → `Looking for the
+water's edge.` walks a ring of 16 points (12 y and 24 y out) before
+`Paused: there is no water in casting range …` — then walk to the water
+and `/cielcraft resume`. A rod left out by an earlier run (a pause, then a
+reload) is put away first: `A rod is still out; putting it away (1/4).`
 
 **X2. Pauses** — A full bag → `[Fishing] Paused: inventory is full.`; a job
 swap → `Paused: the character is no longer on FSH.` and `Resuming: back onto
@@ -812,6 +816,8 @@ entry with the stack trace.
 ## Validation log
 
 **2026-09-15, M4.** Combat drops merged and wired (bundled drop table copied to the build output, driver selector, hunt source last in the source order, Hunting page and settings). Not run: no combat plugin is installed on the test machine, so the source offers nothing; section Y lists the probe, engage and hunt checks in order.
+
+**2026-09-15, later afternoon (coordinator, user away) — fishing.** X1 ran end to end on Brass Loach ×3 at The Vein: the bait purchase chained first (Syneyhil, Limsa Lominsa Lower Decks — a multi-shop merchant, "Purchase Items" option), FSH gearset, teleport to Central Shroud, travel, bait applied, the probe ring found the bank on its second point, then Cast / Hook cycles about 20 s apart, catches counted by bag delta (`Caught 1× Brass Loach (1/3, 11 casts)`), and X2's full-bag pause fired on the next catch (the junk fish filled the bag). X3 also ran for real: 30 casts with the bundled Moth Pupa brought no Brass Loach and paused with the bait-table message; the fix was a FishingBait override to Crayfish Ball (2588) in the config file, after which the loach bit. Seven fixes on the way, each after a stall: a seasonal vendor ("festive fisher") not in the world is retired by name (AbsentVendorNpcs, Settings › Sourcing can retry), the vendor dialog picks the option named after the item's shop, the bait run finishes and the shop closes before the FSH gearset ("unable to execute while occupied"), the hole's destination is snapped to the navmesh floor (the sheet's Y is 0), a ring of 16 points is probed around the marker before pausing for water, a rod left out (the stance raises Gathering, not Fishing) is put away before the bait run's teleport, and a sourced task is handed over before the runner's node-window check (which waited on that same Gathering flag until the prepare timeout). Left for the user: the run's completion / Quit path (2/3 loaches still to catch when the bag filled), X4, and a pass over the bundled bait table against the fish guide.
 
 **2026-09-15, afternoon (coordinator, user away).** R4 passes: Fire Shard ×30 on a Western Thanalan shard node read class Crystal with the point's "Gathering ≥ 34 → Yield +1 [met]" bonus, fired The Giving Land → The Twelve's Bounty → Yield II by rule (GP 987 → 787 → 637) and took 33 shards from one node; the approach failed once within 60 s and the new second approach succeeded. U4 (pause / resume) passes: a Boiled Egg ×7 order bought 2 eggs and 2 waters from Engerrand, was paused during the return teleport and resumed into the craft, which finished 3/3. Also: inventory moved to the saddlebag by hand (the game only accepts drag-and-drop there; `/cielcraft saddlebag` now opens it); moving the gathering food out of the bag paused the run with the expected reason and the maintenance service gave up on that food for the session once it was back too late — expected, but worth knowing.
 
