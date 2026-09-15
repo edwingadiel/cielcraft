@@ -189,7 +189,10 @@ public sealed class FishingRun : ISourceRun
         // rod comes out — a bait stack that runs dry mid-run is the
         // controller's own "bait could not be applied", not a reason to walk
         // away from an open fishing hole.
-        if (!controllerStarted && baitOffer != null && bridge.GetItemCount(plan.BaitItemId) == 0)
+        // A bait run in flight is ticked until it says it is done — the bait
+        // lands in the bag while the shop is still open, and switching jobs
+        // then is refused ("while occupied", 2026-09-15).
+        if (!controllerStarted && (baitRun != null || (baitOffer != null && bridge.GetItemCount(plan.BaitItemId) == 0)))
         {
             TickBaitRun();
             return;

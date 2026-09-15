@@ -356,6 +356,16 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         if (bridge.IsCrafting)
             return;
 
+        // A shop window left up (the bait purchase just before, 2026-09-15)
+        // makes every gearset command "unable to execute while occupied".
+        if (bridge.IsAddonVisible("Shop"))
+        {
+            retry.Try(bridge.CloseShop);
+            StatusText = "Closing the shop before switching to FSH.";
+            phaseStartedAt = Clock.UtcNow; // the job budget starts once the window is gone
+            return;
+        }
+
         if (bridge.CurrentClassJobId == GatheringActions.FisherJobId)
         {
             // Settle after a job change before the next server-visible action.
