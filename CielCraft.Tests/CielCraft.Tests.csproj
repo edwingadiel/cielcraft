@@ -34,6 +34,15 @@
       which is not compiled in here.
     -->
     <Compile Include="../CielCraft/Sourcing/ExchangeSource.cs" Link="Seams/ExchangeSource.cs" />
+    <!--
+      The hunt (roadmap 7.5). The drop table, the ranking, the source and the
+      run itself talk only to Core types and the package's own IHuntBridge, so
+      they compile in; the sheet reading lives in SheetZoneDirectory, which
+      does not.
+    -->
+    <Compile Include="../CielCraft/Game/CombatDatabase.cs" Link="Seams/CombatDatabase.cs" />
+    <Compile Include="../CielCraft/Combat/HuntRun.cs" Link="Seams/HuntRun.cs" />
+    <Compile Include="../CielCraft/Sourcing/CombatSource.cs" Link="Seams/CombatSource.cs" />
   </ItemGroup>
   <ItemGroup>
     <!-- Host-platform native solver, if built locally (cargo release build in native/cielcraft-raphael). -->
