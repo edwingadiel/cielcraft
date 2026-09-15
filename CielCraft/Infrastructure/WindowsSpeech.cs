@@ -27,17 +27,28 @@ public sealed class WindowsSpeech : IDisposable
         if (broken || string.IsNullOrWhiteSpace(text))
             return;
 
-        try
+        // Creating the voice takes a few hundred ms the first time; keep that
+        // off the frame thread (it showed up as a UI hitch in game).
+        System.Threading.Tasks.Task.Run(() =>
         {
-            voice ??= Activator.CreateInstance(
-                Type.GetTypeFromProgID("SAPI.SpVoice") ?? throw new InvalidOperationException("SAPI.SpVoice is not registered"));
-            voice!.GetType().InvokeMember("Speak", BindingFlags.InvokeMethod, null, voice, [text, SpeakAsync]);
-        }
-        catch (Exception e)
-        {
-            broken = true;
-            log.Warning($"[Notify] Speech unavailable ({e.GetType().Name}: {e.Message}); alerts stay silent.");
-        }
+            lock (this)
+            {
+                if (broken)
+                    return;
+
+                try
+                {
+                    voice ??= Activator.CreateInstance(
+                        Type.GetTypeFromProgID("SAPI.SpVoice") ?? throw new InvalidOperationException("SAPI.SpVoice is not registered"));
+                    voice!.GetType().InvokeMember("Speak", BindingFlags.InvokeMethod, null, voice, [text, SpeakAsync]);
+                }
+                catch (Exception e)
+                {
+                    broken = true;
+                    log.Warning($"[Notify] Speech unavailable ({e.GetType().Name}: {e.Message}); alerts stay silent.");
+                }
+            }
+        });
     }
 
     public void Dispose()

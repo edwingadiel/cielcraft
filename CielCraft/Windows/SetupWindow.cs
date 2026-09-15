@@ -29,8 +29,9 @@ public class SetupWindow : Window, IDisposable
 
     public SetupWindow(Plugin plugin) : base("CielCraft Setup##Setup")
     {
-        Size = new Vector2(460, 520);
-        SizeCondition = ImGuiCond.FirstUseEver;
+        // Grows to the checklist so the buttons are never below a scrollbar.
+        Flags = ImGuiWindowFlags.AlwaysAutoResize;
+        SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(440, 0) };
         this.plugin = plugin;
     }
 
@@ -43,6 +44,7 @@ public class SetupWindow : Window, IDisposable
         var caps = plugin.Capabilities.Current;
         var bridge = plugin.GameBridge;
 
+        ImGui.PushTextWrapPos(430);
         ImGui.TextWrapped(
             "CielCraft drives the game through your own gearsets, mounts and unlocks. " +
             "Everything below is read from the character; fix the red items in the game, then Refresh.");
@@ -101,6 +103,7 @@ public class SetupWindow : Window, IDisposable
 
         if (caps.IsKnown)
             ImGui.TextDisabled($"Read at {caps.ReadAt.ToLocalTime():HH:mm:ss}.");
+        ImGui.PopTextWrapPos();
     }
 
     private void DrawJobs((uint JobId, string Name)[] jobs, CharacterCapabilities caps)
