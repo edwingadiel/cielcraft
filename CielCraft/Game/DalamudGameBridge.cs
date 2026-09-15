@@ -635,6 +635,52 @@ public sealed class DalamudGameBridge : IGameBridge
         return true;
     }
 
+    public unsafe IReadOnlyList<string> ReadAddonStrings(string addonName)
+    {
+        var ptr = Plugin.GameGui.GetAddonByName(addonName);
+        if (ptr.IsNull)
+            return [];
+
+        var addon = (FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)ptr.Address;
+        var strings = new List<string>();
+        for (var i = 0; i < addon->AtkValuesCount; i++)
+        {
+            var value = addon->AtkValues[i];
+            if (value.Type != FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.String || value.String.Value == null)
+                continue;
+
+            var text = value.String.ToString();
+            if (!string.IsNullOrWhiteSpace(text))
+                strings.Add(text);
+        }
+
+        return strings;
+    }
+
+    public bool IsPartyOrFreeCompanyMember(string playerName)
+    {
+        for (var i = 0; i < Plugin.PartyList.Length; i++)
+        {
+            var member = Plugin.PartyList[i];
+            if (member != null && member.Name.TextValue == playerName)
+                return true;
+        }
+
+        // FC membership has no cheap query; a nearby player wearing our tag is
+        // the best local answer (roadmap 7.10: tells from FC mates are not noted).
+        var localTag = Plugin.ObjectTable.LocalPlayer?.CompanyTag.TextValue;
+        if (string.IsNullOrEmpty(localTag))
+            return false;
+
+        foreach (var obj in Plugin.ObjectTable.PlayerObjects)
+        {
+            if (obj is Dalamud.Game.ClientState.Objects.Types.ICharacter character && character.Name.TextValue == playerName)
+                return character.CompanyTag.TextValue == localTag;
+        }
+
+        return false;
+    }
+
     public float GetFoodBuffRemainingSeconds()
     {
         var player = Plugin.ObjectTable.LocalPlayer;

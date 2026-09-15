@@ -31,7 +31,8 @@ public static class DiagnosticReport
         Section(sb, "Settings");
         foreach (var property in typeof(Configuration).GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
-            if (property.Name is nameof(Configuration.SavedProduction) or nameof(Configuration.QueueItems))
+            if (property.Name is nameof(Configuration.SavedProduction) or nameof(Configuration.QueueItems)
+                or nameof(Configuration.SocialBlacklist))
                 continue;
 
             sb.AppendLine($"{property.Name} = {property.GetValue(plugin.Configuration)}");
@@ -102,6 +103,9 @@ public static class DiagnosticReport
 
         Section(sb, "Gathering controller");
         Lines(sb, plugin.GatheringController.Describe);
+
+        Section(sb, $"Social (last {SocialGuardCore.HistoryCapacity} events, UTC)");
+        Lines(sb, plugin.SocialGuard.Describe);
 
         Section(sb, "Open gathering node");
         Safe(sb, () =>

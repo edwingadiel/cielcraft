@@ -176,6 +176,27 @@ Expect: a clear pause/failure reason naming the job.
 **G4 ★. Numbers with separators** — On a craft with progress or quality above
 999, confirm Debug → Crafting shows e.g. `Progress: 1234 / 5000` (not `1`).
 
+## H. Social guard ★ (roadmap 7.10; needs a second character or a friend)
+
+**H1. Trade during a batch** — Start Batch ×3, have the other character send a
+trade request.
+Expect: within about a second the Trade window closes by itself, the batch
+shows `Paused: trade request.`, and it resumes on its own 20 s later. Settings
+→ Social lists the sender in the blacklist. Watch: the log has a `[Social]`
+line naming the sender (`TradeRequest from Name@World: declined, blacklisted,
+paused 20s`). If the name reads `unknown`, paste the report — the
+`Trade window strings:` debug line shows what the window offered instead.
+
+**H2. Trade from the same sender again** — Repeat H1 with the same character.
+Expect: the window closes, the run does **not** pause (`declined, already
+blacklisted`).
+
+**H3. Tell and party invite** — While a batch runs, have the other character
+/tell you and send a party invite.
+Expect: nothing is answered; the run continues; both show up in the report's
+"Social" section with sender and time. A tell from a party member must not be
+listed.
+
 ---
 
 ## What to paste

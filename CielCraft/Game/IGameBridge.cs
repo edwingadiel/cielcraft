@@ -159,6 +159,12 @@ public interface IGameBridge
     /// <summary>Fires an integer callback on a visible addon. False when it is not open.</summary>
     bool FireAddonCallbackInt(string addonName, int value);
 
+    /// <summary>Every non-empty string AtkValue of an open addon, in index order; empty when it is not open.</summary>
+    IReadOnlyList<string> ReadAddonStrings(string addonName);
+
+    /// <summary>True when the named player is in the party/alliance or wears the local player's free company tag.</summary>
+    bool IsPartyOrFreeCompanyMember(string playerName);
+
     /// <summary>Seconds left on the Well Fed buff; 0 when not fed.</summary>
     float GetFoodBuffRemainingSeconds();
 
