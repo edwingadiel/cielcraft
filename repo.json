@@ -1,0 +1,28 @@
+[
+  {
+    "Author": "edwingadiel",
+    "Name": "CielCraft",
+    "InternalName": "CielCraft",
+    "AssemblyVersion": "1.0.0.0",
+    "Description": "CielCraft is a crafting plugin for Final Fantasy XIV.",
+    "ApplicableVersion": "any",
+    "RepoUrl": "https://github.com/edwingadiel/cielcraft",
+    "Tags": [
+      "crafting",
+      "crafter"
+    ],
+    "DalamudApiLevel": 15,
+    "LoadRequiredState": 0,
+    "LoadSync": false,
+    "CanUnloadAsync": false,
+    "LoadPriority": 0,
+    "Punchline": "Crafting helper for FFXIV.",
+    "AcceptsFeedback": true,
+    "DownloadLinkInstall": "https://github.com/edwingadiel/cielcraft/releases/download/v1.0.0/CielCraft.zip",
+    "DownloadLinkTesting": "https://github.com/edwingadiel/cielcraft/releases/download/v1.0.0/CielCraft.zip",
+    "DownloadLinkUpdate": "https://github.com/edwingadiel/cielcraft/releases/download/v1.0.0/CielCraft.zip",
+    "IsHide": false,
+    "IsTestingExclusive": false,
+    "LastUpdate": 1789448274
+  }
+]
