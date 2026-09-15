@@ -63,6 +63,7 @@ public sealed class BatchCrafter : IDisposable
     private DateTime lastRecipeOpenAttempt = DateTime.MinValue;
     private DateTime verifyUntil = DateTime.MinValue; // pending inventory verification of a finished craft
     private DateTime lastSynthesisPress = DateTime.MinValue;
+    private DateTime lastFillAttempt = DateTime.MinValue;
     private DateTime craftStartedAt = DateTime.MinValue;   // pacing: first action waits for the start animation
     private DateTime lastCraftEndedAt = DateTime.MinValue; // pacing: next Synthesize waits for the end animation
     private static readonly TimeSpan SynthesisRetryInterval = TimeSpan.FromSeconds(3);
@@ -569,7 +570,7 @@ public sealed class BatchCrafter : IDisposable
 
                 recipeId = gameBridge.SelectedRecipeId;
                 if (configuration.PreferHqMaterials)
-                    gameBridge.FillHqIngredients();
+                    gameBridge.FillIngredients(preferHq: true);
 
                 if (gameBridge.StartSynthesis())
                 {
@@ -580,6 +581,18 @@ public sealed class BatchCrafter : IDisposable
                 }
 
                 return;
+            }
+
+            // The log is open on our recipe but the game has not assigned the
+            // materials (ingredients owned only as HQ stay at 0 until the HQ
+            // column is selected): press the log's own fill button.
+            if (gameBridge.IsAddonVisible("RecipeNote") && gameBridge.SelectedRecipeId != 0
+                && !gameBridge.AreIngredientsAssigned()
+                && DateTime.UtcNow - lastFillAttempt > TimeSpan.FromSeconds(2))
+            {
+                lastFillAttempt = DateTime.UtcNow;
+                var assigned = gameBridge.FillIngredients(configuration.PreferHqMaterials);
+                Plugin.Log.Information($"[Production] Assigning materials via the crafting log's {(configuration.PreferHqMaterials ? "HQ" : "NQ")} fill button: {(assigned ? "all assigned" : "still incomplete")}.");
             }
 
             if (DateTime.UtcNow - waitStartedAt > StartTimeout)

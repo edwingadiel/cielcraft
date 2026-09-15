@@ -167,4 +167,10 @@ public interface IGameBridge
     /// as owned (NQ for the remainder). False when no recipe is selected.
     /// </summary>
     bool FillHqIngredients();
+
+    /// <summary>Presses the crafting log's NQ or HQ fill button; true when every ingredient is then assigned.</summary>
+    bool FillIngredients(bool preferHq);
+
+    /// <summary>Every ingredient of the selected recipe has NQ+HQ assigned up to its required amount.</summary>
+    bool AreIngredientsAssigned();
 }

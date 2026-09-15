@@ -176,7 +176,8 @@ public sealed class DalamudGameBridge : IGameBridge
             return addon != null
                    && SelectedRecipeId != 0
                    && addon->SynthesizeButton != null
-                   && addon->SynthesizeButton->IsEnabled;
+                   && addon->SynthesizeButton->IsEnabled
+                   && AreIngredientsAssigned();
         }
     }
 
@@ -197,6 +198,15 @@ public sealed class DalamudGameBridge : IGameBridge
             var addon = GetRecipeNote();
             if (addon == null)
                 return 0;
+
+            // The recipe list keeps the selected entry with its recipe id — the
+            // direct source, when the list is populated.
+            if (recipeNote != null && recipeNote->IsRecipeListReady && recipeNote->RecipeList != null)
+            {
+                var selected = recipeNote->RecipeList->SelectedRecipe;
+                if (selected != null && selected->RecipeId != 0)
+                    return selected->RecipeId;
+            }
 
             var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentRecipeNote.Instance();
             if (agent != null && agent->AgentInterface.IsAgentActive() && agent->ActiveCraftRecipeId != 0)
@@ -262,7 +272,8 @@ public sealed class DalamudGameBridge : IGameBridge
         var addonPart = addon == null
             ? "addon hidden"
             : $"addon name '{(addon->SelectedRecipeName != null ? Dalamud.Utility.Utf8StringExtensions.ExtractText(addon->SelectedRecipeName->NodeText) : "-")}', " +
-              $"synthesize button {(addon->SynthesizeButton == null ? "null" : addon->SynthesizeButton->IsEnabled ? "enabled" : "disabled")}";
+              $"synthesize button {(addon->SynthesizeButton == null ? "null" : addon->SynthesizeButton->IsEnabled ? "enabled" : "disabled")}, " +
+              $"ingredients assigned {AreIngredientsAssigned()}";
         return $"{agentPart}; {notePart}; {addonPart}";
     }
 
@@ -651,29 +662,77 @@ public sealed class DalamudGameBridge : IGameBridge
                 .TryGetRow(recipeId, out var recipe))
             return false;
 
+        return FillIngredients(preferHq: true);
+    }
+
+    public unsafe bool FillIngredients(bool preferHq)
+    {
+        // Writing the RecipeNote amount arrays directly does not register as
+        // a material selection: an ingredient owned only as HQ stayed at 0 and
+        // Synthesize did nothing (Titanium Gold Shield with HQ ingots). The
+        // crafting log has its own "use NQ / use HQ materials" buttons; press
+        // those and let the game assign everything. With NQ preferred, HQ is
+        // still pressed afterwards for ingredients that only exist as HQ.
+        var addon = GetRecipeNote();
+        if (addon == null)
+            return false;
+
+        var first = preferHq ? addon->HqFillButton : addon->NqFillButton;
+        if (first != null)
+            ReplayButtonClick(&addon->AtkUnitBase, first);
+
+        if (!preferHq && !AreIngredientsAssigned() && addon->HqFillButton != null)
+            ReplayButtonClick(&addon->AtkUnitBase, addon->HqFillButton);
+
+        return AreIngredientsAssigned();
+    }
+
+    public unsafe bool AreIngredientsAssigned()
+    {
+        // The selected entry lists each ingredient's required amount; the
+        // NQ/HQ assignment arrays on RecipeNote hold what the log has selected.
+        var recipeNote = FFXIVClientStructs.FFXIV.Client.Game.UI.RecipeNote.Instance();
+        if (recipeNote == null || !recipeNote->IsRecipeListReady || recipeNote->RecipeList == null)
+            return true; // cannot tell; do not block
+
+        var selected = recipeNote->RecipeList->SelectedRecipe;
+        if (selected == null)
+            return true;
+
         var nq = recipeNote->CraftIngredientNQAmounts;
         var hq = recipeNote->CraftIngredientHQAmounts;
-
-        // The RecipeNote amount arrays hold the six non-crystal material
-        // slots; crystals (item ids 2-19, always the trailing sheet entries)
-        // are tracked separately by the game and must not be written here.
-        var slot = 0;
-        for (var i = 0; i < recipe.Ingredient.Count && slot < nq.Length && slot < hq.Length; i++)
+        var ingredients = selected->Ingredients;
+        for (var i = 0; i < ingredients.Length && i < nq.Length && i < hq.Length; i++)
         {
-            var itemId = recipe.Ingredient[i].RowId;
-            var amount = (int)recipe.AmountIngredient[i];
-            if (itemId == 0 || amount <= 0)
+            var ingredient = ingredients[i];
+            if (ingredient.ItemId == 0 || ingredient.Amount == 0)
                 continue;
 
-            if (itemId is >= 2 and <= 19)
-                break;
-
-            var hqUse = (byte)System.Math.Min(amount, GetHqItemCount(itemId));
-            hq[slot] = hqUse;
-            nq[slot] = (byte)(amount - hqUse);
-            slot++;
+            if (nq[i] + hq[i] < ingredient.Amount)
+                return false;
         }
 
+        return true;
+    }
+
+    /// <summary>Replays a button's own click event into its addon (same null-guarding as the checkbox variant).</summary>
+    private static unsafe bool ReplayButtonClick(
+        FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase* addon,
+        FFXIVClientStructs.FFXIV.Component.GUI.AtkComponentButton* button)
+    {
+        if (button == null)
+            return false;
+
+        var node = button->OwnerNode;
+        if (node == null)
+            return false;
+
+        var evt = node->AtkResNode.AtkEventManager.Event;
+        if (evt == null)
+            return false;
+
+        var data = default(FFXIVClientStructs.FFXIV.Component.GUI.AtkEventData);
+        addon->ReceiveEvent(evt->State.EventType, (int)evt->Param, evt, &data);
         return true;
     }
 
