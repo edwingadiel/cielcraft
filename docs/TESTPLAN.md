@@ -188,3 +188,12 @@ The report's **Log** section lists every transition of every layer with UTC
 timestamps, so I can usually find the cause without further questions. If the
 plugin itself threw, the log will contain an `Unhandled exception in tick`
 entry with the stack trace.
+
+## Validation log
+
+**2026-09-15 (Windows, Dalamud 15.0.3.4, first in-game run).** Passed: A1, A2,
+A3, B1, B2, B5, C1, C5, D2, E1, E2, E4, F1, F3, G1, G4, plus a four-material
+plan across four zones, the quick-synthesis fallback for a never-crafted
+recipe, and HQ-material assignment through the crafting log's fill buttons.
+Deferred as unlikely in practice: A4, A5, B3, B4, C2–C4, C6–C10, D1, D3, D4,
+E3, F2, G2, G3.
