@@ -231,7 +231,7 @@ public class FishingTests
         public void CloseCollectablesShop() => throw Unexpected();
         public void CloseExchangeShop() => throw Unexpected();
         public void CloseRetainerList() => throw Unexpected();
-        public void CloseShop() => throw Unexpected();
+        public void CloseShop() { }
         public bool CollectVenture() => throw Unexpected();
         public bool ConfirmDesynthesis() => throw Unexpected();
         public int DepositToRetainer(uint itemId, int count) => throw Unexpected();
@@ -289,7 +289,7 @@ public class FishingTests
         public void OpenRepairWindow() => throw Unexpected();
         public bool PlaySoundEffect(int soundEffectNumber) => throw Unexpected();
         public void ExecuteChatCommand(string command) => throw Unexpected();
-        public bool IsAddonVisible(string addonName) => throw Unexpected();
+        public bool IsAddonVisible(string addonName) => false; // the job phase checks for a leftover Shop window
         public bool FireAddonCallbackInt(string addonName, int value) => throw Unexpected();
         public IReadOnlyList<string> ReadAddonStrings(string addonName) => throw Unexpected();
         public bool IsPartyOrFreeCompanyMember(string playerName) => throw Unexpected();
