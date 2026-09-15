@@ -167,6 +167,15 @@ against inventory, pause with a reason.
   worth considering for party invites and /tells from strangers (log only by
   default).
 
+- [ ] 7.11 Per-activity food and potion (S–M) — today one FoodItemId/FoodIsHq
+  pair serves everything and there is no medicine support. Split into a
+  crafting set and a gathering set, each with food + potion (item, HQ
+  preference), chosen from the inventory with a searchable picker that shows
+  the buff. Maintenance re-applies whichever set matches the phase about to
+  start (before a craft step, before a gather task), tracks the two buffs
+  separately (Well Fed / Medicated), and never eats or drinks mid-node or
+  mid-craft. Pre-flight warns when a chosen consumable is not in the bag.
+
 Cross-cutting for 2.0: the planner grows a "source" per missing material
 (gather / fish / buy / hunt / stored-in-retainer), chosen by preference and
 availability; the runner gets one phase per source. That is the point where
