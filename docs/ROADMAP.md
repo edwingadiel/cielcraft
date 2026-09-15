@@ -158,6 +158,15 @@ against inventory, pause with a reason.
   per recipe that replaces the solver when set, with the same adaptive
   recovery on a bad condition.
 
+- [ ] 7.10 Trade-request blacklist (S) — a trade request during automation is
+  the usual "is that a bot?" poke. On an incoming trade (Trade addon / the
+  chat notice) decline it, add the sender to the game blacklist automatically,
+  log who and when, and optionally pause the run for a configurable settle
+  time so the character does not carry on the instant the window closes.
+  Settings: auto-blacklist on/off, pause-on-trade seconds. Same treatment
+  worth considering for party invites and /tells from strangers (log only by
+  default).
+
 Cross-cutting for 2.0: the planner grows a "source" per missing material
 (gather / fish / buy / hunt / stored-in-retainer), chosen by preference and
 availability; the runner gets one phase per source. That is the point where
