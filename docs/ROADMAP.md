@@ -235,6 +235,16 @@ against inventory, pause with a reason.
   Settings (Character, General, Crafting, Gathering, ...); the diagnostic
   report and log as a Status page.
 
+- [ ] 7.22 HQ-aware intermediates (M) — today every non-final step is quick
+  synthesized (NQ) and the final craft solves from zero quality. For recipes
+  whose quality cannot be filled from zero: solve the final recipe once at
+  initial quality 0; if it caps short of the target, compute the HQ
+  material mix that seeds enough initial quality (per-ingredient share of
+  max quality by material value), re-solve to confirm, and mark those
+  intermediate steps "craft normally at 100%%" while the rest stay quick.
+  The final craft's HQ fill consumes them. Validate the initial-quality
+  formula against a real recipe in game before trusting it.
+
 Cross-cutting for 2.0: the planner grows a "source" per missing material
 (gather / fish / buy / hunt / stored-in-retainer), chosen by preference and
 availability; the runner gets one phase per source. That is the point where
