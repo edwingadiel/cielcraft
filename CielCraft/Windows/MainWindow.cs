@@ -137,6 +137,10 @@ public class MainWindow : Window, IDisposable
         orders = new OrdersPanel(plugin);
         rotation = new RotationPanel(plugin);
         planTree = new PlanTreePanel(plugin);
+        // A window left collapsed (the title-bar arrow) is easy to lose: every
+        // open shows it expanded; the user can still collapse it while it is up.
+        Collapsed = false;
+        CollapsedCondition = ImGuiCond.Appearing;
         craftTest = new CraftTestPanel(plugin);
         spiritbond = new SpiritbondPanel(plugin);
         schedule = new SchedulePanel(plugin);
