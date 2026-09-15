@@ -254,7 +254,7 @@ public class NpcInteractorTests
         public void CloseShop() => throw Unexpected();
 
         public bool IsLoggedIn => throw Unexpected();
-        public bool IsPreparingToCraft => throw Unexpected();
+        public bool IsPreparingToCraft => false; // the interactor checks the crafting log before a teleport
         public PlayerSnapshot? GetPlayerState() => throw Unexpected();
         public CraftSnapshot? GetCraftState() => throw Unexpected();
         public GatheringSnapshot? GetGatheringState() => throw Unexpected();
