@@ -25,7 +25,7 @@ public enum ProductionMode
     /// <summary>Quick synthesis for the final craft too (NQ, fast) when the game offers it.</summary>
     QuickSynth,
 
-    /// <summary>Craft as a collectable (roadmap 7.23; refused by the planner until then).</summary>
+    /// <summary>Craft as a collectable at the order's tier (roadmap 7.23); on a gather order, gather collectables (7.1).</summary>
     Collectable,
 }
 

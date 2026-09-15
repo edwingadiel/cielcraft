@@ -101,7 +101,9 @@ public class MainWindow : Window, IDisposable
     private List<(string Title, string Body)> reportSections = [];
     private DateTime reportBuiltAt = DateTime.MinValue;
 
-    public MainWindow(Plugin plugin) : base("CielCraft##Main")
+    // A new ImGui id so the sidebar layout starts at its own default size
+    // instead of the old single-column window's saved one.
+    public MainWindow(Plugin plugin) : base("CielCraft##Main2")
     {
         // Sidebar plus the order rows (icon, amount, two combos, toggles) without clipping.
         Size = new Vector2(760, 560);

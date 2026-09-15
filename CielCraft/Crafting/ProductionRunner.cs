@@ -1166,6 +1166,8 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
                 InitialHqCount = t.InitialHqCount,
                 Mode = t.Target.Mode,
                 MaterialsOnly = t.Target.MaterialsOnly,
+                Kind = t.Target.Kind,
+                CollectableTier = t.Target.CollectableTier,
             }).ToList(),
             // First target mirrored for the resume banner (callers not yet on Targets).
             ItemId = first?.Target.ItemId ?? 0,
@@ -1187,7 +1189,7 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         var progress = saved.Targets
             .Where(t => t.ItemId != 0)
             .Select(t => new TargetProgress(
-                new PlanTarget(t.ItemId, t.Quantity, t.Mode, t.MaterialsOnly), t.InitialCount, t.InitialHqCount))
+                new PlanTarget(t.ItemId, t.Quantity, t.Mode, t.MaterialsOnly, t.Kind, t.CollectableTier), t.InitialCount, t.InitialHqCount))
             .ToList();
         var remaining = progress
             .Select(t => t.Target with { Quantity = t.Remaining(gameBridge) })

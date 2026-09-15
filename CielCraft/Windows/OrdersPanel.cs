@@ -637,6 +637,7 @@ internal sealed class OrdersPanel
         try
         {
             preview = plugin.OrderRunner.Preview(group);
+            PlanTreePanel.Show(preview.Plan); // Status › Breakdown follows the last preview (7.12)
             error = "";
         }
         catch (Exception e)

@@ -108,6 +108,12 @@ public class Configuration : AutomationSettings, IPluginConfiguration
         public ProductionMode Mode { get; set; } = ProductionMode.Any;
 
         public bool MaterialsOnly { get; set; }
+
+        /// <summary>Craft or gather order (roadmap 7.1); a resumed gather order must not re-plan as a craft.</summary>
+        public OrderKind Kind { get; set; } = OrderKind.Craft;
+
+        /// <summary>Tier of a collectable order (roadmap 7.23 / 7.1), kept across a resume.</summary>
+        public CollectableTier CollectableTier { get; set; } = CollectableTier.High;
     }
 
     [Serializable]
