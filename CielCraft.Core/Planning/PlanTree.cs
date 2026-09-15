@@ -52,6 +52,13 @@ public sealed class PlanNode
     /// <summary>Gathering zone of a raw node; 0 when unknown.</summary>
     public uint TerritoryId { get; init; }
 
+    /// <summary>
+    /// How a registered material source would supply this raw material
+    /// ("buy from Engerrand (Limsa Lominsa Lower Decks), 15 gil each",
+    /// roadmap 7.3b); null when none would, or for craft nodes.
+    /// </summary>
+    public string? SourceLabel { get; init; }
+
     public bool Timed { get; init; }
 
     public ProductionMode Mode { get; init; }
@@ -73,7 +80,12 @@ public sealed record ZoneRollup(uint TerritoryId, IReadOnlyList<ZoneItem> Items)
     public int TotalAmount => Items.Sum(i => i.Amount);
 }
 
-public sealed record ZoneItem(uint ItemId, int Amount, uint JobId, bool Timed);
+/// <summary>
+/// One raw material in a zone roll-up. <paramref name="SourceLabel"/> is set
+/// when a material source (vendor, exchange, …) would supply it instead of a
+/// node (roadmap 7.3b), in which case the zone is 0 and no trip is planned.
+/// </summary>
+public sealed record ZoneItem(uint ItemId, int Amount, uint JobId, bool Timed, string? SourceLabel = null);
 
 /// <summary>Craft steps grouped by job (how many job switches, how much work each).</summary>
 public sealed record JobRollup(uint JobId, int Steps, int Crafts);
@@ -132,16 +144,23 @@ public sealed class PlanTree
     /// <summary>Intermediate crafts the plan synthesizes normally to HQ (roadmap 7.22).</summary>
     public int TotalHqCrafts => Plan.CraftSteps.Sum(s => s.HqCrafts);
 
+    /// <summary>
+    /// Builds the tree. <paramref name="sourceLabel"/> (roadmap 7.3b) is
+    /// asked about every raw material still missing: when a registered
+    /// material source would supply it, its answer is shown instead of the
+    /// gathering zone.
+    /// </summary>
     public static PlanTree Build(
         ProductionPlan plan,
         IRecipeProvider recipes,
         Func<uint, int> ownedOf,
         Func<uint, int> hqOwnedOf,
-        Func<uint, GatheringLocation?> zones)
+        Func<uint, GatheringLocation?> zones,
+        Func<uint, string?>? sourceLabel = null)
     {
-        var walk = new Walk(plan, recipes, ownedOf, hqOwnedOf, zones);
+        var walk = new Walk(plan, recipes, ownedOf, hqOwnedOf, zones, sourceLabel);
         var targets = walk.Run();
-        return new PlanTree(plan, targets, ZoneRollups(plan, zones), JobRollups(plan, recipes), walk.HqUses());
+        return new PlanTree(plan, targets, ZoneRollups(plan, zones, sourceLabel), JobRollups(plan, recipes), walk.HqUses());
     }
 
     /// <summary>Every node in tree order (pre-order), for callers that want a flat pass.</summary>
@@ -212,10 +231,12 @@ public sealed class PlanTree
             yield return "Gathering by zone:";
             foreach (var zone in Zones)
             {
-                var label = zone.TerritoryId == 0 ? "unknown zone" : zoneName(zone.TerritoryId);
                 var items = string.Join(", ", zone.Items.Select(i =>
-                    $"{recipes.GetItemName(i.ItemId)} ×{i.Amount}" + (i.JobId != 0 ? $" ({jobName(i.JobId)}{(i.Timed ? ", timed" : "")})" : i.Timed ? " (timed)" : "")));
-                yield return $"  {label}: {items}";
+                    $"{recipes.GetItemName(i.ItemId)} ×{i.Amount}"
+                    + (i.SourceLabel is { Length: > 0 } source ? $" ({source})"
+                        : i.JobId != 0 ? $" ({jobName(i.JobId)}{(i.Timed ? ", timed" : "")})"
+                        : i.Timed ? " (timed)" : "")));
+                yield return $"  {ZoneLabel(zone, zoneName)}: {items}";
             }
         }
 
@@ -236,6 +257,16 @@ public sealed class PlanTree
 
     public string Render(IRecipeProvider recipes, Func<uint, string> jobName, Func<uint, string> zoneName, PlanProgress? progress = null) =>
         string.Join("\n", RenderLines(recipes, jobName, zoneName, progress));
+
+    /// <summary>
+    /// What a zone roll-up is called: the zone's name, "bought" when every
+    /// material in it comes from a source instead of a node (roadmap 7.3b),
+    /// "unknown zone" otherwise. Shared by the text and the panel.
+    /// </summary>
+    public static string ZoneLabel(ZoneRollup zone, Func<uint, string> zoneName) =>
+        zone.TerritoryId != 0 ? zoneName(zone.TerritoryId)
+        : zone.Items.All(i => i.SourceLabel is { Length: > 0 }) ? "bought"
+        : "unknown zone";
 
     /// <summary>The per-node detail after the name: crafts × yield, job, need / owned / missing, mode; shared by the text and the panel.</summary>
     public static string Describe(PlanNode node, Func<uint, string> jobName, Func<uint, string> zoneName)
@@ -276,11 +307,20 @@ public sealed class PlanTree
             sb.Append($"need {node.Need}, owned {node.Owned}, missing {node.Missing}");
             if (node.Missing > 0)
             {
-                sb.Append(node.JobId != 0 ? $" [{jobName(node.JobId)}]" : " [no known node]");
-                if (node.TerritoryId != 0)
-                    sb.Append($" {zoneName(node.TerritoryId)}");
-                if (node.Timed)
-                    sb.Append(" (timed)");
+                // A registered source (7.3b) speaks for the material instead
+                // of the gathering zone: "buy from Engerrand (Limsa …)".
+                if (node.SourceLabel is { Length: > 0 } source)
+                {
+                    sb.Append($" [{source}]");
+                }
+                else
+                {
+                    sb.Append(node.JobId != 0 ? $" [{jobName(node.JobId)}]" : " [no known node]");
+                    if (node.TerritoryId != 0)
+                        sb.Append($" {zoneName(node.TerritoryId)}");
+                    if (node.Timed)
+                        sb.Append(" (timed)");
+                }
             }
         }
 
@@ -305,13 +345,17 @@ public sealed class PlanTree
         }
     }
 
-    private static IReadOnlyList<ZoneRollup> ZoneRollups(ProductionPlan plan, Func<uint, GatheringLocation?> zones)
+    private static IReadOnlyList<ZoneRollup> ZoneRollups(
+        ProductionPlan plan, Func<uint, GatheringLocation?> zones, Func<uint, string?>? sourceLabel)
     {
         var order = new List<uint>();
         var byZone = new Dictionary<uint, List<ZoneItem>>();
         foreach (var raw in plan.RawMaterials)
         {
-            var location = zones(raw.ItemId);
+            // A material a source supplies (7.3b) is no trip: it lands in the
+            // zone-less group with the source's own label.
+            var label = sourceLabel?.Invoke(raw.ItemId);
+            var location = label == null ? zones(raw.ItemId) : null;
             var territory = location?.TerritoryId ?? 0;
             if (!byZone.TryGetValue(territory, out var items))
             {
@@ -320,7 +364,7 @@ public sealed class PlanTree
                 order.Add(territory);
             }
 
-            items.Add(new ZoneItem(raw.ItemId, raw.Amount, location?.JobId ?? 0, location?.IsTimed ?? false));
+            items.Add(new ZoneItem(raw.ItemId, raw.Amount, location?.JobId ?? 0, location?.IsTimed ?? false, label));
         }
 
         // Unknown zone last: it is the odd one out, not a teleport.
@@ -353,6 +397,7 @@ public sealed class PlanTree
         private readonly Func<uint, int> ownedOf;
         private readonly Func<uint, int> hqOwnedOf;
         private readonly Func<uint, GatheringLocation?> zones;
+        private readonly Func<uint, string?>? sourceLabel;
         private readonly Dictionary<uint, int> stepIndex = new();
         private readonly Dictionary<uint, int> stock = new();
         private readonly Dictionary<uint, int> hqStock = new();
@@ -360,13 +405,16 @@ public sealed class PlanTree
         private readonly HashSet<uint> expanding = [];
         private readonly List<HqUse> hqUses = [];
 
-        public Walk(ProductionPlan plan, IRecipeProvider recipes, Func<uint, int> ownedOf, Func<uint, int> hqOwnedOf, Func<uint, GatheringLocation?> zones)
+        public Walk(
+            ProductionPlan plan, IRecipeProvider recipes, Func<uint, int> ownedOf, Func<uint, int> hqOwnedOf,
+            Func<uint, GatheringLocation?> zones, Func<uint, string?>? sourceLabel)
         {
             this.plan = plan;
             this.recipes = recipes;
             this.ownedOf = ownedOf;
             this.hqOwnedOf = hqOwnedOf;
             this.zones = zones;
+            this.sourceLabel = sourceLabel;
             for (var i = 0; i < plan.CraftSteps.Count; i++)
                 stepIndex[plan.CraftSteps[i].ItemId] = i;
         }
@@ -439,12 +487,14 @@ public sealed class PlanTree
             if (step == null)
             {
                 // Raw in the plan (not craftable, or a locked book made it so).
-                var location = remaining > 0 ? zones(itemId) : null;
+                // A registered source (7.3b) answers for it before the zone does.
+                var label = remaining > 0 ? sourceLabel?.Invoke(itemId) : null;
+                var location = remaining > 0 && label == null ? zones(itemId) : null;
                 return new PlanNode
                 {
                     ItemId = itemId, IsTarget = target != null, Need = need, Owned = owned, FromStock = fromStock, HqFromStock = hqFromStock,
                     Missing = remaining, JobId = location?.JobId ?? 0, TerritoryId = location?.TerritoryId ?? 0,
-                    Timed = location?.IsTimed ?? false, Mode = mode,
+                    Timed = location?.IsTimed ?? false, Mode = mode, SourceLabel = label,
                 };
             }
 

@@ -1292,4 +1292,56 @@ public sealed class DalamudGameBridge : IGameBridge
 
         return (uint)playerState->Attributes[baseParamId];
     }
+
+    // ---- Shops (7.3b) ----
+
+    public unsafe long Gil
+    {
+        get
+        {
+            var inventory = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+            return inventory == null ? 0L : inventory->GetGil();
+        }
+    }
+
+    /// <summary>The same teleport list <see cref="TeleportToTerritory"/> searches, asked without teleporting.</summary>
+    public bool CanTeleportTo(uint territoryId) =>
+        territoryId != 0 && Plugin.AetheryteList.Any(entry => entry.TerritoryId == territoryId);
+
+    /// <summary>
+    /// The shop's own buy path: the event handler behind the Shop window
+    /// holds the item list, and ExecuteBuy buys the row BuyItemIndex points
+    /// at (FFXIVClientStructs
+    /// <c>Client.Game.Event.ShopEventHandler.ExecuteBuy(int)</c>, whose doc
+    /// says "BuyItemIndex field must be set before calling this function").
+    /// The handler is reached through its agent proxy, as the Shop addon
+    /// itself does.
+    /// </summary>
+    public unsafe bool BuyFromShop(uint itemId, int count)
+    {
+        if (count <= 0 || !IsAddonVisible("Shop"))
+            return false;
+
+        var proxy = FFXIVClientStructs.FFXIV.Client.Game.Event.ShopEventHandler.AgentProxy.Instance();
+        if (proxy == null || proxy->Handler == null)
+            return false;
+
+        var handler = proxy->Handler;
+        var items = handler->Items;
+        var listed = System.Math.Min(handler->ItemsCount, items.Length);
+        for (var i = 0; i < listed; i++)
+        {
+            if (items[i].ItemId != itemId)
+                continue;
+
+            Plugin.Log.Information($"[Vendor] Buying {count}× item {itemId} at shop row {i} ({items[i].PriceBuy} gil each).");
+            handler->BuyItemIndex = i;
+            handler->ExecuteBuy(count);
+            return true;
+        }
+
+        return false;
+    }
+
+    public void CloseShop() => FireAddonCallbackInt("Shop", -1);
 }

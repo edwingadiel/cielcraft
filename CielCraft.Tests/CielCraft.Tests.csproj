@@ -22,6 +22,9 @@
     -->
     <Compile Include="../CielCraft/Game/IGameBridge.cs" Link="Seams/IGameBridge.cs" />
     <Compile Include="../CielCraft/Game/MaintenanceService.cs" Link="Seams/MaintenanceService.cs" />
+    <!-- The vendor source (roadmap 7.3b) is Dalamud-free too; only its shop
+         database reads the sheets, and tests hand it an IVendorDirectory. -->
+    <Compile Include="../CielCraft/Sourcing/VendorSource.cs" Link="Seams/VendorSource.cs" />
   </ItemGroup>
   <ItemGroup>
     <!-- Host-platform native solver, if built locally (cargo release build in native/cielcraft-raphael). -->

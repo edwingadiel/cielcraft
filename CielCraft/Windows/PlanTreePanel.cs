@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Numerics;
 using CielCraft.Core;
@@ -44,6 +45,41 @@ public sealed class PlanTreePanel
     /// (null clears it).
     /// </summary>
     public static void Show(ProductionPlan? plan) => previewPlan = plan;
+
+    /// <summary>
+    /// How a registered material source would supply a raw material (roadmap
+    /// 7.3b); raw nodes show it instead of a gathering zone. The coordinator
+    /// sets it in Plugin.cs once the sources exist — see
+    /// <see cref="UseSources"/>. Null (the default) keeps the M2 behaviour.
+    /// </summary>
+    public static Func<uint, string?>? SourceLabel { get; set; }
+
+    /// <summary>
+    /// Wires <see cref="SourceLabel"/> to the sources the production runner
+    /// was given: the first source that would supply the item names itself.
+    /// One coordinator line: <c>PlanTreePanel.UseSources(sources);</c>.
+    /// </summary>
+    public static void UseSources(IReadOnlyList<IMaterialSource> sources)
+    {
+        SourceLabel = itemId =>
+        {
+            foreach (var source in sources)
+            {
+                if (source is Sourcing.VendorSource vendor)
+                {
+                    if (vendor.SourceLabel(itemId) is { } label)
+                        return label;
+                }
+                else if (source.Offer(itemId, 1) is { } offer)
+                {
+                    return offer.Description;
+                }
+            }
+
+            return null;
+        };
+        tree = null;
+    }
 
     public void Draw()
     {
@@ -118,7 +154,10 @@ public sealed class PlanTreePanel
     private void DrawDetail(PlanNode node, string mark, PlanProgress? progress)
     {
         var detail = PlanTree.Describe(node, plugin.RecipeProvider.GetJobAbbreviation, ZoneName);
-        var color = node.StepIndex < 0 && !node.MaterialsOnly && node.Missing > 0 ? UiTheme.Warning : UiTheme.Muted;
+        // A material a source will supply (7.3b) is covered, not a warning.
+        var color = node.StepIndex < 0 && !node.MaterialsOnly && node.Missing > 0 && node.SourceLabel == null
+            ? UiTheme.Warning
+            : UiTheme.Muted;
         ImGui.TextColored(color, detail);
 
         if (mark.Length == 0)
@@ -147,18 +186,25 @@ public sealed class PlanTreePanel
         var provider = plugin.RecipeProvider;
         ImGui.Spacing();
 
-        if (current.Zones.Count > 0 && ImGui.TreeNodeEx($"Gathering by zone ({current.Zones.Count})##zones", ImGuiTreeNodeFlags.SpanAvailWidth))
+        if (current.Zones.Count > 0 && ImGui.TreeNodeEx($"Raw materials by zone ({current.Zones.Count})##zones", ImGuiTreeNodeFlags.SpanAvailWidth))
         {
             foreach (var zone in current.Zones)
             {
-                var label = zone.TerritoryId == 0 ? "unknown zone" : ZoneName(zone.TerritoryId);
-                ImGui.TextColored(zone.TerritoryId == 0 ? UiTheme.Warning : UiTheme.Accent, label);
+                // A zone-less group whose items all come from a source (7.3b)
+                // is "bought", not an unknown zone.
+                var sourced = zone.TerritoryId == 0 && zone.Items.All(i => i.SourceLabel is { Length: > 0 });
+                ImGui.TextColored(zone.TerritoryId == 0 && !sourced ? UiTheme.Warning : UiTheme.Accent, PlanTree.ZoneLabel(zone, ZoneName));
                 ImGui.SameLine(0, 6);
                 ImGui.TextColored(UiTheme.Muted, $"{zone.TotalAmount} item(s)");
                 foreach (var item in zone.Items)
                 {
                     ImGui.BulletText($"{provider.GetItemName(item.ItemId)} ×{item.Amount}");
-                    if (item.JobId != 0 || item.Timed)
+                    if (item.SourceLabel is { Length: > 0 } source)
+                    {
+                        ImGui.SameLine(0, 6);
+                        ImGui.TextColored(UiTheme.Muted, source);
+                    }
+                    else if (item.JobId != 0 || item.Timed)
                     {
                         ImGui.SameLine(0, 6);
                         ImGui.TextColored(UiTheme.Muted,
@@ -213,7 +259,9 @@ public sealed class PlanTreePanel
         try
         {
             var bridge = plugin.GameBridge;
-            tree = PlanTree.Build(plan, plugin.RecipeProvider, bridge.GetItemCount, bridge.GetHqItemCount, plugin.GatheringDatabase.FindLocation);
+            tree = PlanTree.Build(
+                plan, plugin.RecipeProvider, bridge.GetItemCount, bridge.GetHqItemCount,
+                plugin.GatheringDatabase.FindLocation, SourceLabel);
             buildError = null;
         }
         catch (Exception e)

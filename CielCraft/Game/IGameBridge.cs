@@ -231,6 +231,29 @@ public interface IGameBridge : ITravelBridge
 
     /// <summary>The item's recast timer is running (cordials share one).</summary>
     bool IsItemOnCooldown(uint itemId);
+
+    // ---- Shops (7.3b) ----
+
+    /// <summary>Gil the character carries; 0 when not logged in.</summary>
+    long Gil { get; }
+
+    /// <summary>
+    /// An aetheryte of the territory is in the teleport list — whether a
+    /// vendor there can be reached at all (roadmap 7.3b). The current zone
+    /// does not need one; callers check that separately.
+    /// </summary>
+    bool CanTeleportTo(uint territoryId);
+
+    /// <summary>
+    /// Buys <paramref name="count"/> of the item from the open Shop window
+    /// (roadmap 7.3b). False when the window is shut or the shop does not
+    /// list the item. The purchase is verified by the caller's inventory
+    /// delta, never by this return value (spec §34).
+    /// </summary>
+    bool BuyFromShop(uint itemId, int count);
+
+    /// <summary>Closes the Shop window if it is open.</summary>
+    void CloseShop();
 }
 
 /// <summary>One equipped piece's spiritbond (roadmap 7.2): the equipment slot, the item and 0..10000.</summary>

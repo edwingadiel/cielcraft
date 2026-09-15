@@ -189,6 +189,12 @@ public class MaintenanceTests
         public bool FillHqIngredients() => throw Unexpected();
         public bool FillIngredients(bool preferHq) => throw Unexpected();
         public bool AreIngredientsAssigned() => throw Unexpected();
+
+        // ---- Shops (7.3b) ----
+        public long Gil => throw Unexpected();
+        public bool CanTeleportTo(uint territoryId) => throw Unexpected();
+        public bool BuyFromShop(uint itemId, int count) => throw Unexpected();
+        public void CloseShop() => throw Unexpected();
     }
 
     private const uint Gloves = 1001;
