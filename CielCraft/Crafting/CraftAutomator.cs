@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using CielCraft.Core;
 using CielCraft.Game;
-using Dalamud.Plugin.Services;
 
 namespace CielCraft.Crafting;
 
@@ -22,14 +21,15 @@ public enum AutomationState
 /// the next. Paces off the game's own action-readiness — no sleeps. Anything
 /// unexpected pauses with a reason instead of blindly continuing (spec §49).
 /// </summary>
-public sealed class CraftAutomator : IDisposable
+public sealed class CraftAutomator : AutomationMachine<AutomationState>, IDisposable
 {
     private static readonly TimeSpan ReadyTimeout = TimeSpan.FromSeconds(10);
 
     private readonly IGameBridge gameBridge;
     private readonly CraftStateMonitor craftMonitor;
     private readonly ActionExecutor executor;
-    private readonly Configuration configuration;
+    private readonly AutomationSettings configuration;
+    private readonly IActionResolver actionResolver;
 
     private IReadOnlyList<uint> rotation = [];
     private uint classJobId;
@@ -44,8 +44,6 @@ public sealed class CraftAutomator : IDisposable
     private uint[] remainingCache = [];
     private DateTime? exhaustedAt;
 
-    public AutomationState State { get; private set; } = AutomationState.Idle;
-    public string StatusText { get; private set; } = "Idle.";
     public int TotalActions => rotation.Count;
     public int CompletedActions => Math.Min(nextIndex, rotation.Count);
     public uint? NextRaphaelAction => nextIndex < rotation.Count ? rotation[nextIndex] : null;
@@ -54,20 +52,23 @@ public sealed class CraftAutomator : IDisposable
         IGameBridge gameBridge,
         CraftStateMonitor craftMonitor,
         ActionExecutor executor,
-        Configuration configuration)
+        AutomationSettings configuration,
+        IActionResolver actionResolver,
+        ILog log,
+        IClock clock)
+        : base(log, clock, "[Craft]", AutomationState.Idle, "Idle.")
     {
         this.gameBridge = gameBridge;
         this.craftMonitor = craftMonitor;
         this.executor = executor;
         this.configuration = configuration;
+        this.actionResolver = actionResolver;
 
         executor.ActionResolved += OnActionResolved;
-        Plugin.Framework.Update += OnUpdate;
     }
 
     public void Dispose()
     {
-        Plugin.Framework.Update -= OnUpdate;
         executor.ActionResolved -= OnActionResolved;
     }
 
@@ -142,7 +143,7 @@ public sealed class CraftAutomator : IDisposable
 
         // A grace window frozen by the pause must restart, not expire instantly.
         if (exhaustedAt != null)
-            exhaustedAt = DateTime.UtcNow;
+            exhaustedAt = Clock.UtcNow;
 
         waitingForReady = false;
         Transition(AutomationState.Running, $"Running: {CompletedActions}/{rotation.Count} actions.");
@@ -200,7 +201,7 @@ public sealed class CraftAutomator : IDisposable
                 var current = craftMonitor.Current;
                 if (current == null || current.Progress >= current.MaxProgress)
                 {
-                    exhaustedAt = DateTime.UtcNow;
+                    exhaustedAt = Clock.UtcNow;
                     StatusText = $"{(State == AutomationState.Paused ? "Paused" : "Running")}: rotation done, awaiting craft end.";
                 }
                 else if (State == AutomationState.Running)
@@ -243,19 +244,7 @@ public sealed class CraftAutomator : IDisposable
         }
     }
 
-    private void OnUpdate(IFramework framework)
-    {
-        try
-        {
-            Tick(framework);
-        }
-        catch (Exception e)
-        {
-            Plugin.Log.TickError(nameof(CraftAutomator), e);
-        }
-    }
-
-    private void Tick(IFramework framework)
+    protected override void OnTick()
     {
         if (State != AutomationState.Running)
             return;
@@ -282,7 +271,7 @@ public sealed class CraftAutomator : IDisposable
         {
             // Progress was complete when the plan ran out; the craft should end
             // on its own within moments. The ceiling only guards a stalled client.
-            if (DateTime.UtcNow - exhausted > TimeSpan.FromSeconds(10))
+            if (Clock.UtcNow - exhausted > TimeSpan.FromSeconds(10))
             {
                 exhaustedAt = null;
                 Pause("the craft did not end after the rotation completed");
@@ -303,7 +292,7 @@ public sealed class CraftAutomator : IDisposable
             return;
         }
 
-        var resolved = CraftActionResolver.ResolveForJob(decision.ActionId, classJobId);
+        var resolved = actionResolver.ResolveForJob(decision.ActionId, classJobId);
         if (resolved == null)
         {
             Pause($"could not resolve action {decision.ActionId} for job {classJobId}");
@@ -317,9 +306,9 @@ public sealed class CraftAutomator : IDisposable
             if (!waitingForReady)
             {
                 waitingForReady = true;
-                waitingSince = DateTime.UtcNow;
+                waitingSince = Clock.UtcNow;
             }
-            else if (DateTime.UtcNow - waitingSince > ReadyTimeout)
+            else if (Clock.UtcNow - waitingSince > ReadyTimeout)
             {
                 Pause($"action {resolved.Value} did not become usable within {ReadyTimeout.TotalSeconds:F0}s");
             }
@@ -330,12 +319,12 @@ public sealed class CraftAutomator : IDisposable
         waitingForReady = false;
 
         if (decision.DeviationReason != null)
-            Plugin.Log.Information($"[Adaptive] {decision.DeviationReason}.");
+            Log.Information($"[Adaptive] {decision.DeviationReason}.");
 
         pendingConsume = decision.ConsumeFromPlan;
 
-        Plugin.Log.Information(
-            $"[Craft] Executing {CielCraft.Raphael.RaphaelActionNames.NameOf(decision.ActionId)} " +
+        Log.Information(
+            $"[Craft] Executing {RaphaelActionNames.NameOf(decision.ActionId)} " +
             $"(plan index {nextIndex}/{rotation.Count}, consumes {decision.ConsumeFromPlan}) as action {resolved.Value}.");
 
         if (!executor.TryExecute(resolved.Value, AdvancesStep(decision.ActionId)))
@@ -353,21 +342,14 @@ public sealed class CraftAutomator : IDisposable
         return remainingCache.Length > 0 ? new AdaptiveDecision(remainingCache[0], 1, null) : null;
     }
 
-    private void Transition(AutomationState state, string statusText)
-    {
-        State = state;
-        StatusText = statusText;
-        Plugin.Log.Information($"[Craft] {statusText}");
-    }
-
     /// <summary>Internal state for the diagnostic report.</summary>
-    public IEnumerable<string> Describe()
+    public override IEnumerable<string> Describe()
     {
         yield return $"State {State} — {StatusText}";
         yield return $"Plan index {nextIndex}/{rotation.Count}; job {classJobId}; adaptive {adaptive}; base progress {baseProgress}; level {crafterLevel}; target quality {targetQuality}; pendingConsume {pendingConsume}";
         yield return $"waitingForReady {waitingForReady} (since {waitingSince:HH:mm:ss}Z); exhaustedAt {(exhaustedAt is { } at ? at.ToString("HH:mm:ss") + "Z" : "-")}";
         if (rotation.Count > 0)
             yield return "Rotation: " + string.Join(", ", rotation.Select((action, i) =>
-                (i == nextIndex ? ">" : "") + CielCraft.Raphael.RaphaelActionNames.NameOf(action)));
+                (i == nextIndex ? ">" : "") + RaphaelActionNames.NameOf(action)));
     }
 }

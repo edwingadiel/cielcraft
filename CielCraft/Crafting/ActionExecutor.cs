@@ -1,8 +1,7 @@
 using System;
+using System.Collections.Generic;
 using CielCraft.Core;
 using CielCraft.Game;
-using Dalamud.Plugin.Services;
-using System.Collections.Generic;
 
 namespace CielCraft.Crafting;
 
@@ -16,8 +15,9 @@ public enum ExecutorState
 /// Executes a single craft action and observes its resolution through
 /// game-state transitions — never sleeps (spec §11/§12). One action at a
 /// time; the next request is refused until the previous one resolved.
+/// Ticked after <see cref="CraftStateMonitor"/> so each frame sees the fresh snapshot.
 /// </summary>
-public sealed class ActionExecutor : IDisposable
+public sealed class ActionExecutor : AutomationMachine<ExecutorState>
 {
     private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(6);
 
@@ -28,26 +28,17 @@ public sealed class ActionExecutor : IDisposable
     private DateTime requestedAt;
     private bool expectStepAdvance = true;
 
-    public ExecutorState State { get; private set; } = ExecutorState.Idle;
-
     /// <summary>Human-readable result of the last request, for the debug UI.</summary>
-    public string LastResult { get; private set; } = "No action executed yet.";
+    public string LastResult => StatusText;
 
     /// <summary>Raised on the framework thread when a requested action resolves.</summary>
     public event Action<ActionOutcome>? ActionResolved;
 
-    public ActionExecutor(IGameBridge gameBridge, CraftStateMonitor craftMonitor)
+    public ActionExecutor(IGameBridge gameBridge, CraftStateMonitor craftMonitor, ILog log, IClock clock)
+        : base(log, clock, "[Craft]", ExecutorState.Idle, "No action executed yet.")
     {
         this.gameBridge = gameBridge;
         this.craftMonitor = craftMonitor;
-
-        // Subscribed after CraftStateMonitor so each tick sees the fresh snapshot.
-        Plugin.Framework.Update += OnUpdate;
-    }
-
-    public void Dispose()
-    {
-        Plugin.Framework.Update -= OnUpdate;
     }
 
     /// <summary>Pre-execution guard list per spec §12. Returns false with a logged reason.</summary>
@@ -70,34 +61,21 @@ public sealed class ActionExecutor : IDisposable
             return Reject($"the game rejected action {actionId}");
 
         baseline = current;
-        requestedAt = DateTime.UtcNow;
+        requestedAt = Clock.UtcNow;
         expectStepAdvance = advancesStep;
-        State = ExecutorState.AwaitingResolution;
-        LastResult = $"Action {actionId} requested at step {current.Step}...";
-        Plugin.Log.Information($"[Craft] Requested action {actionId} at step {current.Step}.");
+        SetState(ExecutorState.AwaitingResolution, $"Action {actionId} requested at step {current.Step}...");
+        Log.Information($"[Craft] Requested action {actionId} at step {current.Step}.");
         return true;
     }
 
     private bool Reject(string reason)
     {
-        LastResult = $"Rejected: {reason}.";
-        Plugin.Log.Warning($"[Craft] Action rejected: {reason}.");
+        StatusText = $"Rejected: {reason}.";
+        Log.Warning($"[Craft] Action rejected: {reason}.");
         return false;
     }
 
-    private void OnUpdate(IFramework framework)
-    {
-        try
-        {
-            Tick(framework);
-        }
-        catch (Exception e)
-        {
-            Plugin.Log.TickError(nameof(ActionExecutor), e);
-        }
-    }
-
-    private void Tick(IFramework framework)
+    protected override void OnTick()
     {
         if (State != ExecutorState.AwaitingResolution || baseline == null)
             return;
@@ -106,7 +84,7 @@ public sealed class ActionExecutor : IDisposable
             baseline,
             craftMonitor.Current,
             gameBridge.IsCrafting,
-            DateTime.UtcNow - requestedAt,
+            Clock.UtcNow - requestedAt,
             Timeout,
             expectStepAdvance);
 
@@ -114,7 +92,7 @@ public sealed class ActionExecutor : IDisposable
             return;
 
         var current = craftMonitor.Current;
-        LastResult = outcome switch
+        var result = outcome switch
         {
             ActionOutcome.StepAdvanced =>
                 $"Resolved: step {baseline.Step} -> {current!.Step}, " +
@@ -124,15 +102,15 @@ public sealed class ActionExecutor : IDisposable
             _ => "Timed out: no state transition observed.",
         };
 
-        Plugin.Log.Information($"[Craft] {LastResult}");
-        State = ExecutorState.Idle;
+        Log.Information($"[Craft] {result}");
+        SetState(ExecutorState.Idle, result);
         baseline = null;
 
         ActionResolved?.Invoke(outcome);
     }
 
     /// <summary>Internal state for the diagnostic report.</summary>
-    public IEnumerable<string> Describe()
+    public override IEnumerable<string> Describe()
     {
         yield return $"State {State}; last result: {LastResult}";
         if (baseline != null)

@@ -1,7 +1,6 @@
 using System;
 using CielCraft.Core;
 using CielCraft.Game;
-using Dalamud.Plugin.Services;
 using System.Collections.Generic;
 
 namespace CielCraft.Crafting;
@@ -11,13 +10,15 @@ namespace CielCraft.Crafting;
 /// entry is planned and handed to the ProductionRunner as the previous one
 /// completes. A failure or pause holds the queue for the user.
 /// </summary>
-public sealed class ProductionQueue : IDisposable
+public sealed class ProductionQueue
 {
     private readonly IGameBridge gameBridge;
     private readonly ProductionRunner runner;
     private readonly DalamudRecipeProvider recipeProvider;
     private readonly Configuration configuration;
     private readonly Func<CharacterCapabilities> capabilities;
+    private readonly IUserNotifier notifier;
+    private readonly ILog log;
 
     private bool startedCurrent;
 
@@ -29,6 +30,8 @@ public sealed class ProductionQueue : IDisposable
         ProductionRunner runner,
         DalamudRecipeProvider recipeProvider,
         Configuration configuration,
+        IUserNotifier notifier,
+        ILog log,
         Func<CharacterCapabilities>? capabilities = null)
     {
         this.gameBridge = gameBridge;
@@ -36,13 +39,8 @@ public sealed class ProductionQueue : IDisposable
         this.recipeProvider = recipeProvider;
         this.configuration = configuration;
         this.capabilities = capabilities ?? (() => CharacterCapabilities.Unknown);
-
-        Plugin.Framework.Update += OnUpdate;
-    }
-
-    public void Dispose()
-    {
-        Plugin.Framework.Update -= OnUpdate;
+        this.notifier = notifier;
+        this.log = log;
     }
 
     public int Count => configuration.QueueItems.Count;
@@ -77,7 +75,7 @@ public sealed class ProductionQueue : IDisposable
 
         Running = true;
         StatusText = $"Queue running ({Count} target(s)).";
-        Plugin.Log.Information($"[Production] {StatusText}");
+        log.Information($"[Production] {StatusText}");
     }
 
     public void StopQueue()
@@ -105,19 +103,20 @@ public sealed class ProductionQueue : IDisposable
         configuration.Save();
     }
 
-    private void OnUpdate(IFramework framework)
+    /// <summary>Drive one frame. Exceptions are logged (rate-limited) and swallowed so one bad frame never kills the run.</summary>
+    public void Tick()
     {
         try
         {
-            Tick(framework);
+            Advance();
         }
         catch (Exception e)
         {
-            Plugin.Log.TickError(nameof(ProductionQueue), e);
+            log.TickError(nameof(ProductionQueue), e);
         }
     }
 
-    private void Tick(IFramework framework)
+    private void Advance()
     {
         if (!Running)
             return;
@@ -157,7 +156,7 @@ public sealed class ProductionQueue : IDisposable
             Running = false;
             StatusText = "Queue complete.";
             if (configuration.ChatNotifications)
-                Plugin.ChatGui.Print("Production queue complete.", "CielCraft");
+                notifier.Print("Production queue complete.");
             return;
         }
 

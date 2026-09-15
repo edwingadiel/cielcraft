@@ -413,7 +413,7 @@ public class DebugWindow : Window, IDisposable
         if (ImGui.BeginChild("##raphaelSolution", new Vector2(0, 150), true))
         {
             for (var i = 0; i < solution.ActionIds.Count; i++)
-                ImGui.TextUnformatted($"{i + 1,2}. {CielCraft.Raphael.RaphaelActionNames.NameOf(solution.ActionIds[i])}");
+                ImGui.TextUnformatted($"{i + 1,2}. {RaphaelActionNames.NameOf(solution.ActionIds[i])}");
         }
 
         ImGui.EndChild();
@@ -461,6 +461,6 @@ public class DebugWindow : Window, IDisposable
         ImGui.BulletText($"Status: {automator.StatusText}");
 
         if (automator.NextRaphaelAction is { } next)
-            ImGui.BulletText($"Next action: {CielCraft.Raphael.RaphaelActionNames.NameOf(next)}");
+            ImGui.BulletText($"Next action: {RaphaelActionNames.NameOf(next)}");
     }
 }

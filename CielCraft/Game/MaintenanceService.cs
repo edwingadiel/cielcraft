@@ -29,11 +29,13 @@ public sealed class MaintenanceService
     }
 
     private readonly IGameBridge gameBridge;
-    private readonly Configuration configuration;
+    private readonly AutomationSettings configuration;
+    private readonly ILog log;
+    private readonly IClock clock;
+    private readonly Throttle attempts;
 
     private Phase phase = Phase.Idle;
     private DateTime phaseStartedAt;
-    private DateTime lastAttemptAt;
     private DateTime lastIdleCheckAt;
     private bool foodFailedThisSession;
 
@@ -42,10 +44,13 @@ public sealed class MaintenanceService
     /// <summary>Set when maintenance is required but impossible; callers should pause with this reason.</summary>
     public string? BlockedReason { get; private set; }
 
-    public MaintenanceService(IGameBridge gameBridge, Configuration configuration)
+    public MaintenanceService(IGameBridge gameBridge, AutomationSettings configuration, ILog log, IClock clock)
     {
         this.gameBridge = gameBridge;
         this.configuration = configuration;
+        this.log = log;
+        this.clock = clock;
+        attempts = new Throttle(clock, RetryInterval);
     }
 
     private bool NeedsRepair =>
@@ -74,10 +79,10 @@ public sealed class MaintenanceService
             case Phase.Idle:
                 // Gear condition and food buffs change on a minutes timescale;
                 // polling the native containers every frame is pure waste.
-                if (DateTime.UtcNow - lastIdleCheckAt < TimeSpan.FromSeconds(1))
+                if (clock.UtcNow - lastIdleCheckAt < TimeSpan.FromSeconds(1))
                     return false;
 
-                lastIdleCheckAt = DateTime.UtcNow;
+                lastIdleCheckAt = clock.UtcNow;
                 if (NeedsRepair)
                     return StartRepair();
                 if (NeedsFood)
@@ -94,7 +99,7 @@ public sealed class MaintenanceService
                 if (TimedOut("the repair window did not open"))
                     return false;
 
-                Throttled(() =>
+                attempts.Try(() =>
                 {
                     gameBridge.CloseRecipeNote();
                     gameBridge.OpenRepairWindow();
@@ -111,7 +116,7 @@ public sealed class MaintenanceService
                 if (TimedOut("repair-all did not respond"))
                     return false;
 
-                Throttled(() => gameBridge.FireAddonCallbackInt("Repair", 0));
+                attempts.Try(() => gameBridge.FireAddonCallbackInt("Repair", 0));
                 return true;
 
             case Phase.Confirming:
@@ -121,7 +126,7 @@ public sealed class MaintenanceService
                     return true;
                 }
 
-                Throttled(() => gameBridge.FireAddonCallbackInt("SelectYesno", 0));
+                attempts.Try(() => gameBridge.FireAddonCallbackInt("SelectYesno", 0));
                 if (TimedOut("the repair confirmation did not respond"))
                     return false;
 
@@ -130,7 +135,7 @@ public sealed class MaintenanceService
             case Phase.WaitingForRepair:
                 if (!NeedsRepair)
                 {
-                    Plugin.Log.Information("[Maintenance] Equipment repaired.");
+                    log.Information("[Maintenance] Equipment repaired.");
                     EnterPhase(Phase.ClosingRepair, "Closing the repair window...");
                     return true;
                 }
@@ -147,7 +152,7 @@ public sealed class MaintenanceService
                     return NeedsFood && StartFood();
                 }
 
-                Throttled(CloseRepairUi);
+                attempts.Try(CloseRepairUi);
                 if (TimedOut("the repair window did not close"))
                     return false;
 
@@ -156,21 +161,21 @@ public sealed class MaintenanceService
             case Phase.EatingFood:
                 if (gameBridge.GetFoodBuffRemainingSeconds() >= FoodRefreshBelowSeconds)
                 {
-                    Plugin.Log.Information("[Maintenance] Food refreshed.");
+                    log.Information("[Maintenance] Food refreshed.");
                     phase = Phase.Idle;
                     return false;
                 }
 
-                if (DateTime.UtcNow - phaseStartedAt > PhaseTimeout)
+                if (clock.UtcNow - phaseStartedAt > PhaseTimeout)
                 {
                     // Non-fatal: keep running without food rather than stalling.
-                    Plugin.Log.Warning("[Maintenance] Could not eat the configured food; continuing without it.");
+                    log.Warning("[Maintenance] Could not eat the configured food; continuing without it.");
                     foodFailedThisSession = true;
                     phase = Phase.Idle;
                     return false;
                 }
 
-                Throttled(() =>
+                attempts.Try(() =>
                 {
                     var id = configuration.FoodItemId;
                     // HQ consumables are addressed as item id + 1,000,000.
@@ -202,7 +207,7 @@ public sealed class MaintenanceService
             return false;
         }
 
-        Plugin.Log.Information(
+        log.Information(
             $"[Maintenance] Gear at {gameBridge.GetLowestEquipmentConditionPercent():F0}%; self-repairing.");
         EnterPhase(Phase.OpeningRepair, "Opening the repair window...");
         return true;
@@ -210,7 +215,7 @@ public sealed class MaintenanceService
 
     private bool StartFood()
     {
-        Plugin.Log.Information($"[Maintenance] Eating food (item {configuration.FoodItemId}).");
+        log.Information($"[Maintenance] Eating food (item {configuration.FoodItemId}).");
         EnterPhase(Phase.EatingFood, "Eating food...");
         return true;
     }
@@ -218,8 +223,8 @@ public sealed class MaintenanceService
     private void EnterPhase(Phase next, string statusText)
     {
         phase = next;
-        phaseStartedAt = DateTime.UtcNow;
-        lastAttemptAt = DateTime.MinValue;
+        phaseStartedAt = clock.UtcNow;
+        attempts.Reset();
         StatusText = statusText;
     }
 
@@ -243,10 +248,10 @@ public sealed class MaintenanceService
 
     private bool TimedOut(string reason)
     {
-        if (DateTime.UtcNow - phaseStartedAt <= PhaseTimeout)
+        if (clock.UtcNow - phaseStartedAt <= PhaseTimeout)
             return false;
 
-        Plugin.Log.Warning($"[Maintenance] {reason}.");
+        log.Warning($"[Maintenance] {reason}.");
         // Never leave repair UI open behind a timeout — it blocks gearset
         // swaps and crafting-log interaction downstream.
         CloseRepairUi();
@@ -255,19 +260,10 @@ public sealed class MaintenanceService
         return true;
     }
 
-    private void Throttled(Action action)
-    {
-        if (DateTime.UtcNow - lastAttemptAt < RetryInterval)
-            return;
-
-        lastAttemptAt = DateTime.UtcNow;
-        action();
-    }
-
     /// <summary>Internal state for the diagnostic report.</summary>
     public IEnumerable<string> Describe()
     {
-        yield return $"Phase {phase} since {phaseStartedAt:HH:mm:ss}Z; last attempt {lastAttemptAt:HH:mm:ss}Z; last idle check {lastIdleCheckAt:HH:mm:ss}Z; status: {StatusText}; blocked: {BlockedReason ?? "-"}; foodFailedThisSession {foodFailedThisSession}";
+        yield return $"Phase {phase} since {phaseStartedAt:HH:mm:ss}Z; last attempt {attempts.LastAttempt:HH:mm:ss}Z; last idle check {lastIdleCheckAt:HH:mm:ss}Z; status: {StatusText}; blocked: {BlockedReason ?? "-"}; foodFailedThisSession {foodFailedThisSession}";
         yield return $"Gear condition {gameBridge.GetLowestEquipmentConditionPercent():F0}% (auto-repair {configuration.AutoRepair}, threshold {configuration.RepairThresholdPercent}%); food item {configuration.FoodItemId} (HQ {configuration.FoodIsHq}), remaining {gameBridge.GetFoodBuffRemainingSeconds():F0}s";
     }
 }

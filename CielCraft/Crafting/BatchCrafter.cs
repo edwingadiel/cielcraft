@@ -1,7 +1,6 @@
 using System;
 using CielCraft.Core;
 using CielCraft.Game;
-using Dalamud.Plugin.Services;
 using System.Collections.Generic;
 
 namespace CielCraft.Crafting;
@@ -25,7 +24,7 @@ public enum BatchState
 /// — completion is never assumed. Fails safe: anything unexpected pauses or
 /// fails with a reason.
 /// </summary>
-public sealed class BatchCrafter : IDisposable
+public sealed class BatchCrafter : AutomationMachine<BatchState>
 {
     private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan QuickDialogTimeout = TimeSpan.FromSeconds(4);
@@ -38,8 +37,9 @@ public sealed class BatchCrafter : IDisposable
     private readonly CraftAutomator automator;
     private readonly SolverService solverService;
     private readonly Game.DalamudRecipeProvider recipeProvider;
-    private readonly Configuration configuration;
+    private readonly AutomationSettings configuration;
     private readonly Game.MaintenanceService maintenance;
+    private readonly IActionResolver actionResolver;
 
     private int targetQuantity;
     private ushort recipeId;
@@ -68,8 +68,6 @@ public sealed class BatchCrafter : IDisposable
     private DateTime lastCraftEndedAt = DateTime.MinValue; // pacing: next Synthesize waits for the end animation
     private static readonly TimeSpan SynthesisRetryInterval = TimeSpan.FromSeconds(3);
 
-    public BatchState State { get; private set; } = BatchState.Idle;
-    public string StatusText { get; private set; } = "Idle.";
     public int CompletedCrafts { get; private set; }
     public int TargetQuantity => targetQuantity;
 
@@ -79,8 +77,12 @@ public sealed class BatchCrafter : IDisposable
         CraftAutomator automator,
         SolverService solverService,
         Game.DalamudRecipeProvider recipeProvider,
-        Configuration configuration,
-        Game.MaintenanceService maintenance)
+        AutomationSettings configuration,
+        Game.MaintenanceService maintenance,
+        IActionResolver actionResolver,
+        ILog log,
+        IClock clock)
+        : base(log, clock, "[Production]", BatchState.Idle, "Idle.")
     {
         this.configuration = configuration;
         this.maintenance = maintenance;
@@ -89,13 +91,7 @@ public sealed class BatchCrafter : IDisposable
         this.automator = automator;
         this.solverService = solverService;
         this.recipeProvider = recipeProvider;
-
-        Plugin.Framework.Update += OnUpdate;
-    }
-
-    public void Dispose()
-    {
-        Plugin.Framework.Update -= OnUpdate;
+        this.actionResolver = actionResolver;
     }
 
     /// <summary>
@@ -157,7 +153,7 @@ public sealed class BatchCrafter : IDisposable
         synthesisFired = false;
         automatorStarted = false;
         wasCrafting = gameBridge.IsCrafting;
-        waitStartedAt = DateTime.UtcNow;
+        waitStartedAt = Clock.UtcNow;
         verifyUntil = DateTime.MinValue;
 
         quickMode = quickSynth && !gameBridge.IsCrafting && gameBridge.IsQuickSynthAvailable
@@ -175,7 +171,7 @@ public sealed class BatchCrafter : IDisposable
             resultAmount = recipe.ResultAmount;
             baselineItemCount = gameBridge.GetItemCount(resultItemId);
             quickDialogRequested = false;
-            waitStartedAt = DateTime.UtcNow;
+            waitStartedAt = Clock.UtcNow;
             Transition(BatchState.QuickStarting, $"Quick synthesis batch of {quantity} started.");
             return true;
         }
@@ -209,7 +205,7 @@ public sealed class BatchCrafter : IDisposable
         if (State != BatchState.Paused)
             return;
 
-        waitStartedAt = DateTime.UtcNow;
+        waitStartedAt = Clock.UtcNow;
         if (quickMode && !gameBridge.IsCrafting)
         {
             quickDialogRequested = false;
@@ -263,19 +259,7 @@ public sealed class BatchCrafter : IDisposable
             Transition(BatchState.Idle, $"Stopped by user after {CompletedCrafts}/{targetQuantity} crafts.");
     }
 
-    private void OnUpdate(IFramework framework)
-    {
-        try
-        {
-            Tick(framework);
-        }
-        catch (Exception e)
-        {
-            Plugin.Log.TickError(nameof(BatchCrafter), e);
-        }
-    }
-
-    private void Tick(IFramework framework)
+    protected override void OnTick()
     {
         var isCrafting = gameBridge.IsCrafting;
         var craftJustEnded = wasCrafting && !isCrafting;
@@ -320,12 +304,12 @@ public sealed class BatchCrafter : IDisposable
     {
         if (gameBridge.IsQuickSynthesisActive)
         {
-            quickLastProgressAt = DateTime.UtcNow;
+            quickLastProgressAt = Clock.UtcNow;
             Transition(BatchState.QuickRunning, $"Quick synthesizing {CompletedCrafts}/{targetQuantity}...");
             return;
         }
 
-        if (DateTime.UtcNow - waitStartedAt > StartTimeout)
+        if (Clock.UtcNow - waitStartedAt > StartTimeout)
         {
             Fail("quick synthesis did not start (out of materials, or the dialog did not respond)");
             return;
@@ -344,17 +328,17 @@ public sealed class BatchCrafter : IDisposable
         // for this step and remember the recipe for the session.
         if (!gameBridge.IsAddonVisible("SynthesisSimpleDialog"))
         {
-            if (DateTime.UtcNow - waitStartedAt > QuickDialogTimeout)
+            if (Clock.UtcNow - waitStartedAt > QuickDialogTimeout)
             {
                 recipeId = gameBridge.SelectedRecipeId;
                 quickSynthRefused.Add(recipeId);
-                Plugin.Log.Information(
+                Log.Information(
                     $"[Production] Quick synthesis dialog did not open for recipe {recipeId} " +
                     "(recipe never crafted?); switching this batch to normal synthesis.");
                 quickMode = false;
                 quickDialogRequested = false;
                 synthesisFired = false;
-                waitStartedAt = DateTime.UtcNow;
+                waitStartedAt = Clock.UtcNow;
                 Transition(BatchState.StartingCraft, ProgressText());
             }
 
@@ -372,7 +356,7 @@ public sealed class BatchCrafter : IDisposable
         if (produced > CompletedCrafts)
         {
             CompletedCrafts = produced;
-            quickLastProgressAt = DateTime.UtcNow;
+            quickLastProgressAt = Clock.UtcNow;
             StatusText = $"Quick synthesizing {CompletedCrafts}/{targetQuantity}...";
         }
 
@@ -390,12 +374,12 @@ public sealed class BatchCrafter : IDisposable
             // A 99-batch finished (or materials/space ran out): start the next
             // round; QuickStarting fails cleanly if nothing can be crafted.
             quickDialogRequested = false;
-            waitStartedAt = DateTime.UtcNow;
+            waitStartedAt = Clock.UtcNow;
             Transition(BatchState.QuickStarting, $"Quick synthesis round done ({CompletedCrafts}/{targetQuantity}); continuing.");
             return;
         }
 
-        if (DateTime.UtcNow - quickLastProgressAt > TimeSpan.FromSeconds(30))
+        if (Clock.UtcNow - quickLastProgressAt > TimeSpan.FromSeconds(30))
             Pause("quick synthesis made no progress for 30s");
     }
 
@@ -508,7 +492,7 @@ public sealed class BatchCrafter : IDisposable
 
     private bool IsSpecialistActionReady(uint raphaelActionId, uint jobId)
     {
-        var resolved = Game.CraftActionResolver.ResolveForJob(raphaelActionId, jobId);
+        var resolved = actionResolver.ResolveForJob(raphaelActionId, jobId);
         return resolved != null && gameBridge.IsCraftActionReady(resolved.Value);
     }
 
@@ -520,7 +504,7 @@ public sealed class BatchCrafter : IDisposable
             if (maintenance.Tick())
             {
                 StatusText = maintenance.StatusText;
-                waitStartedAt = DateTime.UtcNow;
+                waitStartedAt = Clock.UtcNow;
                 return;
             }
 
@@ -536,9 +520,9 @@ public sealed class BatchCrafter : IDisposable
             // reopening it through the agent drops the crafting stance and
             // re-enters it, which looks nothing like a person crafting again.
             if (!gameBridge.IsAddonVisible("RecipeNote") && recipeId != 0
-                && DateTime.UtcNow - lastRecipeOpenAttempt > TimeSpan.FromSeconds(2))
+                && Clock.UtcNow - lastRecipeOpenAttempt > TimeSpan.FromSeconds(2))
             {
-                lastRecipeOpenAttempt = DateTime.UtcNow;
+                lastRecipeOpenAttempt = Clock.UtcNow;
                 gameBridge.OpenRecipe(recipeId);
             }
         }
@@ -548,7 +532,7 @@ public sealed class BatchCrafter : IDisposable
             // Craft #(CompletedCrafts+1) has begun.
             synthesisFired = false;
             automatorStarted = false;
-            craftStartedAt = DateTime.UtcNow;
+            craftStartedAt = Clock.UtcNow;
             Transition(solution == null ? BatchState.Solving : BatchState.Crafting, ProgressText());
             return;
         }
@@ -557,7 +541,7 @@ public sealed class BatchCrafter : IDisposable
         {
             // Breathe between crafts (pacing): the completion animation is
             // still playing and back-to-back presses are what got us kicked.
-            if (DateTime.UtcNow - lastCraftEndedAt < Core.Pacing.BetweenCrafts)
+            if (Clock.UtcNow - lastCraftEndedAt < Core.Pacing.BetweenCrafts)
                 return;
 
             if (gameBridge.IsReadyToStartCraft)
@@ -575,9 +559,9 @@ public sealed class BatchCrafter : IDisposable
                 if (gameBridge.StartSynthesis())
                 {
                     synthesisFired = true;
-                    waitStartedAt = DateTime.UtcNow;
-                    lastSynthesisPress = DateTime.UtcNow;
-                    Plugin.Log.Information($"[Production] Starting synthesis of recipe {recipeId}.");
+                    waitStartedAt = Clock.UtcNow;
+                    lastSynthesisPress = Clock.UtcNow;
+                    Log.Information($"[Production] Starting synthesis of recipe {recipeId}.");
                 }
 
                 return;
@@ -588,20 +572,20 @@ public sealed class BatchCrafter : IDisposable
             // column is selected): press the log's own fill button.
             if (gameBridge.IsAddonVisible("RecipeNote") && gameBridge.SelectedRecipeId != 0
                 && !gameBridge.AreIngredientsAssigned()
-                && DateTime.UtcNow - lastFillAttempt > TimeSpan.FromSeconds(2))
+                && Clock.UtcNow - lastFillAttempt > TimeSpan.FromSeconds(2))
             {
-                lastFillAttempt = DateTime.UtcNow;
+                lastFillAttempt = Clock.UtcNow;
                 var assigned = gameBridge.FillIngredients(configuration.PreferHqMaterials);
-                Plugin.Log.Information($"[Production] Assigning materials via the crafting log's {(configuration.PreferHqMaterials ? "HQ" : "NQ")} fill button: {(assigned ? "all assigned" : "still incomplete")}.");
+                Log.Information($"[Production] Assigning materials via the crafting log's {(configuration.PreferHqMaterials ? "HQ" : "NQ")} fill button: {(assigned ? "all assigned" : "still incomplete")}.");
             }
 
-            if (DateTime.UtcNow - waitStartedAt > StartTimeout)
+            if (Clock.UtcNow - waitStartedAt > StartTimeout)
                 Fail("crafting log did not become ready");
 
             return;
         }
 
-        if (DateTime.UtcNow - waitStartedAt > StartTimeout)
+        if (Clock.UtcNow - waitStartedAt > StartTimeout)
         {
             Fail("synthesis did not start after pressing Synthesize");
             return;
@@ -610,11 +594,11 @@ public sealed class BatchCrafter : IDisposable
         // A press made right after the previous craft is swallowed by the
         // completion animation (observed: the log was ready, nothing started).
         // Press again every few seconds until the craft begins or we time out.
-        if (DateTime.UtcNow - lastSynthesisPress > SynthesisRetryInterval && gameBridge.IsReadyToStartCraft)
+        if (Clock.UtcNow - lastSynthesisPress > SynthesisRetryInterval && gameBridge.IsReadyToStartCraft)
         {
-            lastSynthesisPress = DateTime.UtcNow;
+            lastSynthesisPress = Clock.UtcNow;
             if (gameBridge.StartSynthesis())
-                Plugin.Log.Information($"[Production] Synthesis has not started yet; pressing Synthesize again.");
+                Log.Information($"[Production] Synthesis has not started yet; pressing Synthesize again.");
         }
     }
 
@@ -627,7 +611,7 @@ public sealed class BatchCrafter : IDisposable
             if (!automatorStarted && solution != null && automator.State != AutomationState.Running)
             {
                 // Let the synthesis start animation play before the first action (pacing).
-                if (DateTime.UtcNow - craftStartedAt < Core.Pacing.AfterCraftStart)
+                if (Clock.UtcNow - craftStartedAt < Core.Pacing.AfterCraftStart)
                     return;
 
                 var player = gameBridge.GetPlayerState();
@@ -641,7 +625,7 @@ public sealed class BatchCrafter : IDisposable
                         || (ushort)player.Control != solved.Control
                         || (ushort)player.MaxCp != solved.Cp))
                 {
-                    Plugin.Log.Information("[Raphael] Crafter stats changed (food/potion?); re-solving.");
+                    Log.Information("[Raphael] Crafter stats changed (food/potion?); re-solving.");
                     solution = null;
                     solveRequested = false;
                     Transition(BatchState.Solving, "Stats changed; re-solving...");
@@ -670,7 +654,7 @@ public sealed class BatchCrafter : IDisposable
                     solveRequested = false;
                     automatorStarted = false;
                     automator.Stop();
-                    Plugin.Log.Information($"[Adaptive] Automation paused ({automator.StatusText}); re-solving the remainder.");
+                    Log.Information($"[Adaptive] Automation paused ({automator.StatusText}); re-solving the remainder.");
                     Transition(BatchState.Solving, "Recovering: re-solving the remaining craft...");
                     return;
                 }
@@ -704,7 +688,7 @@ public sealed class BatchCrafter : IDisposable
 
         // The inventory update can land a few frames after the Synthesis
         // window closes; keep checking briefly before calling it a failure.
-        verifyUntil = DateTime.UtcNow + TimeSpan.FromSeconds(3);
+        verifyUntil = Clock.UtcNow + TimeSpan.FromSeconds(3);
         TryVerifyCraft();
     }
 
@@ -716,7 +700,7 @@ public sealed class BatchCrafter : IDisposable
             var actual = gameBridge.GetItemCount(resultItemId);
             if (actual < expected)
             {
-                if (DateTime.UtcNow < verifyUntil)
+                if (Clock.UtcNow < verifyUntil)
                     return;
 
                 verifyUntil = DateTime.MinValue;
@@ -726,9 +710,9 @@ public sealed class BatchCrafter : IDisposable
         }
 
         verifyUntil = DateTime.MinValue;
-        lastCraftEndedAt = DateTime.UtcNow;
+        lastCraftEndedAt = Clock.UtcNow;
         CompletedCrafts++;
-        Plugin.Log.Information($"[Production] Craft {CompletedCrafts}/{targetQuantity} verified.");
+        Log.Information($"[Production] Craft {CompletedCrafts}/{targetQuantity} verified.");
 
         if (CompletedCrafts >= targetQuantity)
         {
@@ -737,7 +721,7 @@ public sealed class BatchCrafter : IDisposable
         }
 
         synthesisFired = false;
-        waitStartedAt = DateTime.UtcNow;
+        waitStartedAt = Clock.UtcNow;
         if (State == BatchState.Paused)
             StatusText = $"Paused ({CompletedCrafts}/{targetQuantity} crafts verified).";
         else
@@ -770,7 +754,7 @@ public sealed class BatchCrafter : IDisposable
             resultAmount = result.Value.Amount;
         }
         baselineItemCount = gameBridge.GetItemCount(resultItemId) - CompletedCrafts * Math.Max(resultAmount, 1);
-        Plugin.Log.Information(
+        Log.Information(
             $"[Production] Batch target item {resultItemId} x{resultAmount} per craft; " +
             $"inventory baseline {baselineItemCount}.");
     }
@@ -779,15 +763,8 @@ public sealed class BatchCrafter : IDisposable
 
     private void Fail(string reason) => Transition(BatchState.Failed, $"Failed: {reason}.");
 
-    private void Transition(BatchState state, string statusText)
-    {
-        State = state;
-        StatusText = statusText;
-        Plugin.Log.Information($"[Production] {statusText}");
-    }
-
     /// <summary>Internal state for the diagnostic report.</summary>
-    public IEnumerable<string> Describe()
+    public override IEnumerable<string> Describe()
     {
         yield return $"State {State} — {StatusText}";
         yield return $"Crafts {CompletedCrafts}/{targetQuantity}; recipe {recipeId}; result item {resultItemId} ×{resultAmount}; baseline count {baselineItemCount}, now {(resultItemId != 0 ? gameBridge.GetItemCount(resultItemId) : 0)}";

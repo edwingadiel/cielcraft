@@ -37,7 +37,7 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
 
     private readonly IGameBridge gameBridge;
     private readonly INavigationProvider navigation;
-    private readonly Configuration configuration;
+    private readonly AutomationSettings configuration;
     private readonly Func<CharacterCapabilities> capabilities;
     private readonly Throttle retry;
     private readonly TravelDriver travel;
@@ -64,7 +64,7 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
     public GatheringController(
         IGameBridge gameBridge,
         INavigationProvider navigation,
-        Configuration configuration,
+        AutomationSettings configuration,
         ILog log,
         IClock clock,
         Func<CharacterCapabilities>? capabilities = null)

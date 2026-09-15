@@ -34,6 +34,8 @@ public sealed class Plugin : IDalamudPlugin
 
     private const string CommandName = "/cielcraft";
 
+    public Infrastructure.FrameworkDriver Driver { get; init; }
+    public Infrastructure.ChatNotifier Notifier { get; init; }
     public Configuration Configuration { get; init; }
     public IGameBridge GameBridge { get; init; }
     /// <summary>What the character can do (roadmap 7.16); refreshed on load, login and demand.</summary>
@@ -52,9 +54,6 @@ public sealed class Plugin : IDalamudPlugin
     public MaintenanceService Maintenance { get; init; }
     public ProductionQueue ProductionQueue { get; init; }
     public Social.SocialGuard SocialGuard { get; init; }
-    /// <summary>The one Framework.Update subscription; ticks the layers in order (roadmap 5.1).</summary>
-    public Infrastructure.FrameworkDriver Driver { get; init; }
-    public Infrastructure.ChatNotifier Notifier { get; init; }
 
     public readonly WindowSystem WindowSystem = new("CielCraft");
     private ConfigWindow ConfigWindow { get; init; }
@@ -78,28 +77,40 @@ public sealed class Plugin : IDalamudPlugin
         RecipeProvider = new DalamudRecipeProvider(
             () => GameBridge.CurrentClassJobId, jobId => GameBridge.HasGearsetForJob(jobId), () => Capabilities.Current);
         GatheringDatabase = new GatheringDatabase(() => Capabilities.Current);
-        CraftMonitor = new CraftStateMonitor(GameBridge);
-        ActionExecutor = new ActionExecutor(GameBridge, CraftMonitor);
-        SolverService = new SolverService(new CielCraft.Raphael.RaphaelSolver(), LoadSolutionCache());
-        CraftAutomator = new CraftAutomator(GameBridge, CraftMonitor, ActionExecutor, Configuration);
-        Maintenance = new MaintenanceService(GameBridge, Configuration);
+        var actionResolver = new DalamudActionResolver();
+        CraftMonitor = new CraftStateMonitor(GameBridge, Log, SystemClock.Instance);
+        ActionExecutor = new ActionExecutor(GameBridge, CraftMonitor, Log, SystemClock.Instance);
+        SolverService = new SolverService(new CielCraft.Raphael.RaphaelSolver(), LoadSolutionCache(), Log);
+        CraftAutomator = new CraftAutomator(
+            GameBridge, CraftMonitor, ActionExecutor, Configuration, actionResolver, Log, SystemClock.Instance);
+        Maintenance = new MaintenanceService(GameBridge, Configuration, Log, SystemClock.Instance);
         BatchCrafter = new BatchCrafter(
-            GameBridge, CraftMonitor, CraftAutomator, SolverService, RecipeProvider, Configuration, Maintenance);
+            GameBridge, CraftMonitor, CraftAutomator, SolverService, RecipeProvider, Configuration, Maintenance,
+            actionResolver, Log, SystemClock.Instance);
         Navigation = new Navigation.VNavmeshProvider();
         GatheringController = new Gathering.GatheringController(
             GameBridge, Navigation, Configuration, Log, SystemClock.Instance, () => Capabilities.Current);
         GatheringLoop = new Gathering.GatheringLoop(
-            GameBridge, GatheringController, Navigation, Configuration, Maintenance);
+            GameBridge, GatheringController, Navigation, Configuration, Maintenance, Log, SystemClock.Instance);
         ProductionRunner = new ProductionRunner(
             GameBridge, BatchCrafter, RecipeProvider, GatheringLoop, GatheringDatabase, Navigation, Configuration,
             Capabilities, Log, SystemClock.Instance, Notifier);
         ProductionQueue = new ProductionQueue(
-            GameBridge, ProductionRunner, RecipeProvider, Configuration, () => Capabilities.Current);
+            GameBridge, ProductionRunner, RecipeProvider, Configuration, Notifier, Log, () => Capabilities.Current);
         SocialGuard = new Social.SocialGuard(this, GameBridge, Configuration);
 
-        // Tick order matches the order the layers used to subscribe in.
+        // One Framework.Update subscription for the automation layers, ticked in
+        // the order they used to subscribe in (monitor before executor before
+        // automator before batch before controller before loop before runner
+        // before queue).
+        Driver.Add(CraftMonitor.Tick);
+        Driver.Add(ActionExecutor.Tick);
+        Driver.Add(CraftAutomator.Tick);
+        Driver.Add(BatchCrafter.Tick);
         Driver.Add(GatheringController.Tick);
+        Driver.Add(GatheringLoop.Tick);
         Driver.Add(ProductionRunner.Tick);
+        Driver.Add(ProductionQueue.Tick);
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);
@@ -132,13 +143,7 @@ public sealed class Plugin : IDalamudPlugin
         WindowSystem.RemoveAllWindows();
 
         SocialGuard.Dispose();
-        ProductionQueue.Dispose();
-        GatheringLoop.Dispose();
-        BatchCrafter.Dispose();
         CraftAutomator.Dispose();
-        ActionExecutor.Dispose();
-        CraftMonitor.Dispose();
-        Driver.Dispose();
         Notifier.Dispose();
 
         ConfigWindow.Dispose();
@@ -146,6 +151,7 @@ public sealed class Plugin : IDalamudPlugin
         DebugWindow.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
+        Driver.Dispose();
     }
 
     private void OnCommand(string command, string args)
