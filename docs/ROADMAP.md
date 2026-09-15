@@ -260,6 +260,64 @@ Cross-cutting for 2.0: the planner grows a "source" per missing material
 availability; the runner gets one phase per source. That is the point where
 5.1 (state machines in Core) pays off, so 5.1 comes first.
 
+## 2.0 plan (drafted 2026-09-15)
+
+Sizes: S ≈ 1–2 days, M ≈ 3–5 days, L ≈ 1–2 weeks, XL ≈ 3+ weeks of focused
+work. Milestones ship in order; each is releasable on its own. Cut the 1.0
+tag first (the validated build from 2026-09-15) so 2.0 work happens on a
+known base.
+
+### M0 — Foundations (≈ 2 weeks) — do first, everything else builds on it
+1. 5.1 State machines into Core + the review follow-ups: one TravelDriver
+   (runner + gathering share mount/fly/land), shared Throttled/Retry helper,
+   common status/transition base. The orders model, scheduler and sourcing
+   all add phases; adding them to five hand-rolled machines is where bugs
+   would come from.
+2. 7.16 Character capability model (S–M): flight per zone, books,
+   reputations, GP traits. The planner must know these before orders and
+   sourcing start trusting it.
+3. 7.10 Trade-request blacklist + 7.20 finish-and-idle behaviours (S + S):
+   safety and looking-human items; cheap, and they protect every later run.
+4. 7.7 Solution cache (S): free speed on repeated recipes; touches only the
+   solver service.
+
+### M1 — Daily use (≈ 4 weeks) — the things asked for while testing
+5. 7.13 Orders model (M): amount modes (Restock), production modes, groups,
+   materials-only, JSON + Teamcraft import. Replaces target + queue.
+6. 7.21 Window layout (S): sidebar; orders/status/settings pages. Do with 5
+   so the UI is built once around orders.
+7. 7.1 Standalone gather target (S) incl. collectables; run tests D1/D3/D4.
+8. 7.23 Collectable crafting as a target option (S) — a production mode on 5.
+9. 7.11 Per-activity food and potion (S–M).
+10. 7.6 Estate / home teleport for crafting (S).
+11. 7.12 Production breakdown tree (M).
+12. 7.8 Rotation visibility + manual rotations, and 7.18 assist / craft test /
+    lock-step (S–M + S–M): share the rotation view; build together.
+
+### M2 — Smarter gathering and crafting (≈ 3 weeks)
+13. 7.14 Gathering rotation engine (M): conditional tables per node class.
+14. 7.15 Timed-node scheduler (M): needs 13 for GP costing and 10 for
+    waiting at home.
+15. 7.22 HQ-aware intermediates (M): needs the solver to answer "reachable
+    from zero?"; validate the initial-quality formula in game.
+16. 7.2 Spiritbond / materia extraction (S–M).
+
+### M3 — Beyond gather and craft (≈ 6 weeks)
+17. 7.3 NPC interaction layer (M) → 7.3a mender repair (S) → 7.3b vendor
+    purchases (M).
+18. 7.17 Sourcing (L): scrip / tomestone / GC exchanges, collectables-for-
+    scrips planner, retainer ventures + storage rules, desynth + trash
+    cleanup. Depends on 17 and the orders model.
+19. 7.19 Equipment set builder (M): generated orders; depends on 5 and 18.
+20. 7.4 Fishing (L): its own controller; depends on 17 for spots/NPCs.
+
+### M4 — Stretch
+21. 7.5 Combat drops (XL): only after a combat plugin with stable IPC is
+    confirmed; nothing else waits on it.
+
+Rule of thumb for the order: safety and foundations first, then whatever
+shortens a daily run, then whatever widens what a run can source.
+
 ## Review follow-ups (structural, deferred)
 
 From the full-code review: extract the duplicated mount/fly travel logic
