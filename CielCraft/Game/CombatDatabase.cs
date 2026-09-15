@@ -200,7 +200,7 @@ public sealed class CombatDatabase : IHuntSpots
         // then the current zone, then a stable id order.
         return drops
             .OrderBy(Rank)
-            .ThenBy(d => d.Level)
+            .ThenBy(d => SortLevel(d.Level))
             .ThenByDescending(d => d.TerritoryId == here)
             .ThenBy(d => d.BNpcNameId)
             .ToList();
@@ -291,6 +291,14 @@ public sealed class CombatDatabase : IHuntSpots
                          $"at {spot.X:F0}, {spot.Y:F0}, {spot.Z:F0} ({spot.Hits} hits, {spot.RememberedAtUtc:yyyy-MM-dd HH:mm}Z)";
         }
     }
+
+    /// <summary>
+    /// Garland shows "??" for the level of instance and boss monsters, which
+    /// the refresh script writes as 0. Unknown is not "lowest": such a
+    /// monster sorts last, and the hunt source refuses it outright
+    /// (<see cref="MobDrop.Level"/> 0 = do not pick a fight blind).
+    /// </summary>
+    public static int SortLevel(int level) => level <= 0 ? int.MaxValue : level;
 
     /// <summary>A remembered spot beats reachability, which beats anything else.</summary>
     private int Rank(MobDrop drop)

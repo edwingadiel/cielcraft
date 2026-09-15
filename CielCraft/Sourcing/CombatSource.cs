@@ -168,7 +168,10 @@ public sealed class CombatSource : IMaterialSource
         var here = bridge.CurrentTerritoryId;
         return database.DropsOf(itemId)
             .FirstOrDefault(drop =>
-                drop.Level <= allowance
+                // Level 0 is Garland's "??" — a boss or an instance monster.
+                // Never plan a fight against something whose level is unknown.
+                drop.Level > 0
+                && drop.Level <= allowance
                 && (drop.TerritoryId == here || bridge.CanTeleportTo(drop.TerritoryId)));
     }
 }

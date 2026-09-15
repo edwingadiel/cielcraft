@@ -473,6 +473,31 @@ public class HuntRunTests
     }
 
     [Fact]
+    public void RefusesAMonsterWhoseLevelGarlandDoesNotKnowAndSortsItLast()
+    {
+        var table = new Dictionary<uint, IReadOnlyList<DropTableMob>>
+        {
+            // Garland writes "??" for bosses and instance monsters; the
+            // refresh script turns that into 0.
+            [RaptorSkin] = [new DropTableMob(RaptorNpc, "Something Enormous", 0, "South Shroud")],
+            [BoarHide] =
+            [
+                new DropTableMob(RaptorNpc, "Something Enormous", 0, "South Shroud"),
+                new DropTableMob(WildBoarNpc, "Wild Boar", 44, "South Shroud"),
+            ],
+        };
+
+        var h = Build(table: table);
+
+        Assert.Null(h.Source.Offer(RaptorSkin, 1));
+
+        // An unknown level sorts behind a known one, however high.
+        var drops = h.Database.DropsOf(BoarHide);
+        Assert.Equal(WildBoarNpc, drops[0].BNpcNameId);
+        Assert.Equal("Wild Boar", h.Source.Offer(BoarHide, 1)!.Description.Split("from ")[1].Split(" (")[0]);
+    }
+
+    [Fact]
     public void AnUnknownJobLevelAllowsTheHuntRatherThanPlanningItAway()
     {
         var clock = new FakeClock();
