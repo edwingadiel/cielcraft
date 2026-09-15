@@ -10,6 +10,13 @@ namespace CielCraft.Game;
 /// re-eats the configured food before the buff runs out. Driven by callers
 /// between crafts/nodes via <see cref="Tick"/>; never acts mid-craft.
 /// </summary>
+/// <summary>What the character is about to do; each has its own food and potion (roadmap 7.11).</summary>
+public enum MaintenanceActivity
+{
+    Crafting,
+    Gathering,
+}
+
 public sealed class MaintenanceService
 {
     private static readonly uint[] DarkMatter = [33916, 10386]; // grade 8, grade 7
@@ -61,6 +68,17 @@ public sealed class MaintenanceService
         configuration.FoodItemId != 0
         && !foodFailedThisSession
         && gameBridge.GetFoodBuffRemainingSeconds() < FoodRefreshBelowSeconds;
+
+    /// <summary>The kind of work about to start; selects the consumable set (roadmap 7.11).</summary>
+    public MaintenanceActivity Activity { get; private set; } = MaintenanceActivity.Crafting;
+
+    /// <summary>
+    /// Called by the production runner before a craft step or a gather task
+    /// (roadmap 7.11): the next Tick keeps up the food and potion of that
+    /// activity's set. Implemented by the consumables package; today it only
+    /// records the activity.
+    /// </summary>
+    public void PrepareFor(MaintenanceActivity activity) => Activity = activity;
 
     /// <summary>
     /// Runs maintenance when due. Returns true while busy (the caller should

@@ -32,7 +32,8 @@ public sealed record PlannedCraft(
     uint ItemId,
     int Crafts,
     int ResultAmount,
-    ProductionMode Mode = ProductionMode.Any)
+    ProductionMode Mode = ProductionMode.Any,
+    CollectableTier CollectableTier = CollectableTier.High)
 {
     public int TotalProduced => Crafts * ResultAmount;
 }
@@ -128,7 +129,7 @@ public static class DependencyResolver
             if (target.MaterialsOnly || !state.Crafts.TryGetValue(target.ItemId, out var step))
                 continue;
             if (target.Mode != ProductionMode.Any && modeSet.Add(target.ItemId))
-                state.Crafts[target.ItemId] = step with { Mode = target.Mode };
+                state.Crafts[target.ItemId] = step with { Mode = target.Mode, CollectableTier = target.CollectableTier };
         }
 
         return new ProductionPlan(

@@ -98,7 +98,7 @@ public sealed class Plugin : IDalamudPlugin
         GatheringLoop = new Gathering.GatheringLoop(
             GameBridge, GatheringController, Navigation, Configuration, Maintenance, Log, SystemClock.Instance);
         ProductionRunner = new ProductionRunner(
-            GameBridge, BatchCrafter, RecipeProvider, GatheringLoop, GatheringDatabase, Navigation, Configuration,
+            GameBridge, BatchCrafter, RecipeProvider, GatheringLoop, GatheringDatabase, Maintenance, Navigation, Configuration,
             Capabilities, Log, SystemClock.Instance, Notifier);
         SocialGuard = new Social.SocialGuard(this, GameBridge, Configuration);
         OrderRunner = new OrderRunner(
@@ -193,6 +193,11 @@ public sealed class Plugin : IDalamudPlugin
                 break;
             case "resume":
                 ResumeTopLayer();
+                break;
+            case "plan":
+                // Production breakdown as text (roadmap 7.12).
+                foreach (var line in Windows.PlanTreePanel.PlanText(this).Split('\n'))
+                    ChatGui.Print(line, "CielCraft");
                 break;
             case "report":
                 SaveAndCopyReport();

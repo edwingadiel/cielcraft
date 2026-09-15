@@ -37,4 +37,53 @@ public class AutomationSettings
 
     /// <summary>Fill HQ materials into the synthesis automatically before each craft.</summary>
     public bool PreferHqMaterials { get; set; } = true;
+
+    /// <summary>Food and potion for craft steps (roadmap 7.11); FoodItemId/FoodIsHq above are the pre-7.11 single food, migrated on load.</summary>
+    public ConsumableSet CraftingConsumables { get; set; } = new();
+
+    /// <summary>Food and potion for gather tasks (roadmap 7.11).</summary>
+    public ConsumableSet GatheringConsumables { get; set; } = new();
+
+    /// <summary>Where craft steps happen (roadmap 7.6): stay put, or teleport to a home point before the first step.</summary>
+    public CraftingLocation CraftingLocation { get; set; } = CraftingLocation.Stay;
+
+    /// <summary>Assist mode (roadmap 7.18): a synthesis the user starts by hand is run by the plugin.</summary>
+    public bool AssistMode { get; set; }
+
+    /// <summary>Lock-step (roadmap 7.18): pause before every craft action and wait for the user to step.</summary>
+    public bool LockStep { get; set; }
+
+    /// <summary>Manual rotations per recipe id (roadmap 7.8): action names or Teamcraft macro text; replaces the solver when set.</summary>
+    public System.Collections.Generic.Dictionary<uint, string> ManualRotations { get; set; } = new();
+}
+
+/// <summary>One consumable choice: an item and whether the HQ version is preferred; ItemId 0 = none.</summary>
+public sealed class Consumable
+{
+    public uint ItemId { get; set; }
+
+    public bool Hq { get; set; } = true;
+}
+
+/// <summary>The food and potion kept up during one kind of activity (roadmap 7.11).</summary>
+public sealed class ConsumableSet
+{
+    public Consumable Food { get; set; } = new();
+
+    public Consumable Potion { get; set; } = new();
+}
+
+/// <summary>Home points the runner can teleport to before crafting (roadmap 7.6).</summary>
+public enum CraftingLocation
+{
+    /// <summary>Craft wherever the character is (after gathering: the zone aetheryte).</summary>
+    Stay,
+
+    /// <summary>The free company or private estate hall.</summary>
+    EstateHall,
+
+    Apartment,
+
+    /// <summary>The inn room of the nearest city (or the last one visited).</summary>
+    InnRoom,
 }

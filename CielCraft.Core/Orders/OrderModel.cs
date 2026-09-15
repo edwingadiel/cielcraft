@@ -29,6 +29,23 @@ public enum ProductionMode
     Collectable,
 }
 
+/// <summary>What an order asks for: a craft (with its sub-crafts and gathering) or gathering alone (roadmap 7.1).</summary>
+public enum OrderKind
+{
+    Craft,
+
+    /// <summary>Gather the item itself: teleport, travel, timed windows, the node loop; no crafting.</summary>
+    Gather,
+}
+
+/// <summary>Collectability tier to hit for collectable crafts and gathers (roadmap 7.23 / 7.1); thresholds come from the game data.</summary>
+public enum CollectableTier
+{
+    Low,
+    Mid,
+    High,
+}
+
 /// <summary>
 /// One thing to produce. Plain mutable class so the plugin configuration
 /// serializes it as-is; Core never mutates orders behind the UI's back.
@@ -37,7 +54,12 @@ public sealed class Order
 {
     public Guid Id { get; set; } = Guid.NewGuid();
 
+    public OrderKind Kind { get; set; } = OrderKind.Craft;
+
     public uint ItemId { get; set; }
+
+    /// <summary>Only read when Mode is Collectable.</summary>
+    public CollectableTier CollectableTier { get; set; } = CollectableTier.High;
 
     public int Amount { get; set; } = 1;
 
@@ -80,7 +102,9 @@ public sealed record PlanTarget(
     uint ItemId,
     int Quantity,
     ProductionMode Mode = ProductionMode.Any,
-    bool MaterialsOnly = false);
+    bool MaterialsOnly = false,
+    OrderKind Kind = OrderKind.Craft,
+    CollectableTier CollectableTier = CollectableTier.High);
 
 /// <summary>What the planner decided for one order of a group.</summary>
 public sealed record OrderOutcome(Order Order, int PlannedQuantity, string? SkipReason)

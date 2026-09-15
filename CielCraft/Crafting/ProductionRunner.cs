@@ -41,6 +41,7 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
     private readonly BatchCrafter batchCrafter;
     private readonly DalamudRecipeProvider recipeProvider;
     private readonly Gathering.GatheringLoop gatheringLoop;
+    private readonly Game.MaintenanceService maintenance;
     private readonly GatheringDatabase gatheringDatabase;
     private readonly INavigationProvider navigation;
     private readonly Configuration configuration;
@@ -105,6 +106,7 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         DalamudRecipeProvider recipeProvider,
         Gathering.GatheringLoop gatheringLoop,
         GatheringDatabase gatheringDatabase,
+        Game.MaintenanceService maintenance,
         INavigationProvider navigation,
         Configuration configuration,
         CapabilityReader capabilities,
@@ -123,6 +125,7 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         this.recipeProvider = recipeProvider;
         this.gatheringLoop = gatheringLoop;
         this.gatheringDatabase = gatheringDatabase;
+        this.maintenance = maintenance;
         this.navigation = navigation;
     }
 
@@ -350,6 +353,8 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
 
         if (!EnsureJob(task.JobId, "gathering job"))
             return;
+
+        maintenance.PrepareFor(Game.MaintenanceActivity.Gathering);
 
         // Timed node not up yet: hold until shortly before the window opens
         // (travel starts ~2 real minutes early so we arrive as it pops).
@@ -735,6 +740,8 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
 
         if (!EnsureJob(recipe.ClassJobId))
             return;
+
+        maintenance.PrepareFor(Game.MaintenanceActivity.Crafting);
 
         // A job change just happened: let it settle before touching the log (pacing).
         if (gearsetRequested && Clock.UtcNow - retry.LastAttempt < Core.Pacing.AfterJobChange)

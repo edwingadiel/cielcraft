@@ -47,6 +47,7 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
     private int resultAmount;
     private int baselineItemCount;
     private bool requireHq;            // ForceHq order (roadmap 7.13): only HQ results count toward the target
+    private int qualityOverride;       // collectable tier threshold (roadmap 7.23); 0 = settings
     private int hqBaseline;            // HQ count of the result item when the batch started
     private int verifiedCrafts;        // every craft that landed in the bag, HQ or not
     private CraftSolution? solution;
@@ -105,7 +106,7 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
     /// and the batch runs until the HQ count has risen by the quantity; NQ
     /// results are logged but do not count, and quick synthesis is never used.
     /// </summary>
-    public bool Start(int quantity, bool quickSynth = false, bool requireHq = false)
+    public bool Start(int quantity, bool quickSynth = false, bool requireHq = false, int targetQuality = 0)
     {
         if (State is BatchState.Solving or BatchState.StartingCraft or BatchState.Crafting
             or BatchState.QuickStarting or BatchState.QuickRunning or BatchState.Paused)
@@ -154,6 +155,7 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
         resultAmount = 0;
         baselineItemCount = 0;
         this.requireHq = requireHq;
+        qualityOverride = targetQuality;
         hqBaseline = 0;
         solution = null;
         solveRequested = false;
@@ -448,9 +450,11 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
             if (!midSolve || solveTargetQuality == 0)
             {
                 var percent = requireHq ? 100 : Math.Clamp(configuration.TargetQualityPercent, 1, 100);
+                // A collectable tier threshold (7.23) replaces the percentage.
+                var wanted = qualityOverride > 0 ? qualityOverride : craft.MaxQuality * percent / 100;
                 solveTargetQuality = Math.Max(
                     Math.Max((int)craft.Quality, craft.RequiredQuality),
-                    craft.MaxQuality * percent / 100);
+                    Math.Min(wanted, craft.MaxQuality));
             }
 
             if (midSolve)
