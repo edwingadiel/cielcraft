@@ -37,6 +37,7 @@ public class MainWindow : Window, IDisposable
         public const string ToolsCraftTest = "Tools/CraftTest";
         public const string ToolsSpiritbond = "Tools/Spiritbond";
         public const string ToolsInventory = "Tools/Inventory";
+        public const string ToolsHunting = "Tools/Hunting";
         public const string ToolsCache = "Tools/Cache";
         public const string SettingsGeneral = "Settings/General";
         public const string SettingsCrafting = "Settings/Crafting";
@@ -65,6 +66,7 @@ public class MainWindow : Window, IDisposable
         new(Pages.ToolsCraftTest, "Tools", "Craft Test"),
         new(Pages.ToolsSpiritbond, "Tools", "Spiritbond"),
         new(Pages.ToolsInventory, "Tools", "Inventory"),
+        new(Pages.ToolsHunting, "Tools", "Hunting"),
         new(Pages.ToolsCache, "Tools", "Solution cache"),
         new(Pages.SettingsGeneral, "Settings", "General"),
         new(Pages.SettingsCrafting, "Settings", "Crafting"),
@@ -89,6 +91,10 @@ public class MainWindow : Window, IDisposable
     private readonly SpiritbondPanel spiritbond;
     private readonly SchedulePanel schedule;
     private readonly InventoryPanel inventory;
+    private readonly HuntPanel hunting;
+
+    /// <summary>The hunting page, so the plugin can hand it the combat database and the run in flight (7.5).</summary>
+    public HuntPanel Hunting => hunting;
 
     /// <summary>The spiritbond-mode machine (roadmap 7.2), for the emergency stop and the report.</summary>
     public SpiritbondMode Spiritbond => spiritbond.Mode;
@@ -135,6 +141,7 @@ public class MainWindow : Window, IDisposable
         spiritbond = new SpiritbondPanel(plugin);
         schedule = new SchedulePanel(plugin);
         inventory = new InventoryPanel(plugin, plugin.RetainerDatabase, plugin.InventoryKeeper);
+        hunting = new HuntPanel(plugin, plugin.CombatDrivers);
         setup = new SetupPanel(plugin, ShowPage);
         debug = new DebugPanel(plugin);
         settings = new SettingsPanel(plugin);
@@ -310,6 +317,9 @@ public class MainWindow : Window, IDisposable
                 break;
             case Pages.ToolsInventory:
                 inventory.Draw();
+                break;
+            case Pages.ToolsHunting:
+                hunting.Draw();
                 break;
             case Pages.ToolsCache:
                 DrawCachePage();

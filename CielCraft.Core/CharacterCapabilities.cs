@@ -36,6 +36,35 @@ public sealed record CharacterCapabilities(
 
     /// <summary>Reputation rank with a tribe (BeastTribe row id); 0 when unknown.</summary>
     public int TribeRank(uint tribeId) => TribeRanks.GetValueOrDefault(tribeId);
+
+    /// <summary>ClassJob rows 8..15 are the eight crafters, 16..18 the three gatherers; everything else fights (roadmap 7.5).</summary>
+    public static bool IsCombatJob(uint jobId) => jobId != 0 && jobId is < 8 or > 18;
+
+    /// <summary>
+    /// The combat job to hunt on (roadmap 7.5): the highest-level ClassJob that
+    /// is not a crafter or gatherer and has a gearset saved, preferring the
+    /// higher row id on a tie so a job wins over the class it grew out of (they
+    /// share an experience bar, so they always tie). 0 when nothing qualifies —
+    /// no gearsets, or the capabilities have never been read.
+    /// </summary>
+    public uint BestCombatJob(Func<uint, bool> hasGearset)
+    {
+        uint best = 0;
+        var bestLevel = 0;
+        foreach (var (jobId, level) in JobLevels)
+        {
+            if (level <= 0 || !IsCombatJob(jobId) || !hasGearset(jobId))
+                continue;
+
+            if (level > bestLevel || (level == bestLevel && jobId > best))
+            {
+                best = jobId;
+                bestLevel = level;
+            }
+        }
+
+        return best;
+    }
 }
 
 /// <summary>Planning decisions that depend on capabilities, kept in Core so they are testable with fake data.</summary>

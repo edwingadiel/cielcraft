@@ -213,6 +213,17 @@ public class FishingTests
         private static NotImplementedException Unexpected() => new("the fishing run must not touch this");
 
         // ---- stubs for members other packages added (merge) ----
+        public bool AnswerReturnPrompt() => throw Unexpected();
+        public ulong CurrentTargetId => throw Unexpected();
+        public (uint BNpcNameId, string Name)? CurrentTargetMob => throw Unexpected();
+        public int EnemiesTargetingMe() => throw Unexpected();
+        public IReadOnlyList<HuntTargetSnapshot> FindHuntTargets( uint bnpcNameId, IReadOnlyCollection<ulong>? excludedObjectIds = null, System.Numerics.Vector3? origin = null) => throw Unexpected();
+        public bool IsDead => throw Unexpected();
+        public bool IsInCombat => throw Unexpected();
+        public float PlayerHpPercent => throw Unexpected();
+        public bool TargetObject(ulong objectId) => throw Unexpected();
+
+        // ---- stubs for members other packages added (merge) ----
         public bool AdvanceTalk() => throw Unexpected();
         public bool AssignVenture(uint ventureTaskId) => throw Unexpected();
         public bool BuyFromShop(uint itemId, int count) => throw Unexpected();

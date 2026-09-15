@@ -681,5 +681,15 @@ public class ScripPlannerTests
         public bool IsMounted => throw Unexpected();
         public void TryMount() => throw Unexpected();
         public void TryDismount() => throw Unexpected();
+        // ---- Combat (7.5) ----
+        public IReadOnlyList<HuntTargetSnapshot> FindHuntTargets(uint bnpcNameId, IReadOnlyCollection<ulong>? excludedObjectIds = null, Vector3? origin = null) => throw Unexpected();
+        public bool TargetObject(ulong objectId) => throw Unexpected();
+        public ulong CurrentTargetId => throw Unexpected();
+        public (uint BNpcNameId, string Name)? CurrentTargetMob => throw Unexpected();
+        public float PlayerHpPercent => throw Unexpected();
+        public bool IsInCombat => throw Unexpected();
+        public bool IsDead => throw Unexpected();
+        public bool AnswerReturnPrompt() => throw Unexpected();
+        public int EnemiesTargetingMe() => throw Unexpected();
     }
 }

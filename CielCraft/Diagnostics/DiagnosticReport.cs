@@ -110,6 +110,9 @@ public static class DiagnosticReport
         Lines(sb, plugin.FishingController.Describe);
         Lines(sb, plugin.FishingDatabase.Describe);
 
+        Section(sb, "Combat driver (7.5)");
+        Lines(sb, plugin.CombatDrivers.Describe);
+
         Section(sb, "Retainers and cleanup (7.17)");
         Lines(sb, plugin.RetainerDatabase.Describe);
         Lines(sb, plugin.RetainerSource.Describe);

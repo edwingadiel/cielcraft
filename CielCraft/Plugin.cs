@@ -49,6 +49,8 @@ public sealed class Plugin : IDalamudPlugin
     public BatchCrafter BatchCrafter { get; init; }
     public ProductionRunner ProductionRunner { get; init; }
     public INavigationProvider Navigation { get; init; }
+    /// <summary>The combat plugin that fights for a hunt (roadmap 7.5); none = hunting stays off.</summary>
+    public Combat.CombatDriverSelector CombatDrivers { get; init; }
     public Gathering.GatheringController GatheringController { get; init; }
     public Gathering.GatheringLoop GatheringLoop { get; init; }
     public MaintenanceService Maintenance { get; init; }
@@ -108,6 +110,7 @@ public sealed class Plugin : IDalamudPlugin
         CraftAutomator = new CraftAutomator(
             GameBridge, CraftMonitor, ActionExecutor, Configuration, actionResolver, Log, SystemClock.Instance);
         Navigation = new Navigation.VNavmeshProvider();
+        CombatDrivers = Combat.CombatPluginIpc.CreateSelector(Log, SystemClock.Instance);
         // Gathering action ids resolved by name from the Action sheet (7.14); one catalogue for the controller, the loop, fishing and the settings page.
         var gatheringCatalog = new Gathering.GatheringActionCatalog(Log);
         Windows.GatheringRotationPanel.Catalog = gatheringCatalog;
@@ -337,6 +340,7 @@ public sealed class Plugin : IDalamudPlugin
         GatheringLoop.Stop();
         GatheringController.Stop();
         Spiritbond.Stop();
+        CombatDrivers.DisengageAll();
         CraftAutomator.Stop();
         Navigation.Stop();
     }

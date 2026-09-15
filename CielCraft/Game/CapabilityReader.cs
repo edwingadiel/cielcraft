@@ -79,13 +79,19 @@ public sealed class CapabilityReader
                 tribes[tribe.RowId] = playerState->GetBeastTribeRank((byte)tribe.RowId);
         }
 
-        // DoH (ClassJob 8..15) and DoL (16..18) levels; the level array is
-        // indexed by ClassJob.ExpArrayIndex.
+        // Every job's level, DoH (ClassJob 8..15), DoL (16..18) and the combat
+        // jobs alike (roadmap 7.5 needs the latter to pick a hunting job); the
+        // level array is indexed by ClassJob.ExpArrayIndex, which a class and
+        // the job it grows into share, so both rows report the same number.
+        // Row 0 (adventurer) and rows with no experience bar are skipped.
         var levels = new Dictionary<uint, int>();
         var jobLevels = playerState->ClassJobLevels;
         foreach (var job in data.GetExcelSheet<ClassJob>())
         {
-            if (job.RowId is < 8 or > 18)
+            // Row 0 is "adventurer" and rows 44/45 are unnamed placeholders
+            // that share pugilist's experience index; an abbreviation is what
+            // separates a real job from them.
+            if (job.RowId == 0 || job.Abbreviation.ExtractText().Length == 0)
                 continue;
 
             var index = job.ExpArrayIndex;
@@ -142,13 +148,48 @@ public sealed class CapabilityReader
         yield return "GP-regen traits: " + (caps.GpRegenTraits.Count == 0
             ? "none found"
             : string.Join(", ", caps.GpRegenTraits.Select(t => $"{JobName(t.JobId)} {t.Name} (Lv{t.Level}) {(t.Unlocked ? "yes" : "no")}")));
-        yield return "Job levels: " + string.Join(", ", caps.JobLevels.OrderBy(p => p.Key).Select(p => $"{JobName(p.Key)} {p.Value}"));
+        // Every ClassJob is read now (roadmap 7.5), so the line would otherwise
+        // be forty "Lv0" entries: only levelled jobs are listed.
+        var levelled = caps.JobLevels.Where(p => p.Value > 0).OrderBy(p => p.Key).ToList();
+        yield return "Job levels: " + (levelled.Count == 0
+            ? "none read"
+            : string.Join(", ", levelled.Select(p => $"{JobName(p.Key)} {p.Value}")));
+        var combatJob = caps.BestCombatJob(HasGearset);
+        yield return "Best combat job with a gearset (roadmap 7.5): "
+            + (combatJob == 0 ? "none" : $"{JobName(combatJob)} (level {caps.LevelOf(combatJob)})");
         var ranked = caps.TribeRanks
             .Where(p => p.Value > 0)
             .OrderBy(p => p.Key)
             .Select(p => $"{TribeName(p.Key)} {p.Value}")
             .ToList();
         yield return "Tribe ranks: " + (ranked.Count == 0 ? "none" : string.Join(", ", ranked));
+    }
+
+    /// <summary>
+    /// A gearset exists for the job. The same question the bridge answers, but
+    /// the reader has no bridge and the diagnostic line above needs it; the
+    /// gearset module is the single source either way.
+    /// </summary>
+    private static bool HasGearset(uint classJobId)
+    {
+        unsafe
+        {
+            var module = FFXIVClientStructs.FFXIV.Client.UI.Misc.RaptureGearsetModule.Instance();
+            if (module == null)
+                return false;
+
+            for (var i = 0; i < 100; i++)
+            {
+                if (!module->IsValidGearset(i))
+                    continue;
+
+                var gearset = module->GetGearset(i);
+                if (gearset != null && gearset->ClassJob == classJobId)
+                    return true;
+            }
+
+            return false;
+        }
     }
 
     private static string JobName(uint jobId) =>

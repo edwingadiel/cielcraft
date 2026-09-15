@@ -55,3 +55,21 @@ public interface IHuntSpots
     /// <summary>Remember where a mob was actually found, so the next hunt starts there.</summary>
     void RememberSpot(uint bnpcNameId, uint territoryId, Vector3 position);
 }
+
+/// <summary>
+/// One live candidate for the next kill (roadmap 7.5, package B): a battle NPC
+/// of the wanted BNpcName as the object table sees it right now. The hunt run
+/// ranks these; <see cref="TargetedByOthers"/> is the etiquette flag (someone
+/// who is not the player or a party / free company mate already has it), and
+/// <see cref="Distance"/> is always measured from the player even when the
+/// list was ranked around another origin.
+/// </summary>
+public sealed record HuntTargetSnapshot(
+    ulong ObjectId,
+    string Name,
+    int Level,
+    Vector3 Position,
+    float Distance,
+    float HpPercent,
+    bool TargetedByOthers,
+    bool IsAlive);

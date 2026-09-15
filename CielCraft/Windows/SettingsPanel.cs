@@ -313,6 +313,9 @@ internal sealed class SettingsPanel
             "After a run, discard items a storage rule marks Discard; nothing without a rule is touched.");
         UiTheme.Hint("Storage rules live on Tools › Inventory.");
 
+        UiTheme.SectionHeader("Hunting (7.5)");
+        HuntPanel.DrawSettings(configuration);
+
         UiTheme.SectionHeader("Fishing (7.4)");
         UiTheme.Toggle("Prefer AutoHook for bite timing", configuration.FishingPreferAutoHook,
             v => { configuration.FishingPreferAutoHook = v; Save(); },
