@@ -114,27 +114,32 @@ against inventory, pause with a reason.
   target materia count, with live spiritbond bars. Toggle in Settings ›
   Crafting. In game: the page and the gather path ran (Iron Ore, Western
   Thanalan); an actual extraction still needs a piece at 100%.
-- [ ] 7.3 NPC interaction layer (M) — shared prerequisite for 7.4: locate an
-  NPC (ENpcResident + Level sheet → territory/position), teleport to the
-  nearest attuned aetheryte, navmesh to the NPC, interact, drive the
-  dialog (SelectIconString/SelectString by option text, Talk advance),
-  with the same timeouts and interference rules as travel today.
-  - [ ] 7.3a NPC repair when no Dark Matter (S after 7.3) — find the nearest
-    mender, repair all, return to the previous task. Falls back to this
-    automatically when self-repair finds no Dark Matter in the bags.
-  - [ ] 7.3b Vendor purchases (M after 7.3) — GilShopItem sheet maps item →
-    shop → NPC; the planner treats such items as "buy N" steps instead of
-    missing materials (gil-gated, with a configurable gil floor and a
-    per-run spend cap). Special/currency shops excluded at first.
-- [ ] 7.4 Fishing (L) — needed by several CUL recipes. FishingSpot /
-  FishParameter / SpearfishingItem sheets for spot, bait and (where known)
-  time/weather windows; cast → observe bite (tug type) → hook → verify the
-  catch in inventory; mooch when the target needs it; bait purchases via
-  7.3b. Gearset for FSH, travel via the existing runner phases. Fish as
-  raw materials in production plans, and as 7.1 standalone targets.
-  Candidate shortcut: drive the AutoHook plugin over IPC for the
-  bite/hook timing if it exposes one (to confirm); own implementation
-  otherwise.
+- [x] 7.3 NPC interaction layer (M) — done 2026-09-15 (docs/design/m3.md):
+  `NpcDatabase` places NPCs from ENpcResident + Level (24 212 placements;
+  menders by the repair event handler, 57 placed), `NpcInteractor`
+  teleports, travels (TravelDriver), interacts and drives SelectString /
+  SelectIconString / Talk / SelectYesno by option text with per-step
+  timeouts and the manual-movement rule. Validated in game on two vendor
+  trips (Limsa: teleport, travel, interact, shop). Talk-first dialogs and
+  the mender variant still to be seen (test plan T).
+  - [x] 7.3a NPC repair when no Dark Matter (S after 7.3) — done 2026-09-15:
+    the maintenance service walks to the nearest placed mender, repairs
+    all through its window, and reports the blocked reason when none is
+    reachable; not yet exercised in game (T1).
+  - [x] 7.3b Vendor purchases (M after 7.3) — done 2026-09-15: GilShopItem →
+    shop → NPC index, a vendor material source with the gil floor and the
+    per-run cap, ShopEventHandler buys verified by inventory delta, "buy
+    from …" labels in the breakdown. Validated in game (Boiled Egg
+    materials from Engerrand). Special / currency shops are 7.17.
+- [x] 7.4 Fishing (L) — done 2026-09-15: FishingSpot / FishParameter /
+  SpearfishingItem indexes with a bundled bait table (bait per fish is not
+  in the game data; 13 pairings, overridable in the settings), a fishing
+  controller (FSH gearset, travel, bait, Cast / Hook / Mooch / Quit, catch by
+  inventory delta, GP and cordials, bag / job pauses), a material source
+  that chains a bait purchase, fish as Gather orders; AutoHook over IPC
+  when installed. The tug is not exposed by the client structs, so without
+  AutoHook every bite is a plain Hook; spearfishing, Ocean Fishing and the
+  Diadem are refused / not handled. Not yet run in game (test plan X).
 - [ ] 7.5 Combat drops (XL) — skins, hides, etc. Three separate problems:
   (1) data: no game sheet maps items to monsters, so a bundled drop table
   built from an external dataset (Garland Tools / gamerescape) with a
@@ -260,11 +265,16 @@ against inventory, pause with a reason.
   around and refused at start with the book's name; fly decisions and
   FindLocation prefer zones with flight; Capabilities section in the report
   and the debug Overview. Tribe-rank index semantics still to confirm in game.
-- [ ] 7.17 Sourcing beyond gather/craft (L) — vendor purchase with a max gil
-  cap (extends 7.3b), scrip / tomestone / Grand Company exchanges, a
-  collectables planner that works out which turn-ins earn the scrips an
-  order needs (cheapest or fastest), retainer inventory + ventures +
-  storage rules, desynthesis and trash cleanup of unused byproducts.
+- [x] 7.17 Sourcing beyond gather/craft (L) — done 2026-09-15 in two parts:
+  exchanges (SpecialShop scrip / tomestone lines and Grand Company seal
+  shops as a material source, a pure collectables-for-scrips planner with
+  Cheapest / Fastest preferences, a turn-in run chained before a short
+  purchase) and retainers (withdraw from a retainer that holds the item,
+  collect a returning venture, storage rules with deposit / desynth /
+  discard applied after a run, Tools › Inventory). Every shop / retainer
+  addon callback is community-sourced and unverified in game (test plan
+  V, W). Follow-ups: start ventures early; per-slot withdraw counts;
+  vendors without a Level placement (~30% of gil shops).
 - [x] 7.18 Assist mode, craft test, lock-step (S–M) — done 2026-09-15: Assist
   attaches a batch to a synthesis started by hand on step 1; Craft Test
   (Tools) solves for chosen stats and a recipe on a detached solver and
@@ -341,13 +351,13 @@ known base.
 16. (done) 7.2 Spiritbond / materia extraction (S–M).
 
 ### M3 — Beyond gather and craft (≈ 6 weeks)
-17. 7.3 NPC interaction layer (M) → 7.3a mender repair (S) → 7.3b vendor
+17. (done) 7.3 NPC interaction layer (M) → 7.3a mender repair (S) → 7.3b vendor
     purchases (M).
-18. 7.17 Sourcing (L): scrip / tomestone / GC exchanges, collectables-for-
+18. (done) 7.17 Sourcing (L): scrip / tomestone / GC exchanges, collectables-for-
     scrips planner, retainer ventures + storage rules, desynth + trash
     cleanup. Depends on 17 and the orders model.
-19. 7.19 Equipment set builder (M): generated orders; depends on 5 and 18.
-20. 7.4 Fishing (L): its own controller; depends on 17 for spots/NPCs.
+19. (skipped for now, possible later) 7.19 Equipment set builder (M): generated orders; depends on 5 and 18.
+20. (done) 7.4 Fishing (L): its own controller; depends on 17 for spots/NPCs.
 
 ### M4 — Stretch
 21. 7.5 Combat drops (XL): only after a combat plugin with stable IPC is

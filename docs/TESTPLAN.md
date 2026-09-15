@@ -716,6 +716,39 @@ done: …`. An item without a rule must never move; a stalled step logs
 `Skipped <item>: <reason>` and the pass continues. The page shows every
 retainer with venture state and the preview matches what runs.
 
+## X. Fishing (roadmap 7.4)
+
+**X1 ★. Happy path** — Buy Moth Pupa (bait, item 2586), stand outside the
+Shroud, order Brass Loach (item 4935) ×3 as a Gather order (fish count as
+gatherable).
+Expect `[Fishing] Fishing for Brass Loach at The Vein (Central Shroud,
+level 5) with Moth Pupa ×3.` → `Teleporting to Central Shroud for The
+Vein.` → `Heading for The Vein.` → `Moth Pupa on; fishing for Brass Loach.`
+→ `Cast — action 289 …` → `Hook — action 296 …` → `Caught 1× Brass Loach
+(1/3, 1 casts).` … → `3/3 caught; putting the rod away.` → `Quit — action
+299` → `Completed: 3/3 Brass Loach in N casts.` About 1.5 s between casts,
+never two actions in one frame. The spot's world coordinates are the
+likeliest thing to be wrong (`/cielcraft report` › Fishing prints them):
+`Paused: there is no water in casting range …` means the unpacking is off
+— walk to the water and `/cielcraft resume`.
+
+**X2. Pauses** — A full bag → `[Fishing] Paused: inventory is full.`; a job
+swap → `Paused: the character is no longer on FSH.` and `Resuming: back onto
+FSH first.` on resume.
+
+**X3. Bait table** — A fish whose bundled bait is doubtful: after 30 casts
+`Paused: 30 casts with <bait> at <spot> brought no <fish> — the bundled
+bait table may be wrong …`; set the pairing in the FishingBait settings
+and resume. Bait per fish is not in the game data; the 13 bundled pairings
+are unverified.
+
+**X4. Refusals and AutoHook** — Wentletrap (spearfishing) is refused at
+plan time with the reason. Without AutoHook installed the report reads
+`AutoHook: installed False`; with it and the setting on, `[Fishing] AutoHook
+is installed …; it decides the bite timing this run.` The tug is not
+readable from the client structs, so without AutoHook every bite is a
+plain Hook.
+
 ---
 
 ## What to paste
@@ -730,6 +763,8 @@ plugin itself threw, the log will contain an `Unhandled exception in tick`
 entry with the stack trace.
 
 ## Validation log
+
+**2026-09-15, M3 smoke.** Vendor purchases ran end to end twice (Boiled Egg order: Chicken Egg and Mineral Water bought from Engerrand in Limsa Lominsa Lower Decks — teleport, travel, interact, Shop buy at the read row, bag verified, gil down by the listed price) — U1, U2 pass. Three fixes on the way: the vendor run now ticks the NPC interactor (it stood still forever), a Telepo cast issued right after the shop closed was swallowed (the runner re-issues it), and a batch now pauses on a full bag between crafts instead of failing (the second Boiled Egg craft hit "Insufficient inventory space"). Also fixed earlier the same day: the first craft step after a gearset change (crafting log opened without ingredients; re-open toggled it closed). The NPC / shop / exchange indexes are warmed at load (685 ms) after a 600 ms hitch inside a Preview. Not run: T (mender — needs no Dark Matter in the bag), V (exchanges), W (retainers), X (fishing); every addon callback there is marked unverified in the agents' notes and the log names the step that stalls.
 
 **2026-09-15, M2 smoke.** Rotation engine: the catalogue resolved 36 actions; on an Iron Ore node the facts line read the boon (60%) and a Perception bonus condition, and Yield II fired by rule 2 (12–13 ore per node) — R1, R2 pass. HQ intermediates: the reachability check ran at plan time ("no HQ intermediates needed" for Cobalt Tungsten Scimitar and Iron Rivets); the formula held for one HQ ingredient (Iron Rivets started at 180 / 360) — P1 (single ingredient), P4 pass. Spiritbond: the Tools page and the gather path ran (Iron Ore, Western Thanalan); no piece reached 100%, so Q1 remains. Scheduler: the Schedule preview listed Adamantite Ore (Unspoiled, 12:00–14:00 ET, Azys Lla); a run inside the window teleported and reached the node area, the first approach failed on a ledge (fixed: no landing on another terrain level, a second approach, re-schedule instead of fail); a second run is waiting in place for the next window — S1, S4 pass, S2, S3, S5 and R3–R6 for manual testing. Found and fixed on the way: the first craft step after a gearset change never became ready (the log opened without ingredients and each re-open toggled it closed).
 
