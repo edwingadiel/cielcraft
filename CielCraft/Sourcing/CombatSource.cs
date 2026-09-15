@@ -27,7 +27,7 @@ public sealed class CombatSource : IMaterialSource
     private const int SecondsPerDrop = 55;
 
     private readonly CombatDatabase database;
-    private readonly ICombatDriver driver;
+    private readonly Func<ICombatDriver> driver;
     private readonly IHuntBridge bridge;
     private readonly INavigationProvider navigation;
     private readonly AutomationSettings settings;
@@ -39,9 +39,16 @@ public sealed class CombatSource : IMaterialSource
     /// <summary>The monster an offer named, so the run hunts what the plan promised.</summary>
     private readonly Dictionary<uint, MobDrop> offered = new();
 
+    /// <summary>
+    /// The driver comes in as a callback, not an instance: package B's
+    /// <c>CombatDriverSelector</c> picks Rotation Solver, then BossMod, then a
+    /// driver that is never available, and the answer changes when the user
+    /// enables or disables a plugin mid-session. A hunt in flight keeps the
+    /// driver it started with.
+    /// </summary>
     public CombatSource(
         CombatDatabase database,
-        ICombatDriver driver,
+        Func<ICombatDriver> driver,
         IHuntBridge bridge,
         INavigationProvider navigation,
         AutomationSettings settings,
@@ -67,7 +74,7 @@ public sealed class CombatSource : IMaterialSource
 
     public SourceOffer? Offer(uint itemId, int amount)
     {
-        if (amount <= 0 || !settings.HuntingEnabled || !driver.IsAvailable)
+        if (amount <= 0 || !settings.HuntingEnabled || !driver().IsAvailable)
             return null;
 
         var job = ChooseCombatJob();
@@ -90,7 +97,7 @@ public sealed class CombatSource : IMaterialSource
     /// <summary>"hunt Raptors (Coerthas Central Highlands)" for the plan tree; null when nothing drops it.</summary>
     public string? SourceLabel(uint itemId)
     {
-        if (!settings.HuntingEnabled || !driver.IsAvailable)
+        if (!settings.HuntingEnabled || !driver().IsAvailable)
             return null;
 
         var job = ChooseCombatJob();
@@ -101,14 +108,23 @@ public sealed class CombatSource : IMaterialSource
         return drop == null ? null : $"hunt {drop.MobName} ({drop.ZoneName}, Lv {drop.Level})";
     }
 
+    /// <summary>
+    /// The hunt this source started last, still in flight or finished
+    /// (roadmap 7.5). The Hunting panel reads it for the live state and the
+    /// diagnostic report folds its <c>Describe()</c> in; null before the
+    /// first hunt of the session. The production runner owns the ticking.
+    /// </summary>
+    public HuntRun? CurrentRun { get; private set; }
+
     public ISourceRun Start(SourceOffer offer)
     {
         // The plan may be minutes old: ask again so a zone change or a spot
         // remembered in the meantime is taken into account.
         var job = ChooseCombatJob();
         var drop = BestDrop(offer.ItemId, job) ?? offered.GetValueOrDefault(offer.ItemId);
-        return new HuntRun(
-            bridge, driver, navigation, settings, offer, drop, job, log, clock, database, capabilities, itemName);
+        CurrentRun = new HuntRun(
+            bridge, driver(), navigation, settings, offer, drop, job, log, clock, database, capabilities, itemName);
+        return CurrentRun;
     }
 
     /// <summary>
@@ -145,8 +161,8 @@ public sealed class CombatSource : IMaterialSource
     public IEnumerable<string> Describe()
     {
         var job = ChooseCombatJob();
-        yield return $"Hunt source: hunting {(settings.HuntingEnabled ? "on" : "off")}, driver {driver.Name} " +
-                     $"(available {driver.IsAvailable}), job {job} " +
+        yield return $"Hunt source: hunting {(settings.HuntingEnabled ? "on" : "off")}, driver {driver().Name} " +
+                     $"(available {driver().IsAvailable}), job {job} " +
                      $"(level {capabilities().LevelOf(job)}, +{settings.HuntMaxLevelAbove} allowance), " +
                      $"retreat below {settings.HuntRetreatHpPercent}% HP, " +
                      $"{(settings.HuntSkipMobsTargetedByOthers ? "leaves" : "takes")} monsters other players are fighting.";

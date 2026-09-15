@@ -280,7 +280,7 @@ public class HuntRunTests
         };
 
         var source = new CombatSource(
-            database, driver, bridge, navigation, settings, log, clock, capabilities, id => $"item {id}");
+            database, () => driver, bridge, navigation, settings, log, clock, capabilities, id => $"item {id}");
 
         return new Harness(bridge, driver, navigation, zones, database, source, settings, clock, log);
     }
@@ -513,7 +513,7 @@ public class HuntRunTests
         };
         var database = new CombatDatabase(table, zones, settings, log, clock, bridge.CanTeleportTo, () => bridge.CurrentTerritoryId);
         var source = new CombatSource(
-            database, new FakeCombatDriver(), bridge, new FakeNavigation(bridge), settings, log, clock);
+            database, () => new FakeCombatDriver(), bridge, new FakeNavigation(bridge), settings, log, clock);
 
         Assert.NotNull(source.Offer(RaptorSkin, 1));
     }
@@ -743,6 +743,9 @@ public class HuntRunTests
         Assert.Equal(HuntRunState.Idle, run.State);
         Assert.False(h.Driver.IsEngaged);
         Assert.Equal(2, h.Driver.Disengages);
+
+        // The Hunting panel reads the run back off the source.
+        Assert.Same(run, h.Source.CurrentRun);
     }
 
     [Fact]
