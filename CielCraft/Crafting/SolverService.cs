@@ -16,7 +16,8 @@ public enum SolverStatus
 
 /// <summary>
 /// Runs the craft solver off the framework thread and exposes the result for
-/// the UI. One solve at a time; a solve can take several seconds.
+/// the UI. One solve at a time; a solve can take several seconds. Full solves
+/// go through the solution cache (roadmap 7.7); mid-craft solves never do.
 /// </summary>
 public sealed class SolverService
 {
@@ -29,13 +30,15 @@ public sealed class SolverService
     private CraftObjective? lastObjective;
     private CraftLiveEffects? lastEffects;
 
+    public SolutionCache Cache { get; }
     public SolverStatus Status { get; private set; } = SolverStatus.Idle;
     public CraftSolution? Solution { get; private set; }
     public string StatusText { get; private set; } = "No solve requested yet.";
 
-    public SolverService(ICraftSolver solver)
+    public SolverService(ICraftSolver solver, SolutionCache cache)
     {
         this.solver = solver;
+        Cache = cache;
     }
 
     public bool BeginSolveFromState(CraftSetup setup, CraftSnapshot live, int targetQuality, CraftSolveContext context)
@@ -65,7 +68,7 @@ public sealed class SolverService
         return true;
     }
 
-    private void Finish(Func<CraftSolution> run)
+    private void Finish(Func<CraftSolution> run, Action<CraftSolution>? store = null)
     {
         CraftSolution result;
         try
@@ -90,7 +93,10 @@ public sealed class SolverService
 
         Plugin.Log.Information($"[Raphael] {StatusText}");
         if (result.Success)
+        {
             Plugin.Log.Information($"[Raphael] Rotation: {Names(result.ActionIds)} (base progress {result.BaseProgress}, base quality {result.BaseQuality}).");
+            store?.Invoke(result);
+        }
     }
 
     private static string Names(IEnumerable<uint> actionIds) =>
@@ -119,8 +125,47 @@ public sealed class SolverService
             $"stats {setup.Craftsmanship}/{setup.Control}/{setup.Cp} @ Lv{setup.Level}, " +
             $"target quality {objective.TargetQuality} (initial {objective.InitialQuality}).");
 
-        Task.Run(() => Finish(() => solver.Solve(setup, objective)));
+        if (Cache.TryGet(setup, objective, out var cached))
+        {
+            lock (gate)
+            {
+                Solution = cached;
+                Status = SolverStatus.Done;
+                StatusText = $"Cached: {cached.ActionIds.Count} actions.";
+            }
+
+            Plugin.Log.Information($"[Raphael] Cached rotation: {Names(cached.ActionIds)} (base progress {cached.BaseProgress}, base quality {cached.BaseQuality}).");
+            return true;
+        }
+
+        Task.Run(() => Finish(() => solver.Solve(setup, objective), result => Store(setup, objective, result)));
         return true;
+    }
+
+    private void Store(CraftSetup setup, CraftObjective objective, CraftSolution result)
+    {
+        Cache.Add(setup, objective, result);
+        SaveCache();
+    }
+
+    public void ClearCache()
+    {
+        Cache.Clear();
+        SaveCache();
+        Plugin.Log.Information("[Raphael] Solution cache cleared.");
+    }
+
+    /// <summary>A cache that cannot be written only costs a re-solve next session.</summary>
+    private void SaveCache()
+    {
+        try
+        {
+            Cache.Save();
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.Warning($"[Raphael] Could not save the solution cache: {e.Message}");
+        }
     }
 
     /// <summary>Internal state for the diagnostic report.</summary>
@@ -139,5 +184,8 @@ public sealed class SolverService
             yield return current.Success
                 ? $"Solution ({current.ActionIds.Count} actions, base {current.BaseProgress}/{current.BaseQuality}): {Names(current.ActionIds)}"
                 : $"Solution failed: {current.Error}";
+
+        foreach (var line in Cache.Describe())
+            yield return line;
     }
 }
