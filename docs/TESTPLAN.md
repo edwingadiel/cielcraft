@@ -429,6 +429,8 @@ entry with the stack trace.
 
 ## Validation log
 
+**2026-09-15, M1 smoke.** New window layout, Consumables (migrated food in both sets), Home and Orders pages render; a gather order (Iron Ore ×3, kind Gather) ran end to end twice: job switch, teleport to Western Thanalan, travel, two swings, and — after the fix — the return teleport to the aetheryte before "Completed". N1 passes; the rest of N and O, K–M as written, and D1/D3/D4 remain.
+
 **2026-09-15, late (orders model smoke run).** Added a Cobalt Tungsten Ingot order, Preview, Run orders: the group planned and the batch started, which surfaced and fixed three crafting bugs (ingredient assignment read the previous craft, first action of a craft resolving after the 6 s timeout, Groundwork wrongly halved under Waste Not). The craft finished HQ through the new attach-to-craft path; "Resume" on the saved production correctly reported it already complete. J1–J8 still to run properly.
 
 **2026-09-15 (Windows, Dalamud 15.0.3.4, first in-game run).** Passed: A1, A2,
