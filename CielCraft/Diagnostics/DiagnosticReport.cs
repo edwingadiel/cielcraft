@@ -96,6 +96,9 @@ public static class DiagnosticReport
         Section(sb, "Maintenance");
         Lines(sb, plugin.Maintenance.Describe);
 
+        Section(sb, "Spiritbond mode");
+        Lines(sb, plugin.Spiritbond.Describe);
+
         Section(sb, "Production runner");
         Lines(sb, plugin.ProductionRunner.Describe);
         Lines(sb, plugin.Finisher.Describe);

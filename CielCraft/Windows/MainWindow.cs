@@ -35,6 +35,7 @@ public class MainWindow : Window, IDisposable
         public const string StatusDebug = "Status/Debug";
         public const string ToolsCharacter = "Tools/Character";
         public const string ToolsCraftTest = "Tools/CraftTest";
+        public const string ToolsSpiritbond = "Tools/Spiritbond";
         public const string ToolsCache = "Tools/Cache";
         public const string SettingsGeneral = "Settings/General";
         public const string SettingsCrafting = "Settings/Crafting";
@@ -60,6 +61,7 @@ public class MainWindow : Window, IDisposable
         new(Pages.StatusDebug, "Status", "Debug"),
         new(Pages.ToolsCharacter, "Tools", "Character"),
         new(Pages.ToolsCraftTest, "Tools", "Craft Test"),
+        new(Pages.ToolsSpiritbond, "Tools", "Spiritbond"),
         new(Pages.ToolsCache, "Tools", "Solution cache"),
         new(Pages.SettingsGeneral, "Settings", "General"),
         new(Pages.SettingsCrafting, "Settings", "Crafting"),
@@ -80,6 +82,10 @@ public class MainWindow : Window, IDisposable
     private readonly RotationPanel rotation;
     private readonly PlanTreePanel planTree;
     private readonly CraftTestPanel craftTest;
+    private readonly SpiritbondPanel spiritbond;
+
+    /// <summary>The spiritbond-mode machine (roadmap 7.2), for the emergency stop and the report.</summary>
+    public SpiritbondMode Spiritbond => spiritbond.Mode;
     private readonly SetupPanel setup;
     private readonly DebugPanel debug;
     private readonly SettingsPanel settings;
@@ -120,6 +126,7 @@ public class MainWindow : Window, IDisposable
         rotation = new RotationPanel(plugin);
         planTree = new PlanTreePanel(plugin);
         craftTest = new CraftTestPanel(plugin);
+        spiritbond = new SpiritbondPanel(plugin);
         setup = new SetupPanel(plugin, ShowPage);
         debug = new DebugPanel(plugin);
         settings = new SettingsPanel(plugin);
@@ -290,6 +297,9 @@ public class MainWindow : Window, IDisposable
                 break;
             case Pages.ToolsCraftTest:
                 craftTest.Draw();
+                break;
+            case Pages.ToolsSpiritbond:
+                spiritbond.Draw();
                 break;
             case Pages.ToolsCache:
                 DrawCachePage();

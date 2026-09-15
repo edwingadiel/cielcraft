@@ -96,6 +96,9 @@ internal sealed class SettingsPanel
         UiTheme.Toggle("Lock-step", configuration.LockStep,
             v => { configuration.LockStep = v; Save(); },
             "Pause before every craft action and wait for Step on the Crafting Steps page; for watching a rotation one action at a time.");
+
+        UiTheme.SectionHeader("Materia (7.2)");
+        SpiritbondPanel.DrawSettings(configuration);
     }
 
     // ---------------------------------------------------------- gathering

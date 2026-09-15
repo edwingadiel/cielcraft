@@ -62,6 +62,9 @@ public sealed class Plugin : IDalamudPlugin
     /// <summary>The one window (roadmap 7.21); settings, debug and setup are pages in it.</summary>
     private MainWindow MainWindow { get; init; }
 
+    /// <summary>Spiritbond mode (roadmap 7.2); lives with its Tools page.</summary>
+    public SpiritbondMode Spiritbond => MainWindow.Spiritbond;
+
     /// <summary>Crafting stays usable without vnavmesh; only gathering automation needs it (spec §31).</summary>
     internal static bool IsVNavmeshAvailable =>
         PluginInterface.InstalledPlugins.Any(p => p.InternalName == "vnavmesh" && p.IsLoaded);
@@ -253,6 +256,7 @@ public sealed class Plugin : IDalamudPlugin
         BatchCrafter.Stop();
         GatheringLoop.Stop();
         GatheringController.Stop();
+        Spiritbond.Stop();
         CraftAutomator.Stop();
         Navigation.Stop();
     }
