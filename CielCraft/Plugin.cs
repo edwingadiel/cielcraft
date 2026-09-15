@@ -108,6 +108,9 @@ public sealed class Plugin : IDalamudPlugin
         CraftAutomator = new CraftAutomator(
             GameBridge, CraftMonitor, ActionExecutor, Configuration, actionResolver, Log, SystemClock.Instance);
         Navigation = new Navigation.VNavmeshProvider();
+        // Gathering action ids resolved by name from the Action sheet (7.14); one catalogue for the controller, the loop, fishing and the settings page.
+        var gatheringCatalog = new Gathering.GatheringActionCatalog(Log);
+        Windows.GatheringRotationPanel.Catalog = gatheringCatalog;
         // NPC layer (7.3): the mender trip (7.3a) and every M3 source travel through it.
         NpcDatabase = new NpcDatabase(GameBridge.CanTeleportTo, GatheringDatabase.GetTerritoryName);
         NpcInteractor = new Npc.NpcInteractor(
@@ -143,9 +146,6 @@ public sealed class Plugin : IDalamudPlugin
         // Gil before scrips, then the rod, retainers last: a node, a vendor or an exchange beats a bell trip.
         var sources = new IMaterialSource[] { VendorSource, ExchangeSource, FishingSource, RetainerSource };
         Windows.PlanTreePanel.UseSources(sources);
-        // Gathering action ids resolved by name from the Action sheet (7.14); one catalogue for the controller, the loop and the settings page.
-        var gatheringCatalog = new Gathering.GatheringActionCatalog(Log);
-        Windows.GatheringRotationPanel.Catalog = gatheringCatalog;
         GatheringController = new Gathering.GatheringController(
             GameBridge, Navigation, Configuration, Log, SystemClock.Instance, () => Capabilities.Current, gatheringCatalog);
         GatheringLoop = new Gathering.GatheringLoop(
