@@ -238,13 +238,6 @@ public interface IGameBridge : ITravelBridge
     long Gil { get; }
 
     /// <summary>
-    /// An aetheryte of the territory is in the teleport list — whether a
-    /// vendor there can be reached at all (roadmap 7.3b). The current zone
-    /// does not need one; callers check that separately.
-    /// </summary>
-    bool CanTeleportTo(uint territoryId);
-
-    /// <summary>
     /// Buys <paramref name="count"/> of the item from the open Shop window
     /// (roadmap 7.3b). False when the window is shut or the shop does not
     /// list the item. The purchase is verified by the caller's inventory
@@ -254,6 +247,31 @@ public interface IGameBridge : ITravelBridge
 
     /// <summary>Closes the Shop window if it is open.</summary>
     void CloseShop();
+    // ---- NPC (7.3) ----
+
+    /// <summary>An aetheryte of that territory is in the teleport list, so a trip there is possible.</summary>
+    bool CanTeleportTo(uint territoryId);
+
+    /// <summary>
+    /// The nearest loaded event NPC (or event object — summoning bells and the
+    /// like) with that data id, and where it stands; null when none is in the
+    /// object table. The sheets say where an NPC belongs, the object table says
+    /// where it actually is.
+    /// </summary>
+    (ulong ObjectId, System.Numerics.Vector3 Position)? FindNpcObject(uint dataId);
+
+    /// <summary>Option labels of the open SelectString / SelectIconString, in the order the menu lists them; empty when neither is open.</summary>
+    IReadOnlyList<string> ReadDialogOptions();
+
+    /// <summary>
+    /// Picks the option of the open SelectString / SelectIconString whose label
+    /// contains the text (case-insensitive). False when no menu is open or no
+    /// option matches.
+    /// </summary>
+    bool SelectDialogOption(string textContains);
+
+    /// <summary>Advances the open Talk box one step. False when none is open.</summary>
+    bool AdvanceTalk();
 }
 
 /// <summary>One equipped piece's spiritbond (roadmap 7.2): the equipment slot, the item and 0..10000.</summary>

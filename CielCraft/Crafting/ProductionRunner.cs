@@ -382,8 +382,9 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
     {
         // Manual movement during phases where the character should be still
         // means the user has taken over (spec §49): step aside politely.
+        // A mender trip (7.3a) moves the character on purpose during these phases.
         if (State is ProductionState.PreparingStep or ProductionState.PreparingGather or ProductionState.WaitingForWindow
-            && !gameBridge.IsCrafting && !gameBridge.IsBetweenAreas && !navigation.IsMoving)
+            && !gameBridge.IsCrafting && !gameBridge.IsBetweenAreas && !navigation.IsMoving && !maintenance.IsMovingCharacter)
         {
             var position = gameBridge.GetPlayerState()?.Position;
             if (position != null)

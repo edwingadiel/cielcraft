@@ -25,6 +25,8 @@
     <!-- The vendor source (roadmap 7.3b) is Dalamud-free too; only its shop
          database reads the sheets, and tests hand it an IVendorDirectory. -->
     <Compile Include="../CielCraft/Sourcing/VendorSource.cs" Link="Seams/VendorSource.cs" />
+    <!-- The NPC interactor (roadmap 7.3) is Dalamud-free too; its database is not. -->
+    <Compile Include="../CielCraft/Npc/NpcInteractor.cs" Link="Seams/NpcInteractor.cs" />
   </ItemGroup>
   <ItemGroup>
     <!-- Host-platform native solver, if built locally (cargo release build in native/cielcraft-raphael). -->

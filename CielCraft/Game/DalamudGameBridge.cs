@@ -1293,6 +1293,168 @@ public sealed class DalamudGameBridge : IGameBridge
         return (uint)playerState->Attributes[baseParamId];
     }
 
+    // ---- NPC (7.3) ----
+
+    public bool CanTeleportTo(uint territoryId)
+    {
+        foreach (var entry in Plugin.AetheryteList)
+        {
+            if (entry.TerritoryId == territoryId)
+                return true;
+        }
+
+        return false;
+    }
+
+    public (ulong ObjectId, System.Numerics.Vector3 Position)? FindNpcObject(uint dataId)
+    {
+        if (dataId == 0)
+            return null;
+
+        // EventObj as well as EventNpc: summoning bells and other interactable
+        // fixtures (7.17) are objects, not residents, and the same lookup serves.
+        var player = Plugin.ObjectTable.LocalPlayer;
+        (ulong ObjectId, System.Numerics.Vector3 Position)? nearest = null;
+        var nearestDistance = float.MaxValue;
+        foreach (var obj in Plugin.ObjectTable)
+        {
+            // BaseId is the object table's name for the sheet row (ENpcResident
+            // / EObj) the object was spawned from — DataId under its old name.
+            if (obj.BaseId != dataId)
+                continue;
+
+            if (obj.ObjectKind is not (Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventNpc
+                or Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventObj))
+                continue;
+
+            var distance = player == null ? 0f : System.Numerics.Vector3.Distance(player.Position, obj.Position);
+            if (nearest == null || distance < nearestDistance)
+            {
+                nearestDistance = distance;
+                nearest = (obj.GameObjectId, obj.Position);
+            }
+        }
+
+        return nearest;
+    }
+
+    public IReadOnlyList<string> ReadDialogOptions()
+    {
+        var (_, options) = ReadDialogMenu();
+        return options;
+    }
+
+    public unsafe bool SelectDialogOption(string textContains)
+    {
+        if (string.IsNullOrWhiteSpace(textContains))
+            return false;
+
+        var (address, options) = ReadDialogMenu();
+        if (address == 0)
+            return false;
+
+        for (var i = 0; i < options.Count; i++)
+        {
+            if (!options[i].Contains(textContains, System.StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            Plugin.Log.Information($"[Npc] Dialog option {i} \"{options[i]}\" matches \"{textContains}\"; firing it.");
+            ((FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)address)->FireCallbackInt(i);
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// The open option menu: its addon and the entry labels the popup menu
+    /// holds, which are exactly what the list shows and are indexed the way
+    /// the addon's own callback expects. (0 / empty when neither menu is open.)
+    /// </summary>
+    private static unsafe (nint Address, List<string> Options) ReadDialogMenu()
+    {
+        var options = new List<string>();
+
+        var ptr = Plugin.GameGui.GetAddonByName("SelectString");
+        if (!ptr.IsNull && ptr.IsVisible)
+        {
+            var addon = (FFXIVClientStructs.FFXIV.Client.UI.AddonSelectString*)ptr.Address;
+            ReadPopupEntries(addon->PopupMenu.EntryNames, addon->PopupMenu.EntryCount, options);
+            return (ptr.Address, options);
+        }
+
+        ptr = Plugin.GameGui.GetAddonByName("SelectIconString");
+        if (!ptr.IsNull && ptr.IsVisible)
+        {
+            var addon = (FFXIVClientStructs.FFXIV.Client.UI.AddonSelectIconString*)ptr.Address;
+            ReadPopupEntries(addon->PopupMenu.EntryNames, addon->PopupMenu.EntryCount, options);
+            return (ptr.Address, options);
+        }
+
+        return (0, options);
+    }
+
+    private static unsafe void ReadPopupEntries(
+        InteropGenerator.Runtime.CStringPointer* entryNames, int entryCount, List<string> into)
+    {
+        if (entryNames == null || entryCount <= 0)
+            return;
+
+        for (var i = 0; i < entryCount; i++)
+        {
+            var entry = entryNames[i];
+            into.Add(entry.Value == null ? "" : entry.ToString() ?? "");
+        }
+    }
+
+    public unsafe bool AdvanceTalk()
+    {
+        var ptr = Plugin.GameGui.GetAddonByName("Talk");
+        if (ptr.IsNull || !ptr.IsVisible)
+            return false;
+
+        var addon = (FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)ptr.Address;
+
+        // A click on the text box is what advances it; replaying the window's
+        // own registered click event is the same path a real click takes
+        // (as in ReplayCheckboxClick above). The callback is the fallback for
+        // a frame where no event is attached yet.
+        if (ReplayWindowClick(addon))
+            return true;
+
+        return addon->FireCallbackInt(0);
+    }
+
+    /// <summary>
+    /// Replays the addon's own MouseClick event back into it, null-guarded end
+    /// to end (a missing node or unattached listener would be a native null
+    /// dereference — a client crash, not an exception).
+    /// </summary>
+    private static unsafe bool ReplayWindowClick(FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase* addon)
+    {
+        if (addon == null || addon->CollisionNodeList == null)
+            return false;
+
+        for (var i = 0u; i < addon->CollisionNodeListCount; i++)
+        {
+            var node = addon->CollisionNodeList[i];
+            if (node == null)
+                continue;
+
+            for (var evt = node->AtkEventManager.Event; evt != null; evt = evt->NextEvent)
+            {
+                if (evt->State.EventType != FFXIVClientStructs.FFXIV.Component.GUI.AtkEventType.MouseClick)
+                    continue;
+
+                var data = default(FFXIVClientStructs.FFXIV.Component.GUI.AtkEventData);
+                addon->ReceiveEvent(evt->State.EventType, (int)evt->Param, evt, &data);
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     // ---- Shops (7.3b) ----
 
     public unsafe long Gil
@@ -1303,10 +1465,6 @@ public sealed class DalamudGameBridge : IGameBridge
             return inventory == null ? 0L : inventory->GetGil();
         }
     }
-
-    /// <summary>The same teleport list <see cref="TeleportToTerritory"/> searches, asked without teleporting.</summary>
-    public bool CanTeleportTo(uint territoryId) =>
-        territoryId != 0 && Plugin.AetheryteList.Any(entry => entry.TerritoryId == territoryId);
 
     /// <summary>
     /// The shop's own buy path: the event handler behind the Shop window

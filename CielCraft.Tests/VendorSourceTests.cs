@@ -86,6 +86,12 @@ public class VendorSourceTests
 
         private static NotImplementedException Unexpected() => new("the vendor run must not touch this");
 
+        // ---- NPC (7.3) ----
+        public (ulong ObjectId, System.Numerics.Vector3 Position)? FindNpcObject(uint dataId) => throw Unexpected();
+        public IReadOnlyList<string> ReadDialogOptions() => throw Unexpected();
+        public bool SelectDialogOption(string textContains) => throw Unexpected();
+        public bool AdvanceTalk() => throw Unexpected();
+
         public bool IsLoggedIn => throw Unexpected();
         public bool IsCrafting => throw Unexpected();
         public bool IsPreparingToCraft => throw Unexpected();

@@ -96,6 +96,13 @@ public static class DiagnosticReport
         Section(sb, "Maintenance");
         Lines(sb, plugin.Maintenance.Describe);
 
+        Section(sb, "NPC layer (7.3)");
+        Lines(sb, plugin.NpcDatabase.Describe);
+        Lines(sb, plugin.NpcInteractor.Describe);
+
+        Section(sb, "Vendor source (7.3b)");
+        Lines(sb, plugin.VendorSource.Describe);
+
         Section(sb, "Spiritbond mode");
         Lines(sb, plugin.Spiritbond.Describe);
 

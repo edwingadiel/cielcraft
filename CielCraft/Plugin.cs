@@ -52,6 +52,12 @@ public sealed class Plugin : IDalamudPlugin
     public Gathering.GatheringController GatheringController { get; init; }
     public Gathering.GatheringLoop GatheringLoop { get; init; }
     public MaintenanceService Maintenance { get; init; }
+    /// <summary>NPC placements and menders (roadmap 7.3).</summary>
+    public NpcDatabase NpcDatabase { get; init; }
+    /// <summary>Goes to NPCs and drives their dialogs (roadmap 7.3); ticked by whoever started the interaction.</summary>
+    public Npc.NpcInteractor NpcInteractor { get; init; }
+    /// <summary>Gil vendors as a material source (roadmap 7.3b).</summary>
+    public Sourcing.VendorSource VendorSource { get; init; }
     /// <summary>Order book runner (roadmap 7.13); replaces the production queue.</summary>
     public OrderRunner OrderRunner { get; init; }
     public Social.SocialGuard SocialGuard { get; init; }
@@ -89,11 +95,22 @@ public sealed class Plugin : IDalamudPlugin
         SolverService = new SolverService(new CielCraft.Raphael.RaphaelSolver(), LoadSolutionCache(), Log);
         CraftAutomator = new CraftAutomator(
             GameBridge, CraftMonitor, ActionExecutor, Configuration, actionResolver, Log, SystemClock.Instance);
-        Maintenance = new MaintenanceService(GameBridge, Configuration, Log, SystemClock.Instance, RecipeProvider.GetItemName);
+        Navigation = new Navigation.VNavmeshProvider();
+        // NPC layer (7.3): the mender trip (7.3a) and every M3 source travel through it.
+        NpcDatabase = new NpcDatabase(GameBridge.CanTeleportTo, GatheringDatabase.GetTerritoryName);
+        NpcInteractor = new Npc.NpcInteractor(
+            GameBridge, Navigation, Log, SystemClock.Instance, () => Capabilities.Current, GatheringDatabase.GetTerritoryName);
+        Maintenance = new MaintenanceService(
+            GameBridge, Configuration, Log, SystemClock.Instance, RecipeProvider.GetItemName, NpcInteractor, NpcDatabase);
         BatchCrafter = new BatchCrafter(
             GameBridge, CraftMonitor, CraftAutomator, SolverService, RecipeProvider, Configuration, Maintenance,
             actionResolver, Log, SystemClock.Instance);
-        Navigation = new Navigation.VNavmeshProvider();
+        // Material sources beyond nodes (M3), asked in this order for what no node yields.
+        VendorSource = new Sourcing.VendorSource(
+            new ShopDatabase(GameBridge, NpcDatabase), NpcDatabase, NpcInteractor, GameBridge, Configuration,
+            Log, SystemClock.Instance, RecipeProvider.GetItemName);
+        var sources = new IMaterialSource[] { VendorSource };
+        Windows.PlanTreePanel.UseSources(sources);
         // Gathering action ids resolved by name from the Action sheet (7.14); one catalogue for the controller, the loop and the settings page.
         var gatheringCatalog = new Gathering.GatheringActionCatalog(Log);
         Windows.GatheringRotationPanel.Catalog = gatheringCatalog;
@@ -104,7 +121,7 @@ public sealed class Plugin : IDalamudPlugin
             () => Capabilities.Current, gatheringCatalog);
         ProductionRunner = new ProductionRunner(
             GameBridge, BatchCrafter, RecipeProvider, GatheringLoop, GatheringDatabase, Maintenance, Navigation, Configuration,
-            Capabilities, Log, SystemClock.Instance, Notifier);
+            Capabilities, Log, SystemClock.Instance, Notifier, sources);
         SocialGuard = new Social.SocialGuard(this, GameBridge, Configuration);
         OrderRunner = new OrderRunner(
             ProductionRunner, RecipeProvider, GameBridge, Configuration, () => Capabilities.Current, Notifier, Log, SystemClock.Instance,

@@ -192,9 +192,15 @@ public class MaintenanceTests
 
         // ---- Shops (7.3b) ----
         public long Gil => throw Unexpected();
-        public bool CanTeleportTo(uint territoryId) => throw Unexpected();
         public bool BuyFromShop(uint itemId, int count) => throw Unexpected();
         public void CloseShop() => throw Unexpected();
+        // ---- NPC (7.3): mender repair has its own fake in NpcInteractorTests ----
+
+        public bool CanTeleportTo(uint territoryId) => throw Unexpected();
+        public (ulong ObjectId, System.Numerics.Vector3 Position)? FindNpcObject(uint dataId) => throw Unexpected();
+        public IReadOnlyList<string> ReadDialogOptions() => throw Unexpected();
+        public bool SelectDialogOption(string textContains) => throw Unexpected();
+        public bool AdvanceTalk() => throw Unexpected();
     }
 
     private const uint Gloves = 1001;
