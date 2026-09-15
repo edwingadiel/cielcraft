@@ -102,6 +102,10 @@ public class FishingTests
         public bool CanMooch;
         public uint Bait;
         public bool CastReady = true;
+        public FishingTug Tug = FishingTug.Unknown;
+
+        /// <summary>An action the game refuses (0 = none), e.g. a hookset the character cannot afford.</summary>
+        public uint RefuseAction;
 
         /// <summary>The fish a Hook puts in the bag; 0 = the hook catches nothing.</summary>
         public uint CatchItemId = BlackEel;
@@ -118,8 +122,10 @@ public class FishingTests
         public void TryMount() => Calls.Add("Mount");
         public void TryDismount() => Calls.Add("Dismount");
 
+        public uint Gp = 600;
+
         public PlayerSnapshot? GetPlayerState() =>
-            new("Tester", Territory, Position, JobId, "FSH", 90, 0, 0, 0, 0);
+            new("Tester", Territory, Position, JobId, "FSH", 90, 0, 0, 0, 0, Gp, 800);
 
         public int GetItemCount(uint itemId) => ItemCounts.GetValueOrDefault(itemId);
         public int GetHqItemCount(uint itemId) => 0;
@@ -150,7 +156,7 @@ public class FishingTests
         public bool HandlerUp = true;
 
         public FishingSnapshot? GetFishingState() =>
-            HandlerUp ? new FishingSnapshot(Phase, CanFish, CanMooch, false, Bait) : null;
+            HandlerUp ? new FishingSnapshot(Phase, CanFish, CanMooch, false, Bait, Tug) : null;
 
         public bool IsFishing => Fishing;
 
@@ -161,11 +167,15 @@ public class FishingTests
             return true;
         }
 
-        public bool IsCraftActionReady(uint craftActionId) => craftActionId != 289 || CastReady;
+        public bool IsCraftActionReady(uint craftActionId) =>
+            craftActionId != RefuseAction && (craftActionId != 289 || CastReady);
 
         public bool ExecuteCraftAction(uint craftActionId)
         {
             Calls.Add($"Action({craftActionId})");
+            if (craftActionId == RefuseAction)
+                return false;
+
             switch (craftActionId)
             {
                 case 289: // Cast
@@ -509,6 +519,92 @@ public class FishingTests
     }
 
     [Fact]
+    public void AResumedRunGetsAFreshBudgetOfCastsAndItsJobBack()
+    {
+        var harness = Build();
+        harness.Bridge.CatchItemId = MoatCarp;
+        Assert.True(harness.Controller.Start(BlackEel, 1));
+        Assert.True(harness.PumpUntil(() => harness.Controller.State == FishingRunState.Fishing));
+
+        for (var i = 0; i < FishingController.MaxCastsWithoutTarget + 2; i++)
+        {
+            harness.Bridge.PoleReady();
+            harness.PumpUntil(() => harness.Bridge.Phase == FishingPhase.LineInWater, maxTicks: 10);
+            harness.Bridge.Bite();
+            harness.PumpUntil(() => harness.Bridge.Phase == FishingPhase.Hooking, maxTicks: 10);
+            if (harness.Controller.State == FishingRunState.Paused)
+                break;
+        }
+
+        Assert.Equal(FishingRunState.Paused, harness.Controller.State);
+
+        // Resuming has to actually resume: the fruitless-cast count starts over
+        // instead of pausing again on the first tick.
+        harness.Controller.Resume();
+        Assert.True(harness.PumpUntil(() => harness.Controller.State == FishingRunState.Fishing, maxTicks: 30));
+        for (var i = 0; i < 5; i++)
+        {
+            harness.Controller.Tick();
+            harness.Clock.Advance(1);
+        }
+
+        Assert.NotEqual(FishingRunState.Paused, harness.Controller.State);
+    }
+
+    [Fact]
+    public void LeavingTheFisherJobPausesAndResumingPutsTheGearsetBackOn()
+    {
+        var harness = Build();
+        Assert.True(harness.Controller.Start(BlackEel, 5));
+        Assert.True(harness.PumpUntil(() => harness.Controller.State == FishingRunState.Fishing));
+
+        harness.Bridge.JobId = 8; // the user swapped to a crafter
+        Assert.True(harness.PumpUntil(() => harness.Controller.State == FishingRunState.Paused));
+        Assert.Equal("the character is no longer on FSH", harness.Controller.FailureReason);
+        Assert.StartsWith("Paused:", harness.Controller.StatusText);
+
+        harness.Bridge.Calls.Clear();
+        harness.Controller.Resume();
+        Assert.Equal(FishingRunState.PreparingJob, harness.Controller.State);
+        Assert.True(harness.PumpUntil(() => harness.Bridge.JobId == GatheringActions.FisherJobId, maxTicks: 20));
+        Assert.Contains($"Gearset({GatheringActions.FisherJobId})", harness.Bridge.Calls);
+    }
+
+    [Fact]
+    public void ARefusedHooksetFallsStraightThroughToPlainHook()
+    {
+        var harness = Build();
+        // Level 90, and a tug the bridge reports as strong: Powerful Hookset is
+        // chosen, the game refuses it, and the fish must still be hooked.
+        harness.Bridge.Tug = FishingTug.Strong;
+        harness.Bridge.RefuseAction = 4103;
+
+        Assert.True(harness.Controller.Start(BlackEel, 1));
+        Assert.True(harness.PumpUntil(() => harness.Controller.State == FishingRunState.Fishing));
+        harness.Bridge.PoleReady();
+        Assert.True(harness.PumpUntil(() => harness.Bridge.Phase == FishingPhase.LineInWater));
+
+        harness.Bridge.Bite();
+        harness.Controller.Tick();
+
+        Assert.DoesNotContain("Action(4103)", harness.Bridge.Calls); // the game refused it outright
+        Assert.Contains("Action(296)", harness.Bridge.Calls);        // plain Hook, same tick
+        Assert.Equal(1, harness.Controller.Caught);
+
+        // With the hookset affordable and allowed, it is the one that fires.
+        var other = Build();
+        other.Bridge.Tug = FishingTug.Strong;
+        Assert.True(other.Controller.Start(BlackEel, 1));
+        Assert.True(other.PumpUntil(() => other.Controller.State == FishingRunState.Fishing));
+        other.Bridge.PoleReady();
+        Assert.True(other.PumpUntil(() => other.Bridge.Phase == FishingPhase.LineInWater));
+        other.Bridge.Bite();
+        other.Controller.Tick();
+        Assert.Contains("Action(4103)", other.Bridge.Calls);
+        Assert.DoesNotContain("Action(296)", other.Bridge.Calls);
+    }
+
+    [Fact]
     public void AMissingSpotGearsetOrBaitRefusesToStartWithTheReason()
     {
         var harness = Build();
@@ -738,6 +834,48 @@ public class FishingTests
         Assert.Equal(SourceRunState.Completed, run.State);
         Assert.Equal(1, run.Obtained);
         Assert.Contains(run.Describe(), l => l.Contains("Black Eel"));
+    }
+
+    [Fact]
+    public void ABaitRunThatComesBackEmptyFailsInsteadOfShoppingForever()
+    {
+        var harness = Build();
+        harness.Bridge.ItemCounts[RatTail] = 0;
+        var vendor = new FakeVendor();
+        var source = Source(harness, vendor);
+        var run = source.Start(source.Offer(BlackEel, 1)!);
+
+        run.Tick();
+        Assert.NotNull(vendor.LastRun);
+
+        // The vendor says it is done but nothing landed in the bag.
+        vendor.LastRun!.State = SourceRunState.Completed;
+        run.Tick();
+        run.Tick();
+
+        Assert.Equal(SourceRunState.Failed, run.State);
+        Assert.Contains("no Rat Tail in the bag", run.StatusText);
+    }
+
+    [Fact]
+    public void TwoRunsCannotFightOverTheOneRod()
+    {
+        var harness = Build();
+        var source = Source(harness);
+        var first = source.Start(source.Offer(BlackEel, 5)!);
+        first.Tick();
+        Assert.Equal(SourceRunState.Running, first.State);
+        Assert.True(harness.Controller.IsBusy);
+
+        var second = source.Start(source.Offer(BlackEel, 5)!);
+        second.Tick();
+
+        Assert.Equal(SourceRunState.Failed, second.State);
+        Assert.Contains("already using the rod", second.StatusText);
+
+        // The second run's failure must not have stowed the first run's rod.
+        Assert.Equal(SourceRunState.Running, first.State);
+        Assert.True(harness.Controller.IsBusy);
     }
 
     [Fact]

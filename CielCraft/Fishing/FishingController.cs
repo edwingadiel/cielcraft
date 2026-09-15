@@ -74,6 +74,9 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
     private static readonly TimeSpan QuitTimeout = TimeSpan.FromSeconds(10);
     private static readonly TimeSpan BlindTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(2);
+
+    /// <summary>A bite is over in a few seconds; hooking cannot wait on the general retry gate.</summary>
+    private static readonly TimeSpan HookRetryInterval = TimeSpan.FromMilliseconds(400);
     private static readonly TimeSpan HousekeepingInterval = TimeSpan.FromSeconds(1);
 
     // Settle delays (the Pacing rule, roadmap 7.20): a person looks at the
@@ -98,6 +101,7 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
     private readonly IReadOnlyList<CordialInfo> cordials;
     private readonly TravelDriver travel;
     private readonly Throttle retry;
+    private readonly Throttle hookGate;
 
     private FishingPlan? plan;
     private uint targetItemId;
@@ -150,6 +154,7 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         this.cordials = cordials ?? GatheringActions.Cordials;
         travel = new TravelDriver(navigation, bridge, clock, log, "[Fishing]");
         retry = new Throttle(clock, RetryInterval);
+        hookGate = new Throttle(clock, HookRetryInterval);
     }
 
     /// <summary>Fish in the bag since the run started; the only measure of progress (spec §34).</summary>
@@ -186,10 +191,12 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         }
 
         var level = database.FisherLevel();
-        var chosen = database.FindSpot(itemId, bridge.CurrentTerritoryId, level > 0 ? level : int.MaxValue);
+        var cap = level > 0 ? level : int.MaxValue;
+        var chosen = database.FindSpot(itemId, bridge.CurrentTerritoryId, cap);
         if (chosen == null)
         {
-            var reason = database.RefusalReason(itemId) ?? $"no fishing hole is known for item {itemId}";
+            var reason = database.RefusalReason(itemId, bridge.CurrentTerritoryId, cap)
+                         ?? $"no fishing hole is known for item {itemId}";
             Transition(FishingRunState.Idle, $"Cannot fish: {reason}.");
             return false;
         }
@@ -253,6 +260,7 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
 
         travel.Stop();
         navigation.Stop();
+        DisengageAutoHook();
         pending = null;
         FailureReason = reason;
         Transition(FishingRunState.Paused, $"Paused: {reason}.");
@@ -263,21 +271,38 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         if (State != FishingRunState.Paused || plan == null)
             return;
 
-        // A pause freezes nothing in the game, so every deadline the pause
-        // outlived has to start over or it fires the moment the run resumes.
+        // A pause freezes nothing in the game, so every deadline and counter
+        // the pause outlived has to start over — otherwise whatever caused the
+        // pause fires again on the first tick and the run cannot be resumed at
+        // all. The fruitless-cast count goes too: "set the bait by hand and
+        // resume" has to mean something.
         pending = null;
         lineOutSince = DateTime.MaxValue;
         castBlockedSince = DateTime.MaxValue;
         blindSince = DateTime.MaxValue;
         lastCatchAt = DateTime.MinValue;
         lastHousekeepingAt = DateTime.MinValue;
+        castsWithoutTarget = 0;
 
-        if (bridge.IsFishing)
+        // Off the job (the user swapped gearsets while paused): start again at
+        // the gearset rather than walking to the water as a crafter.
+        if (bridge.CurrentClassJobId != GatheringActions.FisherJobId)
+        {
+            gearsetRequested = false;
+            EnterPhase(FishingRunState.PreparingJob, "Resuming: back onto FSH first.");
+        }
+        else if (bridge.IsFishing)
+        {
             EnterPhase(FishingRunState.Fishing, "Resuming at the rod.");
+        }
         else if (bridge.CurrentTerritoryId != plan.Spot.TerritoryId)
+        {
             EnterPhase(FishingRunState.Teleporting, "Resuming: back to the fishing hole's zone.");
+        }
         else
+        {
             StartTravel("Resuming the approach.");
+        }
     }
 
     public void Stop()
@@ -447,27 +472,41 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         // Mooching starts from a base fish, so the bait to apply is always the
         // plan's bait; the mooch itself replaces a cast later on.
         var snapshot = bridge.GetFishingState();
-        if (snapshot?.BaitItemId == plan.BaitItemId)
+        var applied = snapshot?.BaitItemId == plan.BaitItemId;
+
+        // The game only builds the fishing event handler once the character has
+        // fished this session, so before the first cast there is nothing to read
+        // the applied bait back from. The bait request went through the
+        // inventory instead; after the timeout, cast and find out rather than
+        // refusing.
+        var unverifiable = snapshot == null && baitRequested && Clock.UtcNow - phaseStartedAt > BaitTimeout;
+        if (unverifiable)
         {
+            Log.Warning(
+                $"[Fishing] The game is not reporting a fishing state yet, so {plan.BaitName} could not be " +
+                "confirmed; casting anyway and watching the catch.");
+        }
+
+        if (applied || unverifiable)
+        {
+            // A mount blocks the rod. Every phase here is on a timeout, so a
+            // character that cannot dismount fails instead of waiting forever.
+            if (bridge.IsMounted)
+            {
+                if (Clock.UtcNow - phaseStartedAt > BaitTimeout + Pacing.AfterZoneChange)
+                    Fail("could not dismount to fish");
+                else
+                    retry.Try(bridge.TryDismount);
+
+                return;
+            }
+
             StartFishing();
             return;
         }
 
         if (Clock.UtcNow - phaseStartedAt > BaitTimeout)
         {
-            // The game only builds the fishing event handler once the character
-            // has fished this session, so before the first cast there is nothing
-            // to read the applied bait back from. The bait request went through
-            // the inventory instead; cast and find out rather than refusing.
-            if (snapshot == null && baitRequested)
-            {
-                Log.Warning(
-                    $"[Fishing] The game is not reporting a fishing state yet, so {plan.BaitName} could not be " +
-                    "confirmed; casting anyway and watching the catch.");
-                StartFishing();
-                return;
-            }
-
             Fail($"{plan.BaitName} could not be applied (is any left in the bag?)");
             return;
         }
@@ -482,13 +521,6 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
 
     private void StartFishing()
     {
-        // Dismount before fishing; a mount blocks the rod.
-        if (bridge.IsMounted)
-        {
-            retry.Try(bridge.TryDismount);
-            return;
-        }
-
         EngageAutoHook();
         EnterPhase(FishingRunState.Fishing, $"{plan!.BaitName} on; fishing for {plan.FishName}.");
     }
@@ -517,7 +549,10 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
             if (blindSince == DateTime.MaxValue)
                 blindSince = Clock.UtcNow;
             else if (Clock.UtcNow - blindSince > BlindTimeout)
+            {
                 Pause("the game is not reporting a fishing state (the fishing event handler never came up)");
+                return;
+            }
 
             StatusText = ProgressText("Waiting for the game's fishing state");
             return;
@@ -532,8 +567,11 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         // the pole returning to ready. Count what actually landed in the bag.
         if (phase != lastPhase)
         {
-            if (lastPhase is FishingPhase.Hooking or FishingPhase.PullingPoleIn
-                && phase is FishingPhase.PoleReady or FishingPhase.None)
+            // Anything that ends with the pole ready again closes a cast —
+            // including the collectable confirmation and a tick that skipped
+            // over the reeling-in phases. Missing one would leave the
+            // line-out clock running across casts and trip a bogus "no bite".
+            if (IsLineOut(lastPhase) && phase is FishingPhase.PoleReady or FishingPhase.None)
             {
                 lastCatchAt = Clock.UtcNow;
                 lineOutSince = DateTime.MaxValue;
@@ -552,9 +590,14 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
             case FishingPhase.CastingOut:
             case FishingPhase.LineInWater:
                 if (lineOutSince == DateTime.MaxValue)
+                {
                     lineOutSince = Clock.UtcNow;
+                }
                 else if (Clock.UtcNow - lineOutSince > BiteTimeout)
+                {
                     Pause($"no bite in {BiteTimeout.TotalSeconds:F0}s at {plan.Spot.Name}");
+                    return;
+                }
 
                 StatusText = ProgressText("Line in the water");
                 return;
@@ -576,6 +619,11 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
                 return;
         }
     }
+
+    /// <summary>A phase with the line (or the rod) out: everything between a cast and the pole being ready again.</summary>
+    private static bool IsLineOut(FishingPhase phase) => phase is FishingPhase.CastingOut or FishingPhase.LineInWater
+        or FishingPhase.Bite or FishingPhase.Hooking or FishingPhase.PullingPoleIn
+        or FishingPhase.ReleasingCatch or FishingPhase.ConfirmingCollectable or FishingPhase.Lure;
 
     /// <summary>
     /// Bag, rod, target and GP checks, once a second (each polls the game).
@@ -644,8 +692,17 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
             return;
         }
 
+        // A bite lasts a few seconds, so the two-second retry gate the other
+        // phases use would throw the fish back: hooking gets its own short one,
+        // and a hookset the game refuses falls straight through to plain Hook
+        // instead of waiting for the next slot.
+        if (!hookGate.IsReady)
+            return;
+
+        hookGate.Touch();
         var action = HooksetFor(snapshot.Tug);
-        retry.Try(() => Fire(action, FishingPhase.Bite));
+        if (!Fire(action, FishingPhase.Bite) && action != FishAction.Hook)
+            Fire(FishAction.Hook, FishingPhase.Bite);
     }
 
     /// <summary>
@@ -695,9 +752,14 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         if (snapshot is { CanFish: false })
         {
             if (castBlockedSince == DateTime.MaxValue)
+            {
                 castBlockedSince = Clock.UtcNow;
+            }
             else if (Clock.UtcNow - castBlockedSince > CastBlockedTimeout)
+            {
                 Pause($"there is no water in casting range at {plan.Spot.Name} — walk to the water's edge and resume");
+                return;
+            }
 
             StatusText = ProgressText("Looking for water");
             return;
@@ -708,7 +770,16 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         if (plan.NeedsMooch && snapshot is { CanMooch: true }
             && capabilities().LevelOf(GatheringActions.FisherJobId) is 0 or >= 25)
         {
-            retry.Try(() => Fire(FishAction.Mooch, phase));
+            // A mooch is an attempt at the target like any cast, so it counts
+            // toward the fruitless-cast safety net.
+            retry.Try(() =>
+            {
+                if (Fire(FishAction.Mooch, phase))
+                {
+                    casts++;
+                    castsWithoutTarget++;
+                }
+            });
             return;
         }
 
@@ -716,9 +787,14 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         if (!bridge.IsCraftActionReady(castId))
         {
             if (castBlockedSince == DateTime.MaxValue)
+            {
                 castBlockedSince = Clock.UtcNow;
+            }
             else if (Clock.UtcNow - castBlockedSince > CastBlockedTimeout)
+            {
                 Pause($"Cast stayed unavailable at {plan.Spot.Name} — walk to the water's edge and resume");
+                return;
+            }
 
             StatusText = ProgressText("Waiting for Cast to become available");
             return;

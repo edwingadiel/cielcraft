@@ -209,22 +209,35 @@ public sealed class FishingDatabase
     /// Spear fishing is out of scope (a different minigame with its own addon,
     /// roadmap 7.4); a fish with no bundled bait would be cast for blindly.
     /// </summary>
-    public string? RefusalReason(uint itemId)
+    /// <remarks>
+    /// The territory and level have to be the same ones the caller passed to
+    /// <see cref="FindSpot"/>, or the reason will not match the refusal: a fish
+    /// whose only hole is above the character's level would otherwise come back
+    /// as "nothing wrong".
+    /// </remarks>
+    public string? RefusalReason(uint itemId, uint currentTerritoryId = 0, int fisherLevel = int.MaxValue)
     {
         EnsureIndex();
         if (spearfish!.TryGetValue(itemId, out var spear) && !fishToSpots!.ContainsKey(itemId))
             return $"{spear.Name} is caught by spear fishing, which CielCraft does not automate (roadmap 7.4)";
 
-        if (!fishToSpots!.ContainsKey(itemId))
+        if (!fishToSpots!.TryGetValue(itemId, out var spots))
             return null; // not a fish at all: not this source's business
 
         if (BaitFor(itemId) == null)
             return $"no bait is known for {NameOf(itemId)} — the game sheets do not carry bait per fish " +
                    "and it is not in CielCraft's bundled table";
 
-        return FindSpot(itemId) == null
-            ? $"no reachable fishing hole is known for {NameOf(itemId)}"
-            : null;
+        if (FindSpot(itemId, currentTerritoryId, fisherLevel) != null)
+            return null;
+
+        var lowest = int.MaxValue;
+        foreach (var spot in spots)
+            lowest = Math.Min(lowest, spot.GatheringLevel);
+
+        return lowest > fisherLevel
+            ? $"{NameOf(itemId)} needs Fisher {lowest}; the character is {fisherLevel}"
+            : $"no reachable fishing hole is known for {NameOf(itemId)}";
     }
 
     /// <summary>
@@ -272,8 +285,10 @@ public sealed class FishingDatabase
 
     private bool IsBetterSpot(FishingSpotRow candidate, FishingSpotRow existing, uint currentTerritoryId)
     {
-        var candidateHere = candidate.TerritoryId == currentTerritoryId;
-        var existingHere = existing.TerritoryId == currentTerritoryId;
+        // Territory 0 is "unknown", not a zone: without a current territory no
+        // spot may win the "you are already here" tie-break.
+        var candidateHere = currentTerritoryId != 0 && candidate.TerritoryId == currentTerritoryId;
+        var existingHere = currentTerritoryId != 0 && existing.TerritoryId == currentTerritoryId;
         if (candidateHere != existingHere)
             return candidateHere;
 
@@ -325,9 +340,11 @@ public sealed class FishingDatabase
         var spots = new Dictionary<uint, List<FishingSpotRow>>();
         foreach (var spot in reader.ReadSpots())
         {
-            // A spot with no place name is an unused / undiscovered row, and one
-            // at the origin has no usable position to travel to.
-            if (spot.Name.Length == 0 || (spot.Position.X == 0 && spot.Position.Z == 0))
+            // A spot with no place name or no territory is an unused /
+            // undiscovered row, and one at the origin has no usable position to
+            // travel to.
+            if (spot.Name.Length == 0 || spot.TerritoryId <= 1
+                || (spot.Position.X == 0 && spot.Position.Z == 0))
                 continue;
 
             foreach (var itemId in spot.ItemIds)

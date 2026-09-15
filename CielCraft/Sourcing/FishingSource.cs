@@ -60,14 +60,15 @@ public sealed class FishingSource : IMaterialSource
         if (amount < 1 || !database.IsFish(itemId))
             return null;
 
-        var level = database.FisherLevel();
-        var plan = database.FindSpot(itemId, bridge.CurrentTerritoryId, level > 0 ? level : int.MaxValue);
+        var cap = LevelCap();
+        var plan = database.FindSpot(itemId, bridge.CurrentTerritoryId, cap);
         if (plan == null)
         {
             // Say why once per ask: a silent "no" here looks like a planner bug
             // when the item plainly is a fish.
-            if (database.RefusalReason(itemId) is { } reason)
-                log.Information($"[Fishing] Not offering item {itemId}: {reason}.");
+            log.Information(
+                $"[Fishing] Not offering item {itemId}: " +
+                $"{database.RefusalReason(itemId, bridge.CurrentTerritoryId, cap) ?? "no reachable fishing hole"}.");
             return null;
         }
 
@@ -99,13 +100,19 @@ public sealed class FishingSource : IMaterialSource
 
     public ISourceRun Start(SourceOffer offer)
     {
-        var level = database.FisherLevel();
-        var plan = database.FindSpot(offer.ItemId, bridge.CurrentTerritoryId, level > 0 ? level : int.MaxValue);
+        var plan = database.FindSpot(offer.ItemId, bridge.CurrentTerritoryId, LevelCap());
         SourceOffer? baitOffer = null;
         if (plan != null && bridge.GetItemCount(plan.BaitItemId) == 0)
             baitOffer = baitVendor?.Offer(plan.BaitItemId, BaitPurchaseAmount);
 
         return new FishingRun(bridge, controller, offer, plan, baitVendor, baitOffer, log, clock);
+    }
+
+    /// <summary>The Fisher level to gate spots with; no cap until the capabilities have been read.</summary>
+    private int LevelCap()
+    {
+        var level = database.FisherLevel();
+        return level > 0 ? level : int.MaxValue;
     }
 }
 
@@ -130,6 +137,7 @@ public sealed class FishingRun : ISourceRun
     private ISourceRun? baitRun;
     private readonly int baseline;
     private readonly DateTime startedAt;
+    private int baitTrips;
     private bool controllerStarted;
     private string pauseReason = "";
 
@@ -177,8 +185,11 @@ public sealed class FishingRun : ISourceRun
             return;
 
         // The bait run (P2 vendor) comes first: without bait there is nothing
-        // to cast. It owns its own travel and verification.
-        if (baitOffer != null && bridge.GetItemCount(plan.BaitItemId) == 0)
+        // to cast. It owns its own travel and verification. Only *before* the
+        // rod comes out — a bait stack that runs dry mid-run is the
+        // controller's own "bait could not be applied", not a reason to walk
+        // away from an open fishing hole.
+        if (!controllerStarted && baitOffer != null && bridge.GetItemCount(plan.BaitItemId) == 0)
         {
             TickBaitRun();
             return;
@@ -192,6 +203,15 @@ public sealed class FishingRun : ISourceRun
 
         if (!controllerStarted)
         {
+            if (controller.IsBusy)
+            {
+                // One controller serves every fishing run; two at once would
+                // fight over the rod.
+                State = SourceRunState.Failed;
+                StatusText = "Another fishing run is already using the rod.";
+                return;
+            }
+
             if (!controller.Start(offer.ItemId, offer.Amount))
             {
                 State = SourceRunState.Failed;
@@ -210,16 +230,21 @@ public sealed class FishingRun : ISourceRun
                 Finish();
                 break;
             case FishingRunState.Failed:
+                // Put the rod away before handing the failure up: the runner
+                // stops here and a rod left out pins the character.
+                controller.Stop();
                 State = SourceRunState.Failed;
-                StatusText = controller.StatusText;
+                StatusText = controller.FailureReason.Length > 0 ? controller.FailureReason : controller.StatusText;
                 break;
             case FishingRunState.Paused:
                 pauseReason = controller.FailureReason;
                 State = SourceRunState.Paused;
                 break;
             case FishingRunState.Idle:
-                // The controller was stopped from outside (the user).
+                // The controller was stopped from outside (the user); the
+                // production runner reads Idle as "the source run was stopped".
                 State = SourceRunState.Idle;
+                StatusText = $"The fishing run was stopped at {Obtained}/{offer.Amount}.";
                 break;
         }
     }
@@ -228,6 +253,16 @@ public sealed class FishingRun : ISourceRun
     {
         if (baitRun == null)
         {
+            if (baitTrips > 0)
+            {
+                // The vendor run said it was done and the bag is still empty:
+                // buying again would just walk the same circle forever.
+                State = SourceRunState.Failed;
+                StatusText = $"The bait run finished with no {plan!.BaitName} in the bag.";
+                return;
+            }
+
+            baitTrips++;
             baitRun = baitVendor!.Start(baitOffer!);
             log.Information($"[Fishing] No {plan!.BaitName} in the bag; {baitOffer!.Description} first.");
         }
@@ -248,12 +283,20 @@ public sealed class FishingRun : ISourceRun
                 pauseReason = baitRun.StatusText;
                 State = SourceRunState.Paused;
                 break;
+            case SourceRunState.Idle:
+                State = SourceRunState.Idle;
+                StatusText = "The bait run was stopped.";
+                break;
         }
     }
 
     private void Finish()
     {
-        controller.Stop();
+        // Only this run's own controller: the source hands the same instance to
+        // every run, and stopping it blind would stow another run's rod.
+        if (controllerStarted)
+            controller.Stop();
+
         State = SourceRunState.Completed;
         StatusText = $"Fished {Obtained}/{offer.Amount} {plan?.FishName ?? "fish"}.";
     }
@@ -265,7 +308,9 @@ public sealed class FishingRun : ISourceRun
 
         pauseReason = reason;
         baitRun?.Pause(reason);
-        controller.Pause(reason);
+        if (controllerStarted)
+            controller.Pause(reason);
+
         State = SourceRunState.Paused;
         StatusText = $"Paused: {reason}.";
     }
@@ -276,7 +321,9 @@ public sealed class FishingRun : ISourceRun
             return;
 
         baitRun?.Resume();
-        controller.Resume();
+        if (controllerStarted)
+            controller.Resume();
+
         State = SourceRunState.Running;
         StatusText = offer.Description;
     }
