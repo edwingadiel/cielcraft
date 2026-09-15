@@ -450,7 +450,11 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
     private void StartTravel(string statusText)
     {
         var fly = capabilities().CanFlyIn(bridge.CurrentTerritoryId);
-        travel.Start(plan!.Spot.Position, ArriveWithin, fly, preciseArrival: false, TravelTimeout, plan.Spot.Name);
+        // The sheet gives the hole's X/Z only (Y comes out 0): a point off the
+        // mesh never gets a path (Central Shroud, 2026-09-15), so ask vnavmesh
+        // for the floor under it first; the raw point stays the fallback.
+        var destination = navigation.FindPointOnFloor(plan!.Spot.Position, 25f) ?? plan.Spot.Position;
+        travel.Start(destination, ArriveWithin, fly, preciseArrival: false, TravelTimeout, plan.Spot.Name);
         EnterPhase(FishingRunState.Traveling, statusText);
     }
 
