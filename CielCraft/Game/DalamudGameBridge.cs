@@ -353,30 +353,14 @@ public sealed class DalamudGameBridge : IGameBridge
         if (agent == null)
             return;
 
-        lastOpenedRecipeId = recipeId;
-        var activeBefore = agent->AgentInterface.IsAgentActive();
-        var visibleBefore = IsAddonVisible("RecipeNote");
-        agent->OpenRecipeByRecipeId(recipeId);
-
-        // Observed 2026-09-15: right after a gearset change the request is
-        // ignored (four calls, no window). Diagnose every call that finds the
-        // log closed, and when the agent stays inactive show it first — the
-        // log then opens on its last recipe and the request is re-issued.
-        if (visibleBefore)
+        // Re-issuing the request while the log already shows the recipe
+        // toggles it closed (observed 2026-09-15); leave it alone then.
+        if (lastOpenedRecipeId == recipeId && agent->AgentInterface.IsAgentActive() && IsAddonVisible("RecipeNote")
+            && SelectedRecipeId == recipeId)
             return;
 
-        var activeAfter = agent->AgentInterface.IsAgentActive();
-        if (!activeAfter)
-        {
-            agent->AgentInterface.Show();
-            agent->OpenRecipeByRecipeId(recipeId);
-        }
-
-        Plugin.Log.Information(
-            $"[Bridge] OpenRecipe {recipeId}: agent active {activeBefore}→{activeAfter}" +
-            (activeAfter ? "" : $" (shown: now {agent->AgentInterface.IsAgentActive()})") +
-            $"; job {CurrentClassJobId}; occupied {Plugin.Condition[ConditionFlag.Occupied]}/{Plugin.Condition[ConditionFlag.Occupied30]}/{Plugin.Condition[ConditionFlag.Occupied33]}/{Plugin.Condition[ConditionFlag.Occupied38]}/{Plugin.Condition[ConditionFlag.Occupied39]}" +
-            $"; between areas {IsBetweenAreas}; mounted {IsMounted}; casting {Plugin.Condition[ConditionFlag.Casting]}; preparing {IsPreparingToCraft}; gathering {IsGathering}.");
+        lastOpenedRecipeId = recipeId;
+        agent->OpenRecipeByRecipeId(recipeId);
     }
 
     public unsafe void CloseRecipeNote()

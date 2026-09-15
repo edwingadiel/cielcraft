@@ -1063,9 +1063,25 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
             return;
 
         // Right job: get the crafting log onto this step's recipe.
-        if (gameBridge.SelectedRecipeId != step.RecipeId || !gameBridge.IsReadyToStartCraft)
+        if (gameBridge.SelectedRecipeId != step.RecipeId || !gameBridge.IsAddonVisible("RecipeNote"))
         {
             retry.Try(() => gameBridge.OpenRecipe(step.RecipeId));
+            return;
+        }
+
+        // The log is up on the recipe. Right after a job change it opens with
+        // no ingredient assigned (observed 2026-09-15), and re-issuing the
+        // open request toggles it closed — so assign with the fill button and
+        // wait for Synthesize to become pressable instead.
+        if (!gameBridge.IsReadyToStartCraft)
+        {
+            retry.Try(() =>
+            {
+                if (!gameBridge.AreIngredientsAssigned())
+                    gameBridge.FillIngredients(configuration.PreferHqMaterials);
+                else
+                    Log.Information($"[Production] Crafting log open on step {stepIndex + 1} but Synthesize is not pressable yet; {gameBridge.DescribeRecipeSelection()}");
+            });
             return;
         }
 
@@ -1112,6 +1128,11 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
                 (step.HqCrafts > 0 ? $", {step.HqCrafts} HQ first" : "") +
                 (collectable ? $", {step.CollectableTier} collectable" + (targetQuality > 0 ? $" ≥ {targetQuality / 10} collectability" : "") : "") + ").");
             Transition(ProductionState.RunningBatch, StepText("Crafting"));
+        }
+        else
+        {
+            // The batch refused; say why at the retry cadence (diagnosis 2026-09-15).
+            retry.Try(() => Log.Warning($"[Production] The batch did not start for step {stepIndex + 1}: {batchCrafter.StatusText} (batch {batchCrafter.State})."));
         }
     }
 

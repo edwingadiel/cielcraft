@@ -107,7 +107,9 @@ internal static unsafe class GatheringStateReader
             }
         }
 
-        return percentages.Count >= 2 ? percentages[^1] : -1;
+        // Node order is the reverse of the display (observed: [%, 60, %, 100] for
+        // a row showing 100% chance and 60% boon), so the boon comes first.
+        return percentages.Count >= 2 ? percentages[0] : -1;
     }
 
     private static bool TryParsePercent(string text, out int value)
