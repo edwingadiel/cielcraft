@@ -230,6 +230,7 @@ public sealed class HuntRun : AutomationMachine<HuntRunState>, ISourceRun
     private int killCount;
     private int targetFailures;
     private int deaths;
+    private bool spotRemembered;
     private int teleportAttempts;
     private int sweepIndex;
     private IReadOnlyList<Vector3> sweep = [];
@@ -303,6 +304,9 @@ public sealed class HuntRun : AutomationMachine<HuntRunState>, ISourceRun
         if (State != HuntRunState.Paused)
             return;
 
+        // Whatever was engaged while the run was parked is not this run's
+        // fight: start the next target from a clean rotation.
+        Disengage();
         attempts.Reset();
         Enter(resumeTo, $"Resumed: {PhaseText(resumeTo)}.");
     }
@@ -351,6 +355,12 @@ public sealed class HuntRun : AutomationMachine<HuntRunState>, ISourceRun
             BeginRecovery();
             return;
         }
+
+        // Then the retreat threshold, wherever the run is — a sweep can be
+        // jumped by something that was not on the menu.
+        if (State is not (HuntRunState.Retreating or HuntRunState.Recovering
+            or HuntRunState.Equipping or HuntRunState.Teleporting) && Retreating())
+            return;
 
         switch (State)
         {
@@ -607,9 +617,6 @@ public sealed class HuntRun : AutomationMachine<HuntRunState>, ISourceRun
             return;
         }
 
-        if (Retreating())
-            return;
-
         var candidates = VisibleTargets();
         if (candidates.Count == 0)
         {
@@ -645,9 +652,6 @@ public sealed class HuntRun : AutomationMachine<HuntRunState>, ISourceRun
 
     private void TickApproaching()
     {
-        if (Retreating())
-            return;
-
         var target = Current();
         if (target == null)
         {
@@ -697,9 +701,6 @@ public sealed class HuntRun : AutomationMachine<HuntRunState>, ISourceRun
 
     private void TickFighting()
     {
-        if (Retreating())
-            return;
-
         var target = Current();
         if (target == null || !target.IsAlive)
         {
@@ -707,9 +708,14 @@ public sealed class HuntRun : AutomationMachine<HuntRunState>, ISourceRun
             killCount++;
             targetFailures = 0;
 
-            // The spot is worth remembering now that a kill happened here.
-            if (bridge.PlayerPosition is { } here && drop != null)
+            // The spot is worth remembering now that a kill happened here —
+            // once per run, so a long hunt does not rewrite the configuration
+            // after every monster.
+            if (!spotRemembered && bridge.PlayerPosition is { } here && drop != null)
+            {
+                spotRemembered = true;
                 database?.RememberSpot(drop.BNpcNameId, bridge.CurrentTerritoryId, here);
+            }
 
             Log.Information($"[Hunt] {targetName} down; {Obtained}/{offer.Amount} {itemName(offer.ItemId)} after {killCount} kills.");
             Settle(AfterKillSettle);
