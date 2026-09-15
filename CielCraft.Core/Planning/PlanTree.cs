@@ -61,6 +61,9 @@ public sealed class PlanNode
 
     public bool SharedStep => StepIndex >= 0 && StepCrafts != Crafts;
 
+    /// <summary>The plan step's crafts synthesized normally to HQ (roadmap 7.22); 0 when all are quick.</summary>
+    public int HqCrafts { get; init; }
+
     public IReadOnlyList<PlanNode> Children { get; init; } = [];
 }
 
@@ -126,6 +129,9 @@ public sealed class PlanTree
 
     public int TotalCrafts => Plan.CraftSteps.Sum(s => s.Crafts);
 
+    /// <summary>Intermediate crafts the plan synthesizes normally to HQ (roadmap 7.22).</summary>
+    public int TotalHqCrafts => Plan.CraftSteps.Sum(s => s.HqCrafts);
+
     public static PlanTree Build(
         ProductionPlan plan,
         IRecipeProvider recipes,
@@ -190,7 +196,9 @@ public sealed class PlanTree
         Func<uint, string> zoneName,
         PlanProgress? progress = null)
     {
-        yield return $"Plan: {Plan.Targets.Count} target(s); {Plan.CraftSteps.Count} craft step(s), {TotalCrafts} craft(s); {Plan.RawMaterials.Count} raw material(s)"
+        yield return $"Plan: {Plan.Targets.Count} target(s); {Plan.CraftSteps.Count} craft step(s), {TotalCrafts} craft(s)"
+                     + (TotalHqCrafts > 0 ? $" ({TotalHqCrafts} HQ intermediate craft(s))" : "")
+                     + $"; {Plan.RawMaterials.Count} raw material(s)"
                      + (progress == null ? "" : $"; step {Math.Min(progress.CompletedSteps + 1, Math.Max(Plan.CraftSteps.Count, 1))}/{Plan.CraftSteps.Count} in flight");
 
         foreach (var target in Targets)
@@ -250,6 +258,10 @@ public sealed class PlanTree
                 sb.Append($" [{jobName(node.JobId)}]");
             if (node.FromStock > 0)
                 sb.Append($"; {node.FromStock} from stock");
+            // HQ-seeded intermediate (7.22): the step's count, since the HQ
+            // crafts are not attributed to one branch.
+            if (node.HqCrafts > 0)
+                sb.Append($"; {node.HqCrafts} HQ of {node.StepCrafts} crafts");
             var mode = node.Mode switch
             {
                 ProductionMode.ForceHq => "; HQ",
@@ -442,7 +454,7 @@ public sealed class PlanTree
                 return new PlanNode
                 {
                     ItemId = itemId, IsTarget = target != null, Need = need, Owned = owned, FromStock = fromStock, HqFromStock = hqFromStock,
-                    StepIndex = index, RecipeId = step.RecipeId, Yield = step.ResultAmount, StepCrafts = step.Crafts,
+                    StepIndex = index, RecipeId = step.RecipeId, Yield = step.ResultAmount, StepCrafts = step.Crafts, HqCrafts = step.HqCrafts,
                     JobId = RecipeFor(step, recipes)?.ClassJobId ?? 0, Mode = mode,
                 };
             }
@@ -466,7 +478,7 @@ public sealed class PlanTree
             {
                 ItemId = itemId, IsTarget = target != null, Need = need, Owned = owned, FromStock = fromStock, HqFromStock = hqFromStock,
                 StepIndex = index, RecipeId = step.RecipeId, JobId = recipe?.ClassJobId ?? 0,
-                Crafts = crafts, Yield = step.ResultAmount, StepCrafts = step.Crafts, Mode = mode, Children = children,
+                Crafts = crafts, Yield = step.ResultAmount, StepCrafts = step.Crafts, HqCrafts = step.HqCrafts, Mode = mode, Children = children,
             };
         }
 

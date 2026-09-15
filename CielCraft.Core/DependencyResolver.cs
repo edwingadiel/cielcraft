@@ -4,6 +4,10 @@ namespace CielCraft.Core;
 /// A recipe as the planner sees it (spec §19). IsCollectable is the result
 /// item's flag (roadmap 7.23): collectable recipes carry RequiredQuality 0 in
 /// the game data, so the item flag is the only reliable signal.
+/// MaterialQualityFactor and Materials (roadmap 7.22) are what the
+/// initial-quality formula reads: the recipe's HQ-material share of max
+/// quality and each ingredient's item level / HQ-ability. Null Materials
+/// means the provider did not supply them (the formula then answers 0).
 /// </summary>
 public sealed record RecipeInfo(
     uint RecipeId,
@@ -14,7 +18,16 @@ public sealed record RecipeInfo(
     bool IsExpert = false,
     uint RequiredQuality = 0,
     uint SecretRecipeBookId = 0,
-    bool IsCollectable = false);
+    bool IsCollectable = false,
+    int MaterialQualityFactor = 0,
+    IReadOnlyList<MaterialInfo>? Materials = null);
+
+/// <summary>
+/// One ingredient's material data for the initial-quality formula (roadmap
+/// 7.22): per-craft amount, item level, and whether an HQ version exists
+/// (since patch 7.0 gathered materials and crystals cannot be HQ).
+/// </summary>
+public sealed record MaterialInfo(uint ItemId, int Amount, int ItemLevel, bool CanBeHq);
 
 /// <summary>Recipe lookup boundary (spec §6): game data in the plugin, fakes in tests.</summary>
 public interface IRecipeProvider

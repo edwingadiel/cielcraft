@@ -65,12 +65,20 @@ public sealed class DalamudRecipeProvider : IRecipeProvider
         if (Plugin.DataManager.GetExcelSheet<Recipe>().TryGetRow(recipeId, out var row) && row.ItemResult.RowId != 0)
         {
             var ingredients = new List<(uint ItemId, int Amount)>();
+            var materials = new List<MaterialInfo>();
+            var items = Plugin.DataManager.GetExcelSheet<Item>();
             for (var i = 0; i < row.Ingredient.Count; i++)
             {
                 var itemId = row.Ingredient[i].RowId;
                 var amount = (int)row.AmountIngredient[i];
-                if (itemId != 0 && amount > 0)
-                    ingredients.Add((itemId, amount));
+                if (itemId == 0 || amount <= 0)
+                    continue;
+
+                ingredients.Add((itemId, amount));
+                // Initial-quality data (7.22): item level and HQ-ability from
+                // the Item sheet (Item.LevelItem, Item.CanBeHq).
+                var known = items.TryGetRow(itemId, out var item);
+                materials.Add(new MaterialInfo(itemId, amount, known ? (int)item.LevelItem.RowId : 0, known && item.CanBeHq));
             }
 
             // CraftType rows 0..7 map to ClassJob rows 8..15 (CRP..CUL).
@@ -83,7 +91,9 @@ public sealed class DalamudRecipeProvider : IRecipeProvider
                 IsExpert: row.IsExpert,
                 RequiredQuality: row.RequiredQuality,
                 SecretRecipeBookId: row.SecretRecipeBook.RowId,
-                IsCollectable: IsCollectableItem(row.ItemResult.RowId));
+                IsCollectable: IsCollectableItem(row.ItemResult.RowId),
+                MaterialQualityFactor: row.MaterialQualityFactor,
+                Materials: materials);
         }
 
         byRecipeId[recipeId] = info;

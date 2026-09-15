@@ -164,6 +164,50 @@ public sealed class SolverService
         SaveCache();
     }
 
+    /// <summary>
+    /// A full solve on the calling thread that leaves <see cref="Status"/> and
+    /// <see cref="Solution"/> alone, so a planning question (roadmap 7.22
+    /// "reachable from zero?") never disturbs a running batch. Goes through
+    /// the cache like <see cref="BeginSolve"/>, so a rotation found here is
+    /// the one the batch finds later for the same recipe, stats and initial
+    /// quality. Never call it on the framework thread: a solve takes seconds,
+    /// and a native solve past <paramref name="timeout"/> is abandoned (it
+    /// finishes in the background) and reported as a failure.
+    /// </summary>
+    public CraftSolution SolveDetached(CraftSetup setup, CraftObjective objective, TimeSpan timeout)
+    {
+        if (Cache.TryGet(setup, objective, out var cached))
+            return cached;
+
+        var started = DateTime.UtcNow;
+        var task = Task.Run(() => solver.Solve(setup, objective));
+        CraftSolution result;
+        try
+        {
+            if (!task.Wait(timeout))
+            {
+                log.Warning($"[Raphael] Detached solve (rlvl {setup.RecipeLevel}, target {objective.TargetQuality}, initial {objective.InitialQuality}) exceeded {timeout.TotalSeconds:F0}s; giving up on it.");
+                return CraftSolution.Failed($"timed out after {timeout.TotalSeconds:F0}s");
+            }
+
+            result = task.Result;
+        }
+        catch (AggregateException e)
+        {
+            var inner = e.InnerException ?? e;
+            log.Error($"[Raphael] Detached solve threw. :: {inner.GetType().Name}: {inner.Message}");
+            return CraftSolution.Failed(inner.Message);
+        }
+
+        var elapsed = DateTime.UtcNow - started;
+        log.Information(result.Success
+            ? $"[Raphael] Detached solve in {elapsed.TotalSeconds:F1}s (rlvl {setup.RecipeLevel}, target {objective.TargetQuality}, initial {objective.InitialQuality}): {Names(result.ActionIds)} (base progress {result.BaseProgress}, base quality {result.BaseQuality})."
+            : $"[Raphael] Detached solve failed after {elapsed.TotalSeconds:F1}s (rlvl {setup.RecipeLevel}, target {objective.TargetQuality}, initial {objective.InitialQuality}): {result.Error}.");
+        if (result.Success)
+            Store(setup, objective, result);
+        return result;
+    }
+
     public void ClearCache()
     {
         Cache.Clear();
