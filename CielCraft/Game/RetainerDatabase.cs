@@ -243,7 +243,9 @@ public sealed class RetainerDatabase
     /// City zones that have a summoning bell by the aetheryte, resolved from
     /// the TerritoryType sheet by place name so no row ids are hard-coded.
     /// Ordered by expansion, which also puts the three starting cities — the
-    /// ones every character can teleport to — first.
+    /// ones every character can teleport to — first. Several of these names
+    /// also belong to instanced or cutscene copies of the zone; the lowest
+    /// row id is the live one, which is the one the sheet scan keeps.
     /// </summary>
     private static readonly string[] BellCityPlaceNames =
     [
@@ -251,10 +253,15 @@ public sealed class RetainerDatabase
         "New Gridania",
         "Ul'dah - Steps of Nald",
         "Foundation",
+        "Idyllshire",
+        "Rhalgr's Reach",
         "Kugane",
         "The Crystarium",
+        "Eulmore",
         "Old Sharlayan",
+        "Radz-at-Han",
         "Tuliyollal",
+        "Solution Nine",
     ];
 
     private IReadOnlyList<(uint TerritoryId, string PlaceName)> BellTerritories()
