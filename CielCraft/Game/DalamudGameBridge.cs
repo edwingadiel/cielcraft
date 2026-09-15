@@ -713,7 +713,13 @@ public sealed class DalamudGameBridge : IGameBridge
         return false;
     }
 
-    public float GetFoodBuffRemainingSeconds()
+    // 48 = Well Fed, 49 = Medicated: food and potions are tracked by their own
+    // buff (roadmap 7.11).
+    public float GetFoodBuffRemainingSeconds() => GetStatusRemainingSeconds(48);
+
+    public float GetMedicatedRemainingSeconds() => GetStatusRemainingSeconds(49);
+
+    private static float GetStatusRemainingSeconds(uint statusId)
     {
         var player = Plugin.ObjectTable.LocalPlayer;
         if (player == null)
@@ -721,12 +727,102 @@ public sealed class DalamudGameBridge : IGameBridge
 
         foreach (var status in player.StatusList)
         {
-            // 48 = Well Fed.
-            if (status.StatusId == 48)
+            if (status.StatusId == statusId)
                 return System.Math.Max(0f, status.RemainingTime);
         }
 
         return 0f;
+    }
+
+    private static readonly FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] BagContainers =
+    [
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory1,
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory2,
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory3,
+            FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory4,
+    ];
+
+    public unsafe IReadOnlyList<ConsumableItem> ListConsumables()
+    {
+        var inventory = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+        if (inventory == null)
+            return [];
+
+        // Stacks of the same item and quality may sit in several slots; the
+        // picker wants one line per (item, HQ) with the summed count.
+        var counts = new Dictionary<(uint ItemId, bool Hq), int>();
+        var order = new List<(uint ItemId, bool Hq)>();
+        foreach (var type in BagContainers)
+        {
+            var container = inventory->GetInventoryContainer(type);
+            if (container == null)
+                continue;
+
+            for (var i = 0; i < container->Size; i++)
+            {
+                var slot = container->GetInventorySlot(i);
+                if (slot == null || slot->ItemId == 0)
+                    continue;
+
+                var key = (slot->GetBaseItemId(), slot->IsHighQuality());
+                if (!counts.ContainsKey(key))
+                    order.Add(key);
+                counts[key] = counts.GetValueOrDefault(key) + (int)slot->GetQuantity();
+            }
+        }
+
+        var items = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>();
+        var result = new List<ConsumableItem>();
+        foreach (var key in order)
+        {
+            if (!items.TryGetRow(key.ItemId, out var item))
+                continue;
+
+            // ItemUICategory 46 = Meal, 44 = Medicine.
+            var kind = item.ItemUICategory.RowId switch
+            {
+                46 => ConsumableKind.Food,
+                44 => ConsumableKind.Medicine,
+                _ => (ConsumableKind?)null,
+            };
+            if (kind == null)
+                continue;
+
+            result.Add(new ConsumableItem(
+                key.ItemId, item.Name.ExtractText(), key.Hq, counts[key], DescribeItemFood(item, key.Hq), kind.Value));
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// The bonus text of the item's ItemFood row (Item.ItemAction → Data[1] is
+    /// the ItemFood id for meals and medicine); "n/a" when the item has none.
+    /// </summary>
+    private static string DescribeItemFood(Lumina.Excel.Sheets.Item item, bool hq)
+    {
+        var action = item.ItemAction.ValueNullable;
+        if (action == null || action.Value.Data.Count < 2)
+            return "n/a";
+
+        var foods = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.ItemFood>();
+        if (!foods.TryGetRow(action.Value.Data[1], out var food))
+            return "n/a";
+
+        var parts = new List<string>();
+        foreach (var param in food.Params)
+        {
+            var baseParam = param.BaseParam.ValueNullable;
+            if (param.BaseParam.RowId == 0 || baseParam == null)
+                continue;
+
+            var name = baseParam.Value.Name.ExtractText();
+            var value = hq ? param.ValueHQ : param.Value;
+            var max = hq ? param.MaxHQ : param.Max;
+            parts.Add(param.IsRelative ? $"{name} +{value}% (max {max})" : $"{name} +{value}");
+        }
+
+        return parts.Count == 0 ? "n/a" : string.Join(", ", parts);
     }
 
     public unsafe bool FillHqIngredients()

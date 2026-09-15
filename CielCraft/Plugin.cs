@@ -336,6 +336,20 @@ public sealed class Plugin : IDalamudPlugin
             changed = true;
         }
 
+        // Pre-7.11 single food becomes the food of both consumable sets
+        // (roadmap 7.11); the legacy fields are cleared so they stop shadowing.
+        if (configuration.FoodItemId != 0
+            && configuration.CraftingConsumables.Food.ItemId == 0
+            && configuration.GatheringConsumables.Food.ItemId == 0)
+        {
+            configuration.CraftingConsumables.Food = new Consumable { ItemId = configuration.FoodItemId, Hq = configuration.FoodIsHq };
+            configuration.GatheringConsumables.Food = new Consumable { ItemId = configuration.FoodItemId, Hq = configuration.FoodIsHq };
+            Log.Information($"[Plugin] Moved the food (item {configuration.FoodItemId}) into the crafting and gathering consumable sets.");
+            configuration.FoodItemId = 0;
+            configuration.FoodIsHq = true;
+            changed = true;
+        }
+
         if (changed)
             configuration.Save();
     }
