@@ -376,6 +376,46 @@ public class HuntRunTests
     }
 
     [Fact]
+    public void ReadsTheBundledDropTableTheRefreshScriptWrites()
+    {
+        // Exactly the shape tools/refresh-drops.ps1 emits, including the
+        // entries the loader has to throw away (no monster, no zone).
+        var path = System.IO.Path.Combine(
+            System.IO.Path.GetTempPath(), $"cielcraft-drops-{Guid.NewGuid():N}.json");
+        System.IO.File.WriteAllText(path, """
+            [
+              { "item": 5310, "mobs": [{ "bnpc": 2, "name": "Ruins Runner", "level": 50, "zone": "Snowcloak" }] },
+              { "item": 5319, "mobs": [{ "bnpc": 3, "name": "Antelope Doe", "level": 20, "zone": "South Shroud" },
+                                       { "bnpc": 4, "name": "Antelope Stag", "level": 25, "zone": "South Shroud" }] },
+              { "item": 0, "mobs": [{ "bnpc": 9, "name": "Nobody", "level": 1, "zone": "South Shroud" }] },
+              { "item": 7, "mobs": [{ "bnpc": 0, "name": "Nameless", "level": 1, "zone": "" }] }
+            ]
+            """);
+
+        try
+        {
+            var log = new ListLog();
+            var (table, source) = CombatDatabase.LoadTable(path, log);
+
+            Assert.Equal(2, table.Count);
+            Assert.Equal(2u, table[5310][0].BNpcNameId);
+            Assert.Equal("Snowcloak", table[5310][0].Zone);
+            Assert.Equal(2, table[5319].Count);
+            Assert.Equal(25, table[5319][1].Level);
+            Assert.Contains("2 items", source);
+
+            // A file that is not there is a warning, not a crash.
+            var (missing, why) = CombatDatabase.LoadTable(path + ".gone", log);
+            Assert.Empty(missing);
+            Assert.Contains("missing", why);
+        }
+        finally
+        {
+            System.IO.File.Delete(path);
+        }
+    }
+
+    [Fact]
     public void SweepPointsStayInTheMapBoxAndStartNearest()
     {
         var bounds = new MapBounds(-100, -100, 100, 100);
