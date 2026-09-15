@@ -356,7 +356,8 @@ public class MainWindow : Window, IDisposable
             planError = "Could not read the selected recipe.";
         else
             plan = DependencyResolver.Resolve(
-                recipe.ResultItemId, batchQuantity, plugin.RecipeProvider, gameBridge.GetItemCount);
+                recipe.ResultItemId, batchQuantity, plugin.RecipeProvider, gameBridge.GetItemCount,
+                plugin.Capabilities.Current);
     }
 
     private void DrawPlanPreview()

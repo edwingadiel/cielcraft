@@ -49,6 +49,8 @@ public class DebugWindow : Window, IDisposable
             DrawDependencies();
             UiTheme.SectionHeader("Player");
             DrawPlayer();
+            UiTheme.SectionHeader("Capabilities");
+            DrawCapabilities();
             ImGui.EndTabItem();
         }
 
@@ -283,6 +285,17 @@ public class DebugWindow : Window, IDisposable
         ImGui.BulletText($"CP: {player.CurrentCp} / {player.MaxCp}");
         ImGui.BulletText($"Craftsmanship: {player.Craftsmanship}");
         ImGui.BulletText($"Control: {player.Control}");
+    }
+
+    /// <summary>Character capability snapshot (roadmap 7.16) with an on-demand refresh.</summary>
+    private void DrawCapabilities()
+    {
+        if (ImGui.Button("Refresh##capabilities"))
+            plugin.Capabilities.Refresh();
+        UiTheme.Tooltip("Re-reads flight zones, master books, tribe ranks, GP-regen traits and job levels from the game. Also happens on login and before every production run.");
+
+        foreach (var line in plugin.Capabilities.Describe())
+            ImGui.BulletText(line);
     }
 
     private void DrawCraft()

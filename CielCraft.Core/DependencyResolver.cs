@@ -8,7 +8,8 @@ public sealed record RecipeInfo(
     IReadOnlyList<(uint ItemId, int Amount)> Ingredients,
     uint ClassJobId = 0,
     bool IsExpert = false,
-    uint RequiredQuality = 0);
+    uint RequiredQuality = 0,
+    uint SecretRecipeBookId = 0);
 
 /// <summary>Recipe lookup boundary (spec §6): game data in the plugin, fakes in tests.</summary>
 public interface IRecipeProvider
@@ -45,7 +46,9 @@ public sealed record ProductionPlan(
 /// into sub-crafts; inventory stock is consumed once across the whole graph;
 /// craft counts honor recipe yields (ceil(needed / yield)) and surplus output
 /// feeds later branches. The target itself is always produced, never taken
-/// from inventory.
+/// from inventory. With capabilities given, ingredient recipes whose master
+/// book is locked are not planned (roadmap 7.16); the target keeps its recipe
+/// so the runner can refuse with the book's name.
 /// </summary>
 public static class DependencyResolver
 {
@@ -55,9 +58,10 @@ public static class DependencyResolver
         uint targetItemId,
         int quantity,
         IRecipeProvider recipes,
-        Func<uint, int> ownedOf)
+        Func<uint, int> ownedOf,
+        CharacterCapabilities? capabilities = null)
     {
-        var state = new State(recipes, ownedOf);
+        var state = new State(recipes, ownedOf, capabilities);
         state.Expand(targetItemId, quantity, useStock: false, depth: 0);
 
         return new ProductionPlan(
@@ -67,7 +71,7 @@ public static class DependencyResolver
             state.Raw.Select(pair => new MissingMaterial(pair.Key, pair.Value)).ToList());
     }
 
-    private sealed class State(IRecipeProvider recipes, Func<uint, int> ownedOf)
+    private sealed class State(IRecipeProvider recipes, Func<uint, int> ownedOf, CharacterCapabilities? capabilities)
     {
         public readonly Dictionary<uint, PlannedCraft> Crafts = new();
         public readonly List<uint> CraftOrder = [];
@@ -92,6 +96,12 @@ public static class DependencyResolver
             }
 
             var recipe = recipes.FindRecipeForItem(itemId);
+
+            // A locked master-book recipe cannot be crafted: treat the
+            // ingredient as raw (gather/buy) instead of planning it (7.16).
+            if (recipe != null && depth > 0 && capabilities != null && !capabilities.IsRecipeUsable(recipe))
+                recipe = null;
+
             if (recipe == null || depth >= MaxDepth || !expanding.Add(itemId))
             {
                 // Not craftable (or a cycle/depth guard tripped): raw material.

@@ -35,8 +35,10 @@ public sealed class Plugin : IDalamudPlugin
 
     public Configuration Configuration { get; init; }
     public IGameBridge GameBridge { get; init; }
+    /// <summary>What the character can do (roadmap 7.16); refreshed on load, login and demand.</summary>
+    public CapabilityReader Capabilities { get; init; } = new();
     public DalamudRecipeProvider RecipeProvider { get; init; }
-    public GatheringDatabase GatheringDatabase { get; init; } = new();
+    public GatheringDatabase GatheringDatabase { get; init; }
     public CraftStateMonitor CraftMonitor { get; init; }
     public ActionExecutor ActionExecutor { get; init; }
     public SolverService SolverService { get; init; }
@@ -67,7 +69,8 @@ public sealed class Plugin : IDalamudPlugin
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
         GameBridge = new DalamudGameBridge();
         RecipeProvider = new DalamudRecipeProvider(
-            () => GameBridge.CurrentClassJobId, jobId => GameBridge.HasGearsetForJob(jobId));
+            () => GameBridge.CurrentClassJobId, jobId => GameBridge.HasGearsetForJob(jobId), () => Capabilities.Current);
+        GatheringDatabase = new GatheringDatabase(() => Capabilities.Current);
         CraftMonitor = new CraftStateMonitor(GameBridge);
         ActionExecutor = new ActionExecutor(GameBridge, CraftMonitor);
         SolverService = new SolverService(new CielCraft.Raphael.RaphaelSolver());
@@ -76,12 +79,15 @@ public sealed class Plugin : IDalamudPlugin
         BatchCrafter = new BatchCrafter(
             GameBridge, CraftMonitor, CraftAutomator, SolverService, RecipeProvider, Configuration, Maintenance);
         Navigation = new Navigation.VNavmeshProvider();
-        GatheringController = new Gathering.GatheringController(GameBridge, Navigation, Configuration);
+        GatheringController = new Gathering.GatheringController(
+            GameBridge, Navigation, Configuration, () => Capabilities.Current);
         GatheringLoop = new Gathering.GatheringLoop(
             GameBridge, GatheringController, Navigation, Configuration, Maintenance);
         ProductionRunner = new ProductionRunner(
-            GameBridge, BatchCrafter, RecipeProvider, GatheringLoop, GatheringDatabase, Navigation, Configuration);
-        ProductionQueue = new ProductionQueue(GameBridge, ProductionRunner, RecipeProvider, Configuration);
+            GameBridge, BatchCrafter, RecipeProvider, GatheringLoop, GatheringDatabase, Navigation, Configuration,
+            Capabilities);
+        ProductionQueue = new ProductionQueue(
+            GameBridge, ProductionRunner, RecipeProvider, Configuration, () => Capabilities.Current);
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);
@@ -100,6 +106,10 @@ public sealed class Plugin : IDalamudPlugin
         PluginInterface.UiBuilder.OpenConfigUi += ToggleConfigUi;
         PluginInterface.UiBuilder.OpenMainUi += ToggleMainUi;
         ClientState.Login += OnLogin;
+
+        // A plugin (re)load while logged in never sees the login event.
+        if (ClientState.IsLoggedIn)
+            Capabilities.Refresh();
 
         Log.Information("[Plugin] CielCraft loaded.");
     }
@@ -230,6 +240,7 @@ public sealed class Plugin : IDalamudPlugin
 
     private void OnLogin()
     {
+        Capabilities.Refresh();
         if (Configuration.OpenMainWindowOnLogin)
             MainWindow.IsOpen = true;
     }

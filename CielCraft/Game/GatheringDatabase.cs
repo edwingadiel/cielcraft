@@ -1,21 +1,10 @@
+using System;
 using System.Collections.Generic;
 using System.Numerics;
+using CielCraft.Core;
 using Lumina.Excel.Sheets;
 
 namespace CielCraft.Game;
-
-/// <summary>Where an item can be gathered: territory plus approximate node-area center (spec §33/§35).</summary>
-public sealed record GatheringLocation(
-    uint ItemId,
-    uint JobId,
-    byte GatheringLevel,
-    uint TerritoryId,
-    Vector2 Position,
-    float Radius,
-    IReadOnlyList<CielCraft.Core.EtWindow> Windows)
-{
-    public bool IsTimed => Windows.Count > 0;
-}
 
 /// <summary>
 /// Which gathering job collects an item, from game data (spec §33): the
@@ -27,8 +16,14 @@ public sealed class GatheringDatabase
     public const uint MinerJobId = CielCraft.Core.GatheringActions.MinerJobId;
     public const uint BotanistJobId = CielCraft.Core.GatheringActions.BotanistJobId;
 
+    private readonly Func<CharacterCapabilities> capabilities;
     private Dictionary<uint, uint>? itemToJob;
-    private Dictionary<uint, GatheringLocation>? itemToLocation;
+    private Dictionary<uint, List<GatheringLocation>>? itemToLocations;
+
+    public GatheringDatabase(Func<CharacterCapabilities>? capabilities = null)
+    {
+        this.capabilities = capabilities ?? (() => CharacterCapabilities.Unknown);
+    }
 
     /// <summary>ClassJob row id (16 = MIN, 17 = BTN) that gathers the item; null when not gatherable.</summary>
     public uint? GetGatheringJob(uint itemId)
@@ -37,11 +32,18 @@ public sealed class GatheringDatabase
         return itemToJob!.TryGetValue(itemId, out var job) ? job : null;
     }
 
-    /// <summary>Lowest-level known node area for the item; null when unknown.</summary>
+    /// <summary>
+    /// Best known node area for the item; null when unknown. Picked at query
+    /// time so the flight preference follows the current capabilities
+    /// (roadmap 7.16): untimed first, then a zone with flight, then the
+    /// lowest gathering level.
+    /// </summary>
     public GatheringLocation? FindLocation(uint itemId)
     {
         EnsureIndex();
-        return itemToLocation!.GetValueOrDefault(itemId);
+        return itemToLocations!.TryGetValue(itemId, out var candidates)
+            ? CapabilityRules.ChooseSource(candidates, capabilities())
+            : null;
     }
 
     private void EnsureIndex()
@@ -88,8 +90,11 @@ public sealed class GatheringDatabase
         }
 
         // GatheringPoint gives the territory; ExportedGatheringPoint (keyed by
-        // the base row) gives approximate world X/Z and radius.
-        itemToLocation = new Dictionary<uint, GatheringLocation>();
+        // the base row) gives approximate world X/Z and radius. Every distinct
+        // (base, territory) area is kept per item so the best one can be
+        // chosen against the character's capabilities later.
+        itemToLocations = new Dictionary<uint, List<GatheringLocation>>();
+        var seen = new HashSet<(uint Item, uint Base, uint Territory)>();
         var exported = Plugin.DataManager.GetExcelSheet<ExportedGatheringPoint>();
         var transients = Plugin.DataManager.GetExcelSheet<GatheringPointTransient>();
         foreach (var point in Plugin.DataManager.GetExcelSheet<GatheringPoint>())
@@ -108,12 +113,13 @@ public sealed class GatheringDatabase
 
             foreach (var itemId in info.Items)
             {
-                // Untimed sources beat timed ones; within the same kind, the
-                // lowest gathering level wins.
-                if (!itemToLocation.TryGetValue(itemId, out var existing)
-                    || (existing.IsTimed && !location.IsTimed)
-                    || (existing.IsTimed == location.IsTimed && info.Level < existing.GatheringLevel))
-                    itemToLocation[itemId] = location with { ItemId = itemId };
+                if (!seen.Add((itemId, baseId, territory)))
+                    continue;
+
+                if (!itemToLocations.TryGetValue(itemId, out var list))
+                    itemToLocations[itemId] = list = [];
+
+                list.Add(location with { ItemId = itemId });
             }
         }
     }
