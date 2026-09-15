@@ -263,7 +263,15 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         if (State != FishingRunState.Paused || plan == null)
             return;
 
+        // A pause freezes nothing in the game, so every deadline the pause
+        // outlived has to start over or it fires the moment the run resumes.
         pending = null;
+        lineOutSince = DateTime.MaxValue;
+        castBlockedSince = DateTime.MaxValue;
+        blindSince = DateTime.MaxValue;
+        lastCatchAt = DateTime.MinValue;
+        lastHousekeepingAt = DateTime.MinValue;
+
         if (bridge.IsFishing)
             EnterPhase(FishingRunState.Fishing, "Resuming at the rod.");
         else if (bridge.CurrentTerritoryId != plan.Spot.TerritoryId)
