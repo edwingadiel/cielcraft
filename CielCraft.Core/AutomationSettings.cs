@@ -81,6 +81,45 @@ public class AutomationSettings
     /// the character has been on the job this session.
     /// </summary>
     public System.Collections.Generic.Dictionary<uint, CrafterStatsEntry> KnownCrafterStats { get; set; } = new();
+
+    // ---- M3: sourcing beyond gather / craft ----
+
+    /// <summary>Never spend gil below this balance (roadmap 7.3b).</summary>
+    public long GilFloor { get; set; } = 50_000;
+
+    /// <summary>Gil a single run may spend at vendors and exchanges (roadmap 7.3b / 7.17).</summary>
+    public long GilSpendCapPerRun { get; set; } = 200_000;
+
+    /// <summary>Buy a gatherable material from a vendor instead of gathering it when a shop sells it (roadmap 7.3b).</summary>
+    public bool BuyWhenGatherable { get; set; }
+
+    /// <summary>Walk to a mender when self-repair finds no Dark Matter (roadmap 7.3a).</summary>
+    public bool MenderRepair { get; set; } = true;
+
+    /// <summary>How the collectables-for-scrips planner picks turn-ins (roadmap 7.17).</summary>
+    public ScripSourcePreference ScripSourcePreference { get; set; } = ScripSourcePreference.Cheapest;
+
+    /// <summary>Desynthesize byproducts no order needs (roadmap 7.17); off by default.</summary>
+    public bool DesynthUnusedByproducts { get; set; }
+
+    /// <summary>Discard byproducts no order needs and nothing desynthesizes (roadmap 7.17); off by default.</summary>
+    public bool TrashCleanup { get; set; }
+
+    /// <summary>Send retainers on ventures for missing materials when they can bring them (roadmap 7.17).</summary>
+    public bool RetainerVentures { get; set; }
+
+    /// <summary>Let the AutoHook plugin handle bite timing over IPC when it is installed (roadmap 7.4).</summary>
+    public bool FishingPreferAutoHook { get; set; } = true;
+}
+
+/// <summary>Which turn-ins the collectables planner prefers when several earn the scrips an order needs (roadmap 7.17).</summary>
+public enum ScripSourcePreference
+{
+    /// <summary>Fewest materials / crafts per scrip.</summary>
+    Cheapest,
+
+    /// <summary>Fewest trips and windows, even at a higher material cost.</summary>
+    Fastest,
 }
 
 /// <summary>Craftsmanship / control / CP / level of a crafter job as last seen (roadmap 7.22).</summary>

@@ -15,6 +15,9 @@ public enum ProductionState
     Teleporting,
     MovingToArea,
     RunningGather,
+
+    /// <summary>A non-gather source (vendor, exchange, fishing …) is supplying the current material (M3).</summary>
+    RunningSource,
     PreparingStep,
     RunningBatch,
     Paused,
@@ -65,6 +68,8 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
     private readonly DalamudRecipeProvider recipeProvider;
     private readonly Gathering.GatheringLoop gatheringLoop;
     private readonly Game.MaintenanceService maintenance;
+    private readonly IReadOnlyList<IMaterialSource> sources; // asked, in order, for materials no node yields (M3)
+    private ISourceRun? sourceRun;                            // the supply job in flight during RunningSource
     private readonly GatheringDatabase gatheringDatabase;
     private readonly INavigationProvider navigation;
     private readonly Configuration configuration;
@@ -121,7 +126,9 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         System.Numerics.Vector2 AreaPosition,
         IReadOnlyList<EtWindow> Windows,
         CollectableTier? Tier = null,
-        NodeKind Kind = NodeKind.Normal)
+        NodeKind Kind = NodeKind.Normal,
+        SourceOffer? Offer = null,
+        IMaterialSource? Source = null) // set for a material a non-gather source supplies (M3)
     {
         public int Remaining { get; init; } = Amount;
 
@@ -190,10 +197,12 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         CapabilityReader capabilities,
         ILog log,
         IClock clock,
-        IUserNotifier notifier)
+        IUserNotifier notifier,
+        IReadOnlyList<IMaterialSource>? sources = null)
         : base(log, clock, "[Production]", ProductionState.Idle, "Idle.")
     {
         this.notifier = notifier;
+        this.sources = sources ?? [];
         retry = new Throttle(clock, RetryInterval);
         travel = new TravelDriver(navigation, gameBridge, clock, log, "[Production]");
         this.configuration = configuration;
@@ -285,6 +294,8 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
             batchCrafter.Pause("production paused");
         else if (State == ProductionState.RunningGather)
             gatheringLoop.Pause("production paused");
+        else if (State == ProductionState.RunningSource)
+            sourceRun?.Pause("production paused");
 
         if (State is ProductionState.MovingToArea)
         {
@@ -293,7 +304,7 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         }
 
         if (State is ProductionState.PreparingStep or ProductionState.RunningBatch
-            or ProductionState.PreparingGather or ProductionState.RunningGather
+            or ProductionState.PreparingGather or ProductionState.RunningGather or ProductionState.RunningSource
             or ProductionState.Teleporting or ProductionState.MovingToArea
             or ProductionState.WaitingForWindow)
             Transition(ProductionState.Paused, $"Paused: {reason}.");
@@ -304,7 +315,12 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         if (State != ProductionState.Paused)
             return;
 
-        if (gatheringLoop.State == Gathering.GatheringLoopState.Paused)
+        if (sourceRun is { State: SourceRunState.Paused })
+        {
+            sourceRun.Resume();
+            Transition(ProductionState.RunningSource, sourceRun.StatusText);
+        }
+        else if (gatheringLoop.State == Gathering.GatheringLoopState.Paused)
         {
             gatheringLoop.Resume();
             Transition(ProductionState.RunningGather, GatherText("Gathering"));
@@ -347,6 +363,8 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         StopAfterStep = false;
         batchCrafter.Stop();
         gatheringLoop.Stop();
+        sourceRun?.Stop();
+        sourceRun = null;
         travel.Stop();
         navigation.Stop();
         if (State is not (ProductionState.Idle or ProductionState.Completed or ProductionState.Failed))
@@ -396,6 +414,9 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
             case ProductionState.RunningGather:
                 TickRunningGather();
                 break;
+            case ProductionState.RunningSource:
+                TickRunningSource();
+                break;
             case ProductionState.PreparingStep:
                 TickPreparing();
                 break;
@@ -425,6 +446,17 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         if (gameBridge.GetGatheringState() != null || gameBridge.IsGathering)
         {
             retry.Try(gameBridge.CloseGatheringWindow);
+            return;
+        }
+
+        // A sourced material (M3): the source's run owns travel and dialogs.
+        if (task.Source != null && task.Offer != null)
+        {
+            sourceRun = task.Source.Start(task.Offer with { Amount = task.Remaining });
+            Log.Information(
+                $"[Production] Source task {gatherDone + 1}/{gatherQueue.Count}: {task.Offer.Description} " +
+                $"({recipeProvider.GetItemName(task.ItemId)} ×{task.Remaining} via {task.Source.Name}).");
+            Transition(ProductionState.RunningSource, $"{task.Offer.Description} ({gatherDone + 1}/{gatherQueue.Count}).");
             return;
         }
 
@@ -804,6 +836,54 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         travel.Tick();
         if (travel.State == TravelState.Failed)
             Fail(travel.FailureReason);
+    }
+
+    /// <summary>A source run (M3) in flight: ticked here, finished like a gather task.</summary>
+    private void TickRunningSource()
+    {
+        if (sourceRun == null)
+        {
+            Fail("the source run vanished");
+            return;
+        }
+
+        sourceRun.Tick();
+        StatusText = $"{sourceRun.StatusText} ({gatherDone + 1}/{gatherQueue.Count})";
+        switch (sourceRun.State)
+        {
+            case SourceRunState.Completed:
+                var task = gatherQueue[gatherIndex];
+                Log.Information($"[Production] {task.Offer?.Description}: obtained {sourceRun.Obtained} ({sourceRun.StatusText}).");
+                sourceRun = null;
+                gatherQueue[gatherIndex] = task with { Done = true, Remaining = 0 };
+                gatherDone++;
+                areaDestination = null;
+                EnterPreparing();
+                if (StopAfterStep)
+                {
+                    StopGentlyNow($"after source task {gatherDone}/{gatherQueue.Count}");
+                    break;
+                }
+
+                DecideNext("source task done");
+                break;
+
+            case SourceRunState.Failed:
+                var failed = gatherQueue[gatherIndex];
+                var reason = sourceRun.StatusText;
+                sourceRun = null;
+                Fail($"{failed.Offer?.Description} failed ({reason})");
+                break;
+
+            case SourceRunState.Paused:
+                Transition(ProductionState.Paused, $"Paused: {sourceRun.StatusText}");
+                break;
+
+            case SourceRunState.Idle:
+                sourceRun = null;
+                Transition(ProductionState.Paused, "Paused: the source run was stopped.");
+                break;
+        }
     }
 
     private void TickRunningGather()
@@ -1242,6 +1322,22 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
             var job = gatheringDatabase.GetGatheringJob(material.ItemId);
             if (job == null)
             {
+                // Not a node item: a registered source (vendor, exchange,
+                // fishing, retainer — M3) may supply it; the first offer wins.
+                var offered = false;
+                foreach (var supplier in sources)
+                {
+                    if (supplier.Offer(material.ItemId, material.Amount) is { } offer)
+                    {
+                        tasks.Add(new GatherTask(material.ItemId, material.Amount, 0, 0, default, [], null, NodeKind.Normal, offer, supplier));
+                        offered = true;
+                        break;
+                    }
+                }
+
+                if (offered)
+                    continue;
+
                 // A cluster (or a crystal with no normal node) comes from the
                 // aetherial reduction of an ephemeral collectable (7.15). The
                 // reduction itself is not automated yet — see the design note
@@ -1750,6 +1846,13 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
 
             foreach (var raw in plan.RawMaterials)
                 yield return $"  raw: {recipeProvider.GetItemName(raw.ItemId)} (item {raw.ItemId}) ×{raw.Amount}";
+        }
+
+        yield return $"Sources registered: {(sources.Count == 0 ? "none" : string.Join(", ", sources.Select(s => $"{s.Name} ({s.Kind})")))}";
+        if (sourceRun != null)
+        {
+            foreach (var line in sourceRun.Describe())
+                yield return "  " + line;
         }
 
         if (gatherQueue.Count > 0)
