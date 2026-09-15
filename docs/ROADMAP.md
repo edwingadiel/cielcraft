@@ -200,11 +200,11 @@ logged once per 10 s per source instead of spamming every frame.
 
 Values that could not be verified offline and are confirmed at in-game gates:
 crafting-log callbacks (8 = synthesize, 9 = quick synthesis — validated),
-general action ids (9 = mount roulette, 23 = dismount — validated; 6 = repair — pending),
-repair-addon callbacks (0 = repair all, -1 = close; SelectYesno 0 = yes — pending),
+general action ids (9 = mount roulette, 23 = dismount, 6 = repair — all validated 2026-09-15),
+repair-addon callbacks (0 = repair all, -1 = close; SelectYesno 0 = yes — validated 2026-09-15),
 RecipeNote NQ/HQ ingredient amount spans as the HQ-fill mechanism (pending),
-crafting-status `RemainingTime` holding the remaining step count (the number on
-the buff icon; shown in the debug window's craft buffs as "(N steps)" — pending;
-a wrong read degrades to "buff applies to the next action only", never unsound),
+crafting-status step counts: they live in the status *parameter* (stacks), not
+`RemainingTime`, which reads 0 — validated 2026-09-15 via the mid-craft re-solve
+effects line (Inner Quiet 7 / Waste Not 4 / Manipulation 6 matched the icons),
 Synthesis-window numbers arriving without thousands separators (the parser now
 merges "12,345"/"12.345"/"12 345" groups either way).
