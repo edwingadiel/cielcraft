@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.Text;
 
 namespace CielCraft.Core;
 
@@ -6,6 +8,7 @@ namespace CielCraft.Core;
 /// Display names for the action ids Raphael emits (CRP-flavored for craft
 /// actions, shared ids for buff actions). Mirrors Action::action_id in
 /// raphael-sim; per-job id translation for execution happens elsewhere.
+/// The reverse lookup serves manual rotation text (roadmap 7.8).
 /// </summary>
 public static class RaphaelActionNames
 {
@@ -48,6 +51,60 @@ public static class RaphaelActionNames
         [100451] = "Daring Touch",
     };
 
+    /// <summary>Normalized name → id; built once from <see cref="ById"/>.</summary>
+    private static readonly Dictionary<string, uint> ByNormalizedName = BuildReverse();
+
     public static string NameOf(uint actionId) =>
         ById.TryGetValue(actionId, out var name) ? name : $"Unknown action {actionId}";
+
+    /// <summary>
+    /// Case-insensitive name lookup, tolerant of typographic apostrophes,
+    /// stray whitespace and the "Waste Not 2" spelling.
+    /// </summary>
+    public static bool TryGetId(string name, out uint actionId) =>
+        ByNormalizedName.TryGetValue(Normalize(name), out actionId);
+
+    private static Dictionary<string, uint> BuildReverse()
+    {
+        var reverse = new Dictionary<string, uint>(StringComparer.Ordinal);
+        foreach (var (id, name) in ById)
+            reverse[Normalize(name)] = id;
+
+        // Common alternative spellings people paste from guides.
+        reverse[Normalize("Waste Not 2")] = 4639;
+        reverse[Normalize("Masters Mend")] = 100003;
+        reverse[Normalize("Byregots Blessing")] = 100339;
+        return reverse;
+    }
+
+    /// <summary>Lower-case, straight apostrophes, single spaces.</summary>
+    private static string Normalize(string name)
+    {
+        var sb = new StringBuilder(name.Length);
+        var pendingSpace = false;
+        foreach (var raw in name.Trim())
+        {
+            var c = raw switch
+            {
+                '’' or '‘' or '`' => '\'',
+                _ => raw,
+            };
+
+            if (char.IsWhiteSpace(c))
+            {
+                pendingSpace = sb.Length > 0;
+                continue;
+            }
+
+            if (pendingSpace)
+            {
+                sb.Append(' ');
+                pendingSpace = false;
+            }
+
+            sb.Append(char.ToLowerInvariant(c));
+        }
+
+        return sb.ToString();
+    }
 }

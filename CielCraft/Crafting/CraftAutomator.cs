@@ -43,10 +43,21 @@ public sealed class CraftAutomator : AutomationMachine<AutomationState>, IDispos
     private int expectedStep; // craft step the rotation position corresponds to; 0 = unknown
     private uint[] remainingCache = [];
     private DateTime? exhaustedAt;
+    private bool waitingForStep; // lock-step (roadmap 7.18): paused before an action, waiting for Step()
+    private bool stepGranted;    // one action may fire even though lock-step is on
 
     public int TotalActions => rotation.Count;
     public int CompletedActions => Math.Min(nextIndex, rotation.Count);
     public uint? NextRaphaelAction => nextIndex < rotation.Count ? rotation[nextIndex] : null;
+
+    /// <summary>The list being driven (the same instance the owner passed to <see cref="Start"/>), for the rotation view.</summary>
+    public IReadOnlyList<uint> Rotation => rotation;
+
+    /// <summary>Plan index of the next action; equals the count once the plan is spent.</summary>
+    public int NextIndex => nextIndex;
+
+    /// <summary>Paused by lock-step, waiting for <see cref="Step"/> (or Resume, which steps once).</summary>
+    public bool WaitingForStep => State == AutomationState.Paused && waitingForStep;
 
     public CraftAutomator(
         IGameBridge gameBridge,
@@ -97,6 +108,8 @@ public sealed class CraftAutomator : AutomationMachine<AutomationState>, IDispos
         crafterLevel = (byte)(gameBridge.GetPlayerState()?.Level ?? 0);
         pendingConsume = 1;
         exhaustedAt = null;
+        waitingForStep = false;
+        stepGranted = false;
         expectedStep = craftMonitor.Current?.Step ?? 0;
         RebuildRemaining();
 
@@ -106,7 +119,19 @@ public sealed class CraftAutomator : AutomationMachine<AutomationState>, IDispos
         return true;
     }
 
-    public void Pause(string reason) => Transition(AutomationState.Paused, $"Paused: {reason}.");
+    public void Pause(string reason)
+    {
+        waitingForStep = false;
+        stepGranted = false;
+        Transition(AutomationState.Paused, $"Paused: {reason}.");
+    }
+
+    /// <summary>
+    /// Lock-step (roadmap 7.18): lets exactly one action through, after which
+    /// the automator pauses again before the next one. False when it is not
+    /// waiting for a step.
+    /// </summary>
+    public bool Step() => WaitingForStep && Resume();
 
     /// <summary>
     /// Resumes a paused run. Returns false when there is nothing left to run
@@ -145,6 +170,15 @@ public sealed class CraftAutomator : AutomationMachine<AutomationState>, IDispos
         if (exhaustedAt != null)
             exhaustedAt = Clock.UtcNow;
 
+        // Resuming a lock-step pause with lock-step still on is a single step:
+        // the next action fires, then the automator holds again. Turning the
+        // setting off is what makes Resume run freely.
+        if (waitingForStep)
+        {
+            waitingForStep = false;
+            stepGranted = true;
+        }
+
         waitingForReady = false;
         Transition(AutomationState.Running, $"Running: {CompletedActions}/{rotation.Count} actions.");
         return true;
@@ -163,6 +197,8 @@ public sealed class CraftAutomator : AutomationMachine<AutomationState>, IDispos
 
     public void Stop()
     {
+        waitingForStep = false;
+        stepGranted = false;
         if (State is AutomationState.Running or AutomationState.Paused)
             Transition(AutomationState.Idle, "Stopped by user.");
     }
@@ -307,6 +343,18 @@ public sealed class CraftAutomator : AutomationMachine<AutomationState>, IDispos
             return;
         }
 
+        // Lock-step (roadmap 7.18): hold before every action until the user
+        // steps. Checked before the readiness wait so a Step fires as soon as
+        // the game allows, and the reason names what is about to happen.
+        if (configuration.LockStep && !stepGranted)
+        {
+            Transition(
+                AutomationState.Paused,
+                $"Paused: lock-step, next {RaphaelActionNames.NameOf(decision.ActionId)} ({nextIndex + 1}/{rotation.Count}).");
+            waitingForStep = true;
+            return;
+        }
+
         var resolved = actionResolver.ResolveForJob(decision.ActionId, classJobId);
         if (resolved == null)
         {
@@ -336,6 +384,7 @@ public sealed class CraftAutomator : AutomationMachine<AutomationState>, IDispos
         if (decision.DeviationReason != null)
             Log.Information($"[Adaptive] {decision.DeviationReason}.");
 
+        stepGranted = false;
         pendingConsume = decision.ConsumeFromPlan;
 
         Log.Information(
@@ -363,6 +412,7 @@ public sealed class CraftAutomator : AutomationMachine<AutomationState>, IDispos
         yield return $"State {State} — {StatusText}";
         yield return $"Plan index {nextIndex}/{rotation.Count}; job {classJobId}; adaptive {adaptive}; base progress {baseProgress}; level {crafterLevel}; target quality {targetQuality}; pendingConsume {pendingConsume}";
         yield return $"waitingForReady {waitingForReady} (since {waitingSince:HH:mm:ss}Z); exhaustedAt {(exhaustedAt is { } at ? at.ToString("HH:mm:ss") + "Z" : "-")}";
+        yield return $"lockStep {configuration.LockStep}; waitingForStep {waitingForStep}; stepGranted {stepGranted}";
         if (rotation.Count > 0)
             yield return "Rotation: " + string.Join(", ", rotation.Select((action, i) =>
                 (i == nextIndex ? ">" : "") + RaphaelActionNames.NameOf(action)));

@@ -1,5 +1,6 @@
 using System;
 using CielCraft.Core;
+using CielCraft.Core.Rotations;
 using CielCraft.Game;
 using System.Collections.Generic;
 
@@ -17,6 +18,22 @@ public enum BatchState
     Completed,
     Failed,
 }
+
+/// <summary>
+/// The rotation a batch runs (roadmap 7.8): where it came from and the
+/// numbers the rotation view needs to replay it. A mid-craft re-solve carries
+/// the live state it was solved from so the replay starts there.
+/// </summary>
+public sealed record ActiveRotation(
+    IReadOnlyList<uint> ActionIds,
+    string Source,
+    CraftSetup Setup,
+    int BaseProgress,
+    int BaseQuality,
+    int TargetQuality,
+    int InitialQuality,
+    CraftSnapshot? StartState = null,
+    CraftLiveEffects? StartEffects = null);
 
 /// <summary>
 /// Batch crafting (spec §18/§58): repeat the solved rotation until the target
@@ -71,9 +88,20 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
     private DateTime craftStartedAt = DateTime.MinValue;   // pacing: first action waits for the start animation
     private DateTime lastCraftEndedAt = DateTime.MinValue; // pacing: next Synthesize waits for the end animation
     private static readonly TimeSpan SynthesisRetryInterval = TimeSpan.FromSeconds(3);
+    private int solveInitialQuality;       // live quality when the full solve was requested (HQ materials)
+    private CraftSnapshot? midSolveState;  // what the mid-craft re-solve started from, for the rotation view
+    private CraftLiveEffects? midSolveEffects;
+    private bool assistCandidate;          // assist mode (roadmap 7.18): a hand-started craft not yet adopted
+    private bool assisted;                 // this batch was attached by assist mode
 
     public int CompletedCrafts { get; private set; }
     public int TargetQuantity => targetQuantity;
+
+    /// <summary>Recipe of the batch; 0 for a batch attached to a craft whose recipe could not be read.</summary>
+    public ushort RecipeId => recipeId;
+
+    /// <summary>The rotation in use (solved, cached, manual or re-solved mid-craft); null until one exists (roadmap 7.8).</summary>
+    public ActiveRotation? Rotation { get; private set; }
 
     public BatchCrafter(
         IGameBridge gameBridge,
@@ -158,6 +186,8 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
         qualityOverride = targetQuality;
         hqBaseline = 0;
         solution = null;
+        Rotation = null;
+        assisted = false;
         solveRequested = false;
         solvedSetup = null;
         solveTargetQuality = 0;
@@ -278,6 +308,7 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
     {
         var isCrafting = gameBridge.IsCrafting;
         var craftJustEnded = wasCrafting && !isCrafting;
+        var craftJustStarted = isCrafting && !wasCrafting;
         wasCrafting = isCrafting;
 
         // A finished craft whose inventory update has not landed yet.
@@ -286,6 +317,9 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
             TryVerifyCraft();
             return;
         }
+
+        if (TickAssist(isCrafting, craftJustStarted))
+            return;
 
         // A craft can end while the batch is paused (in-flight last action);
         // its verification must not be lost or the count drifts by one.
@@ -313,6 +347,49 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
                 TickQuickRunning();
                 break;
         }
+    }
+
+    /// <summary>
+    /// Assist mode (roadmap 7.18): a synthesis the user starts by hand while
+    /// nothing is running becomes a batch of one, adopted on step 1 the way
+    /// <see cref="Start"/> attaches to a craft in progress. Only the craft
+    /// that began while the batch was idle qualifies, and only once — a craft
+    /// the assisted batch gave up on is never re-adopted, and a craft the
+    /// runner started is never touched (the batch is not idle then).
+    /// </summary>
+    private bool TickAssist(bool isCrafting, bool craftJustStarted)
+    {
+        var idle = State is BatchState.Idle or BatchState.Completed or BatchState.Failed;
+        if (!isCrafting)
+        {
+            assistCandidate = false;
+            return false;
+        }
+
+        if (craftJustStarted && idle)
+            assistCandidate = true;
+
+        if (!assistCandidate || !idle || !configuration.AssistMode)
+            return false;
+
+        var craft = craftMonitor.Current;
+        if (craft == null || gameBridge.IsQuickSynthesisActive)
+            return false;
+
+        // Past step 1 the user is clearly crafting by hand; leave it alone.
+        assistCandidate = false;
+        if (craft.Step > 1)
+            return false;
+
+        if (!Start(1))
+        {
+            Log.Information($"[Production] Assist: could not attach to the synthesis ({StatusText})");
+            return false;
+        }
+
+        assisted = true;
+        Log.Information("[Production] Assist: attaching to the synthesis started by hand.");
+        return true;
     }
 
     private void TickQuickStarting()
@@ -463,6 +540,13 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
                     TrainedPerfectionAvailable: IsSpecialistActionReady(CraftActionData.TrainedPerfection, jobId));
                 if (!solverService.BeginSolveFromState(setup, craft, solveTargetQuality, context))
                     return;
+
+                midSolveState = craft;
+                midSolveEffects = CraftLiveEffects.FromSnapshot(craft, setup, context);
+            }
+            else if (TryManualRotation(setup, craft))
+            {
+                return;
             }
             else if (!solverService.BeginSolve(setup, new CraftObjective(
                     // Live quality at solve time reflects HQ materials, so the
@@ -474,6 +558,7 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
                 return;
             }
 
+            solveInitialQuality = craft.Quality;
             solveRequested = true;
             StatusText = midSolve ? "Re-solving from the current state..." : "Solving rotation...";
             return;
@@ -486,10 +571,16 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
                 {
                     midSolution = solved;
                     midSolve = false;
+                    Rotation = new ActiveRotation(
+                        solved.ActionIds, "mid-craft re-solve", solvedSetup!, solved.BaseProgress, solved.BaseQuality,
+                        solveTargetQuality, solveInitialQuality, midSolveState, midSolveEffects);
                 }
                 else
                 {
                     solution = solved;
+                    Rotation = new ActiveRotation(
+                        solved.ActionIds, solverService.LastSolveCached ? "cached solve" : "solved", solvedSetup!,
+                        solved.BaseProgress, solved.BaseQuality, solveTargetQuality, solveInitialQuality);
                 }
 
                 automatorStarted = false;
@@ -508,6 +599,44 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
 
                 break;
         }
+    }
+
+    /// <summary>
+    /// Manual rotation (roadmap 7.8): the text saved for the recipe replaces
+    /// the solver. The base progress/quality the adaptive rules need are
+    /// computed from the recipe level table with raphael-data's formula
+    /// (<see cref="RecipeSheet.BaseValues"/>) rather than by running a solve
+    /// for them — the point of a manual rotation is skipping the solve, and
+    /// the numbers are the same. Unparseable text is logged and the solver
+    /// takes over; a mid-craft recovery still re-solves with Raphael.
+    /// </summary>
+    private bool TryManualRotation(CraftSetup setup, CraftSnapshot craft)
+    {
+        if (recipeId == 0 || !configuration.ManualRotations.TryGetValue(recipeId, out var text))
+            return false;
+
+        var parsed = RotationText.Parse(text);
+        if (!parsed.Success)
+        {
+            Log.Warning($"[Production] Manual rotation for recipe {recipeId} ignored ({string.Join("; ", parsed.Errors)}); solving instead.");
+            return false;
+        }
+
+        var (baseProgress, baseQuality) = RecipeSheet.BaseValues(setup) ?? (0, 0);
+        if (baseProgress == 0)
+            Log.Warning($"[Production] No level-table row for rlvl {setup.RecipeLevel}; the adaptive progress rules are off for this manual rotation.");
+
+        solution = new CraftSolution(parsed.ActionIds, BaseProgress: baseProgress, BaseQuality: baseQuality);
+        solveInitialQuality = craft.Quality;
+        Rotation = new ActiveRotation(
+            parsed.ActionIds, "manual rotation", setup, baseProgress, baseQuality, solveTargetQuality, craft.Quality);
+        Log.Information(
+            $"[Production] Manual rotation for recipe {recipeId}: {parsed.ActionIds.Count} actions " +
+            $"(base progress {baseProgress}, base quality {baseQuality}); skipping the solve.");
+
+        automatorStarted = false;
+        Transition(BatchState.Crafting, ProgressText());
+        return true;
     }
 
     private bool IsSpecialistActionReady(uint raphaelActionId, uint jobId)
@@ -680,6 +809,13 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
                 return;
             }
 
+            // A lock-step hold (roadmap 7.18) is the user's pause, not a problem to recover from.
+            if (automatorStarted && automator.WaitingForStep)
+            {
+                StatusText = $"Lock-step: {automator.StatusText}";
+                return;
+            }
+
             if (automatorStarted && automator.State is AutomationState.Paused or AutomationState.Failed)
             {
                 // One recovery attempt per craft (roadmap 3.2): re-solve the
@@ -720,6 +856,14 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
 
         if (automator.State != AutomationState.Completed)
         {
+            // An assisted craft the user cancelled or finished by hand is
+            // simply over: staying Paused would block the next assist.
+            if (assisted)
+            {
+                Transition(BatchState.Idle, $"Assisted craft ended before the rotation completed ({automator.StatusText}).");
+                return;
+            }
+
             Pause($"craft ended without completing the rotation ({automator.StatusText})");
             return;
         }
@@ -835,6 +979,7 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
         yield return $"Target quality {solveTargetQuality}; wait started {waitStartedAt:HH:mm:ss}Z; quick last progress {quickLastProgressAt:HH:mm:ss}Z; last recipe open attempt {lastRecipeOpenAttempt:HH:mm:ss}Z";
         yield return $"Solved setup: {solvedSetup?.ToString() ?? "none"}";
         yield return $"Solution: {DescribeSolution(solution)}; mid-craft solution: {DescribeSolution(midSolution)}";
+        yield return $"Rotation source: {Rotation?.Source ?? "none"}; assistMode {configuration.AssistMode}; assistCandidate {assistCandidate}; assisted {assisted}; lockStep {configuration.LockStep}";
     }
 
     private static string DescribeSolution(CraftSolution? candidate) =>
