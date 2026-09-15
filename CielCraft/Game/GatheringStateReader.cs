@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using CielCraft.Core;
 using FFXIVClientStructs.FFXIV.Client.UI;
+using FFXIVClientStructs.FFXIV.Component.GUI;
 
 namespace CielCraft.Game;
 
@@ -34,5 +35,70 @@ internal static unsafe class GatheringStateReader
             CurrentGp: player?.CurrentGp ?? 0,
             MaxGp: player?.MaxGp ?? 0,
             Items: items);
+    }
+
+    /// <summary>
+    /// The visible text nodes of one item row (the slot's checkbox
+    /// component), in node order: the item name and the row's percentages
+    /// (gathering chance, Gatherer's Boon chance). Empty when the window or
+    /// the slot is not there.
+    /// </summary>
+    public static IReadOnlyList<string> ReadSlotTexts(int slotIndex)
+    {
+        var addonPtr = Plugin.GameGui.GetAddonByName("Gathering");
+        if (addonPtr.IsNull || !addonPtr.IsVisible)
+            return [];
+
+        var addon = (AddonGathering*)addonPtr.Address;
+        if (slotIndex < 0 || slotIndex >= addon->GatheredItemComponentCheckbox.Length)
+            return [];
+
+        var checkbox = addon->GatheredItemComponentCheckbox[slotIndex].Value;
+        if (checkbox == null)
+            return [];
+
+        var texts = new List<string>();
+        var manager = &checkbox->UldManager;
+        for (var i = 0; i < manager->NodeListCount; i++)
+        {
+            var node = manager->NodeList[i];
+            if (node == null || node->Type != NodeType.Text || !node->IsVisible())
+                continue;
+
+            var text = Dalamud.Utility.Utf8StringExtensions.ExtractText(((AtkTextNode*)node)->NodeText).Trim();
+            if (text.Length > 0)
+                texts.Add(text);
+        }
+
+        return texts;
+    }
+
+    /// <summary>
+    /// Gatherer's Boon chance of the slot from the row's text: the last
+    /// "NN%" of the row (the row shows the gathering chance first, then the
+    /// boon chance). -1 when the row shows fewer than two percentages, so a
+    /// rule that needs the boon chance is skipped rather than fed the
+    /// gathering chance.
+    /// </summary>
+    public static int ReadBoonChance(int slotIndex)
+    {
+        var percentages = new List<int>();
+        foreach (var text in ReadSlotTexts(slotIndex))
+        {
+            if (TryParsePercent(text, out var value))
+                percentages.Add(value);
+        }
+
+        return percentages.Count >= 2 ? percentages[^1] : -1;
+    }
+
+    private static bool TryParsePercent(string text, out int value)
+    {
+        value = 0;
+        var trimmed = text.Trim();
+        if (trimmed.Length < 2 || trimmed[^1] != '%')
+            return false;
+
+        return int.TryParse(trimmed[..^1].Trim(), out value) && value is >= 0 and <= 100;
     }
 }

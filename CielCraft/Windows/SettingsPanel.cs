@@ -116,6 +116,9 @@ internal sealed class SettingsPanel
         UiTheme.Toggle("Drink cordials between nodes", configuration.UseCordials,
             v => { configuration.UseCordials = v; Save(); },
             "Uses a cordial from the bag while walking to the next node when GP is low.");
+
+        UiTheme.SectionHeader("Rotations (7.14)");
+        GatheringRotationPanel.DrawSettings(configuration);
     }
 
     // -------------------------------------------------------- consumables

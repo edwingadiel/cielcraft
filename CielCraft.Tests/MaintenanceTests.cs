@@ -137,6 +137,12 @@ public class MaintenanceTests
 
         private static NotImplementedException Unexpected() => new("the maintenance service must not touch this");
 
+        public GatheringNodeFacts GetGatheringNodeFacts(ulong nodeObjectId, int slotIndex) => throw Unexpected();
+
+        public float GetStatusRemainingSeconds(uint statusId) => throw Unexpected();
+
+        public bool IsItemOnCooldown(uint itemId) => throw Unexpected();
+
         public System.Numerics.Vector3? PlayerPosition => throw Unexpected();
         public bool IsMounted => throw Unexpected();
         public void TryMount() => throw Unexpected();

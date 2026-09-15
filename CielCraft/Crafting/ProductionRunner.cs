@@ -83,7 +83,8 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         uint TerritoryId,
         System.Numerics.Vector2 AreaPosition,
         IReadOnlyList<EtWindow> Windows,
-        CollectableTier? Tier = null);
+        CollectableTier? Tier = null,
+        NodeKind Kind = NodeKind.Normal); // picks the rotation table (7.14) and the scheduler's window maths (7.15)
 
     /// <summary>
     /// One target of the run (roadmap 7.13) with the bag counts at start, so
@@ -411,7 +412,7 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
             return;
         }
 
-        if (gatheringLoop.Start(task.ItemId, task.Amount, AreaCenterFor(task), task.Tier))
+        if (gatheringLoop.Start(task.ItemId, task.Amount, AreaCenterFor(task), task.Tier, task.Kind))
         {
             Log.Information(
                 $"[Production] Gather task {gatherIndex + 1}/{gatherQueue.Count}: " +
@@ -1032,7 +1033,8 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
                 location?.TerritoryId ?? 0,
                 location?.Position ?? default,
                 location?.Windows ?? [],
-                collectableOrder?.CollectableTier));
+                collectableOrder?.CollectableTier,
+                location?.Kind ?? NodeKind.Normal));
         }
 
         // Timed materials go last, soonest window first, so untimed work

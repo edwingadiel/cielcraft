@@ -94,10 +94,14 @@ public sealed class Plugin : IDalamudPlugin
             GameBridge, CraftMonitor, CraftAutomator, SolverService, RecipeProvider, Configuration, Maintenance,
             actionResolver, Log, SystemClock.Instance);
         Navigation = new Navigation.VNavmeshProvider();
+        // Gathering action ids resolved by name from the Action sheet (7.14); one catalogue for the controller, the loop and the settings page.
+        var gatheringCatalog = new Gathering.GatheringActionCatalog(Log);
+        Windows.GatheringRotationPanel.Catalog = gatheringCatalog;
         GatheringController = new Gathering.GatheringController(
-            GameBridge, Navigation, Configuration, Log, SystemClock.Instance, () => Capabilities.Current);
+            GameBridge, Navigation, Configuration, Log, SystemClock.Instance, () => Capabilities.Current, gatheringCatalog);
         GatheringLoop = new Gathering.GatheringLoop(
-            GameBridge, GatheringController, Navigation, Configuration, Maintenance, Log, SystemClock.Instance);
+            GameBridge, GatheringController, Navigation, Configuration, Maintenance, Log, SystemClock.Instance,
+            () => Capabilities.Current, gatheringCatalog);
         ProductionRunner = new ProductionRunner(
             GameBridge, BatchCrafter, RecipeProvider, GatheringLoop, GatheringDatabase, Maintenance, Navigation, Configuration,
             Capabilities, Log, SystemClock.Instance, Notifier);

@@ -216,6 +216,21 @@ public interface IGameBridge : ITravelBridge
 
     /// <summary>Dismisses MaterializeDialog (No) and the Materialize window, whichever are open.</summary>
     void CloseMaterialize();
+
+    /// <summary>
+    /// Facts about the open node for the rotation engine (roadmap 7.14): the
+    /// chosen slot's Gatherer's Boon chance (-1 when the window does not show
+    /// it), the point's bonus conditions and whether the character meets
+    /// them, timed-ness, and the gatherer statuses on the player.
+    /// <see cref="GatheringNodeFacts.Unknown"/> when the node cannot be read.
+    /// </summary>
+    GatheringNodeFacts GetGatheringNodeFacts(ulong nodeObjectId, int slotIndex);
+
+    /// <summary>Seconds left on a status of the local player; 0 when absent.</summary>
+    float GetStatusRemainingSeconds(uint statusId);
+
+    /// <summary>The item's recast timer is running (cordials share one).</summary>
+    bool IsItemOnCooldown(uint itemId);
 }
 
 /// <summary>One equipped piece's spiritbond (roadmap 7.2): the equipment slot, the item and 0..10000.</summary>

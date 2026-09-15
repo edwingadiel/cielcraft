@@ -13,7 +13,9 @@ namespace CielCraft.Infrastructure;
 public sealed class FrameworkDriver : IDisposable
 {
     private readonly IFramework framework;
-    private readonly List<Action> ticks = [];
+    // Copy-on-write: a tick registered while a frame is being ticked (a panel
+    // built after the plugin subscribed) must not break the enumeration.
+    private Action[] ticks = [];
 
     public FrameworkDriver(IFramework framework)
     {
@@ -22,7 +24,7 @@ public sealed class FrameworkDriver : IDisposable
     }
 
     /// <summary>Register a per-frame tick; order of registration is order of execution.</summary>
-    public void Add(Action tick) => ticks.Add(tick);
+    public void Add(Action tick) => ticks = [.. ticks, tick];
 
     private void OnUpdate(IFramework _)
     {
@@ -34,6 +36,6 @@ public sealed class FrameworkDriver : IDisposable
     public void Dispose()
     {
         framework.Update -= OnUpdate;
-        ticks.Clear();
+        ticks = [];
     }
 }
