@@ -189,6 +189,26 @@ public class MaintenanceTests
         public bool FillHqIngredients() => throw Unexpected();
         public bool FillIngredients(bool preferHq) => throw Unexpected();
         public bool AreIngredientsAssigned() => throw Unexpected();
+
+        // ---- Retainers / desynth (7.17) ----
+        public IReadOnlyList<RetainerSnapshot> GetRetainers() => throw Unexpected();
+        public int GetRetainerItemCount(int retainerIndex, uint itemId) => throw Unexpected();
+        public SummoningBellSnapshot? FindSummoningBell() => throw Unexpected();
+        public bool IsNearSummoningBell => throw Unexpected();
+        public bool OpenRetainerList() => throw Unexpected();
+        public bool SelectRetainer(int retainerIndex) => throw Unexpected();
+        public bool IsRetainerSummoned => throw Unexpected();
+        public bool SelectRetainerMenuOption(string textContains) => throw Unexpected();
+        public bool IsRetainerInventoryOpen => throw Unexpected();
+        public int WithdrawFromRetainer(uint itemId, int count) => throw Unexpected();
+        public int DepositToRetainer(uint itemId, int count) => throw Unexpected();
+        public bool AssignVenture(uint ventureTaskId) => throw Unexpected();
+        public bool CollectVenture() => throw Unexpected();
+        public void DismissRetainer() => throw Unexpected();
+        public void CloseRetainerList() => throw Unexpected();
+        public bool Desynthesize(uint itemId) => throw Unexpected();
+        public bool ConfirmDesynthesis() => throw Unexpected();
+        public bool DiscardItem(uint itemId) => throw Unexpected();
     }
 
     private const uint Gloves = 1001;

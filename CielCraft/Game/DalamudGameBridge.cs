@@ -1292,4 +1292,378 @@ public sealed class DalamudGameBridge : IGameBridge
 
         return (uint)playerState->Attributes[baseParamId];
     }
+
+    // ---- Retainers / desynth (7.17) ----
+    //
+    // Sheet and struct references were read from the installed ClientStructs
+    // (RetainerManager, ItemFinderModule, AgentSalvage, AgentInventoryContext,
+    // PopupMenu) and the RetainerTask sheets; the *callback* values of the
+    // retainer, venture and salvage windows are the flows AutoRetainer drives
+    // (open source) and could not be verified offline — they are listed as
+    // unverified in the P3b report.
+
+    /// <summary>A bell within this many yalms can be rung where the character stands.</summary>
+    private const float BellInteractRange = 4.5f;
+
+    public unsafe IReadOnlyList<RetainerSnapshot> GetRetainers()
+    {
+        var manager = FFXIVClientStructs.FFXIV.Client.Game.RetainerManager.Instance();
+        if (manager == null || !manager->IsReady)
+            return [];
+
+        var retainers = new List<RetainerSnapshot>();
+        var count = manager->GetRetainerCount();
+        for (uint i = 0; i < count; i++)
+        {
+            var retainer = manager->GetRetainerBySortedIndex(i);
+            if (retainer == null || retainer->RetainerId == 0)
+                continue;
+
+            // VentureComplete is a unix timestamp; 0 = no venture in flight.
+            System.DateTime? due = retainer->VentureComplete == 0
+                ? null
+                : System.DateTimeOffset.FromUnixTimeSeconds(retainer->VentureComplete).UtcDateTime;
+
+            retainers.Add(new RetainerSnapshot(
+                Index: (int)i,
+                Name: retainer->NameString,
+                ClassJobId: retainer->ClassJob,
+                Level: retainer->Level,
+                VentureId: retainer->VentureId,
+                VentureCompleteAt: due,
+                ItemCount: retainer->ItemCount,
+                Available: retainer->Available));
+        }
+
+        return retainers;
+    }
+
+    public unsafe int GetRetainerItemCount(int retainerIndex, uint itemId)
+    {
+        var manager = FFXIVClientStructs.FFXIV.Client.Game.RetainerManager.Instance();
+        if (manager == null || !manager->IsReady || retainerIndex < 0)
+            return 0;
+
+        var retainer = manager->GetRetainerBySortedIndex((uint)retainerIndex);
+        if (retainer == null || retainer->RetainerId == 0)
+            return 0;
+
+        // The retainer pages in InventoryManager only ever hold whichever
+        // retainer is summoned; the per-retainer cache the item search uses
+        // (ItemFinderModule) is the one that survives a dismissal and a
+        // relog, which is what "awareness" means here.
+        var finder = FFXIVClientStructs.FFXIV.Client.UI.Misc.ItemFinderModule.Instance();
+        if (finder == null)
+            return 0;
+
+        foreach (var entry in finder->RetainerInventories)
+        {
+            if (entry.Item1 != retainer->RetainerId)
+                continue;
+
+            var inventory = entry.Item2.Value;
+            if (inventory == null)
+                return 0;
+
+            var total = 0;
+            var ids = inventory->ItemIds;
+            var counts = inventory->ItemCount;
+            for (var slot = 0; slot < ids.Length && slot < counts.Length; slot++)
+            {
+                if (ids[slot] == itemId)
+                    total += counts[slot];
+            }
+
+            return total;
+        }
+
+        return 0;
+    }
+
+    public SummoningBellSnapshot? FindSummoningBell()
+    {
+        var player = Plugin.ObjectTable.LocalPlayer;
+        if (player == null)
+            return null;
+
+        var bells = RetainerDatabase.BellDataIds();
+        SummoningBellSnapshot? nearest = null;
+        foreach (var obj in Plugin.ObjectTable)
+        {
+            if (obj.ObjectKind != Dalamud.Game.ClientState.Objects.Enums.ObjectKind.EventObj || !obj.IsTargetable)
+                continue;
+
+            if (!bells.Contains(obj.BaseId))
+                continue;
+
+            var distance = System.Numerics.Vector3.Distance(player.Position, obj.Position);
+            if (nearest == null || distance < nearest.Distance)
+                nearest = new SummoningBellSnapshot(obj.GameObjectId, obj.Position, distance);
+        }
+
+        return nearest;
+    }
+
+    public bool IsNearSummoningBell => FindSummoningBell() is { } bell && bell.Distance <= BellInteractRange;
+
+    public bool OpenRetainerList()
+    {
+        var bell = FindSummoningBell();
+        return bell != null && bell.Distance <= BellInteractRange && InteractWithObject(bell.ObjectId);
+    }
+
+    public bool SelectRetainer(int retainerIndex) =>
+        retainerIndex >= 0 && FireCallbackInts("RetainerList", close: true, retainerIndex);
+
+    public unsafe bool IsRetainerSummoned
+    {
+        get
+        {
+            var manager = FFXIVClientStructs.FFXIV.Client.Game.RetainerManager.Instance();
+            return manager != null && manager->GetActiveRetainer() != null;
+        }
+    }
+
+    public unsafe bool SelectRetainerMenuOption(string textContains)
+    {
+        var ptr = Plugin.GameGui.GetAddonByName("SelectString");
+        if (ptr.IsNull || !ptr.IsVisible)
+            return false;
+
+        // The popup's own entry list, not the AtkValues: the index it yields
+        // is exactly the callback value the option expects.
+        var addon = (FFXIVClientStructs.FFXIV.Client.UI.AddonSelectString*)ptr.Address;
+        var menu = addon->PopupMenu.PopupMenu;
+        for (var i = 0; i < menu.EntryCount; i++)
+        {
+            var entry = menu.EntryNames[i];
+            if (!entry.HasValue)
+                continue;
+
+            var text = entry.ToString();
+            if (text.Contains(textContains, System.StringComparison.OrdinalIgnoreCase))
+                return FireCallbackInts("SelectString", close: true, i);
+        }
+
+        return false;
+    }
+
+    public bool IsRetainerInventoryOpen =>
+        IsAddonVisible("InventoryRetainerLarge") || IsAddonVisible("InventoryRetainer");
+
+    public int WithdrawFromRetainer(uint itemId, int count) => MoveStacks(itemId, count, RetainerPages, BagPages);
+
+    public int DepositToRetainer(uint itemId, int count) => MoveStacks(itemId, count, BagPages, RetainerPages);
+
+    public bool AssignVenture(uint ventureTaskId)
+    {
+        // Only the reassign path is implemented (roadmap 7.17 follow-up
+        // "start ventures early"): the result window offers the venture that
+        // just came back, which is the one this package ever wants again.
+        if (!IsAddonVisible("RetainerTaskResult") || ventureTaskId == 0)
+            return false;
+
+        return FireCallbackInts("RetainerTaskResult", close: false, 2);
+    }
+
+    public bool CollectVenture() =>
+        IsAddonVisible("RetainerTaskResult") && FireCallbackInts("RetainerTaskResult", close: true, 1);
+
+    public void DismissRetainer()
+    {
+        if (IsRetainerInventoryOpen)
+        {
+            FireAddonCallbackInt("InventoryRetainerLarge", -1);
+            FireAddonCallbackInt("InventoryRetainer", -1);
+            return;
+        }
+
+        // The retainer menu's last entry is "Quit"; asking by text keeps it
+        // working when the menu grows an entry.
+        if (!SelectRetainerMenuOption("Quit"))
+            FireAddonCallbackInt("SelectString", -1);
+    }
+
+    public void CloseRetainerList() => FireAddonCallbackInt("RetainerList", -1);
+
+    public unsafe bool Desynthesize(uint itemId)
+    {
+        var located = FindItemSlot(itemId, BagPages);
+        if (located == null)
+            return false;
+
+        var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentSalvage.Instance();
+        var inventory = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+        if (agent == null || inventory == null)
+            return false;
+
+        var slot = inventory->GetInventorySlot(located.Value.Container, located.Value.Slot);
+        if (slot == null)
+            return false;
+
+        agent->SalvageItem(slot, 0, 0);
+        return true;
+    }
+
+    public bool ConfirmDesynthesis()
+    {
+        if (IsAddonVisible("SalvageResult"))
+            return FireAddonCallbackInt("SalvageResult", -1);
+
+        if (IsAddonVisible("SalvageDialog"))
+            return FireAddonCallbackInt("SalvageDialog", 0);
+
+        return false;
+    }
+
+    public unsafe bool DiscardItem(uint itemId)
+    {
+        var located = FindItemSlot(itemId, BagPages);
+        if (located == null)
+            return false;
+
+        var inventory = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+        var context = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentInventoryContext.Instance();
+        if (inventory == null || context == null)
+            return false;
+
+        var slot = inventory->GetInventorySlot(located.Value.Container, located.Value.Slot);
+        if (slot == null)
+            return false;
+
+        // Raises SelectYesno; the keeper confirms it, so nothing is ever
+        // thrown away without the game's own confirmation having been seen.
+        context->DiscardItem(slot, located.Value.Container, located.Value.Slot, 0, 0);
+        return true;
+    }
+
+    private static readonly FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] BagPages =
+    [
+        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory1,
+        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory2,
+        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory3,
+        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Inventory4,
+    ];
+
+    private static readonly FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] RetainerPages =
+    [
+        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage1,
+        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage2,
+        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage3,
+        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage4,
+        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage5,
+        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage6,
+        FFXIVClientStructs.FFXIV.Client.Game.InventoryType.RetainerPage7,
+    ];
+
+    /// <summary>First slot holding the item across the containers; null when none does.</summary>
+    private static unsafe (FFXIVClientStructs.FFXIV.Client.Game.InventoryType Container, int Slot, int Quantity)? FindItemSlot(
+        uint itemId, FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] containers)
+    {
+        var inventory = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+        if (inventory == null)
+            return null;
+
+        foreach (var type in containers)
+        {
+            var container = inventory->GetInventoryContainer(type);
+            if (container == null || !container->IsLoaded)
+                continue;
+
+            for (var i = 0; i < container->Size; i++)
+            {
+                var slot = container->GetInventorySlot(i);
+                if (slot != null && slot->ItemId == itemId && slot->Quantity > 0)
+                    return (type, i, slot->Quantity);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Moves whole stacks of the item from one set of containers to the other
+    /// until at least <paramref name="count"/> has moved, and answers how many
+    /// were sent. Whole stacks only: splitting a stack first needs a second
+    /// server round trip and the caller verifies by the bag delta anyway, so
+    /// a slight overshoot is preferred to a half-finished split.
+    /// </summary>
+    private static unsafe int MoveStacks(
+        uint itemId,
+        int count,
+        FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] from,
+        FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] to)
+    {
+        var inventory = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+        if (inventory == null || count <= 0)
+            return 0;
+
+        var moved = 0;
+        while (moved < count)
+        {
+            var source = FindItemSlot(itemId, from);
+            if (source == null)
+                break;
+
+            var destination = FindFreeSlot(to);
+            if (destination == null)
+                break;
+
+            var result = inventory->MoveItemSlot(
+                source.Value.Container, (ushort)source.Value.Slot, destination.Value.Container, (ushort)destination.Value.Slot, true);
+            if (result != 0)
+                break;
+
+            moved += source.Value.Quantity;
+        }
+
+        return moved;
+    }
+
+    private static unsafe (FFXIVClientStructs.FFXIV.Client.Game.InventoryType Container, int Slot)? FindFreeSlot(
+        FFXIVClientStructs.FFXIV.Client.Game.InventoryType[] containers)
+    {
+        var inventory = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+        if (inventory == null)
+            return null;
+
+        foreach (var type in containers)
+        {
+            var container = inventory->GetInventoryContainer(type);
+            if (container == null || !container->IsLoaded)
+                continue;
+
+            for (var i = 0; i < container->Size; i++)
+            {
+                var slot = container->GetInventorySlot(i);
+                if (slot != null && slot->ItemId == 0)
+                    return (type, i);
+            }
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Fires a callback with several integer values (the retainer and venture
+    /// windows take a selection index, not a single button id), controlling
+    /// whether the addon closes itself with it.
+    /// </summary>
+    private static unsafe bool FireCallbackInts(string addonName, bool close, params int[] values)
+    {
+        var ptr = Plugin.GameGui.GetAddonByName(addonName);
+        if (ptr.IsNull || !ptr.IsVisible || values.Length == 0)
+            return false;
+
+        var atkValues = stackalloc FFXIVClientStructs.FFXIV.Component.GUI.AtkValue[values.Length];
+        for (var i = 0; i < values.Length; i++)
+        {
+            atkValues[i].Type = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int;
+            atkValues[i].Int = values[i];
+        }
+
+        ((FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)ptr.Address)->FireCallback(
+            (uint)values.Length, atkValues, close);
+        return true;
+    }
 }

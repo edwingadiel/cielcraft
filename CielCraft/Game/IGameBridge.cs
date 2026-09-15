@@ -231,6 +231,70 @@ public interface IGameBridge : ITravelBridge
 
     /// <summary>The item's recast timer is running (cordials share one).</summary>
     bool IsItemOnCooldown(uint itemId);
+
+    // ---- Retainers / desynth (7.17) ----
+
+    /// <summary>Every retainer of the character, in the retainer list's sorted order; empty when the list is not loaded.</summary>
+    IReadOnlyList<RetainerSnapshot> GetRetainers();
+
+    /// <summary>
+    /// The item count on one retainer's cached pages. A retainer the client
+    /// has not loaded this session reports zero; the count is awareness, and
+    /// the bag delta after a withdrawal stays the truth.
+    /// </summary>
+    int GetRetainerItemCount(int retainerIndex, uint itemId);
+
+    /// <summary>The nearest targetable summoning bell, or null when none is in the object table.</summary>
+    SummoningBellSnapshot? FindSummoningBell();
+
+    /// <summary>A summoning bell is close enough to ring without moving.</summary>
+    bool IsNearSummoningBell { get; }
+
+    /// <summary>Rings the nearest summoning bell, which raises RetainerList. False when none is in reach.</summary>
+    bool OpenRetainerList();
+
+    /// <summary>Summons the retainer at the sorted index from the open RetainerList. False when it is not open.</summary>
+    bool SelectRetainer(int retainerIndex);
+
+    /// <summary>A retainer is summoned (its menu, inventory or venture windows can be driven).</summary>
+    bool IsRetainerSummoned { get; }
+
+    /// <summary>Picks the summoned retainer's menu entry whose text contains this (the retainer SelectString). False when it is not open or has no such entry.</summary>
+    bool SelectRetainerMenuOption(string textContains);
+
+    /// <summary>The summoned retainer's inventory window is open and its pages are readable.</summary>
+    bool IsRetainerInventoryOpen { get; }
+
+    /// <summary>
+    /// Moves up to <paramref name="count"/> of the item from the summoned
+    /// retainer's pages into the bag. Returns how many the client was asked
+    /// to move (whole stacks; the caller verifies by the bag delta).
+    /// </summary>
+    int WithdrawFromRetainer(uint itemId, int count);
+
+    /// <summary>The deposit direction of <see cref="WithdrawFromRetainer"/>: bag → the summoned retainer.</summary>
+    int DepositToRetainer(uint itemId, int count);
+
+    /// <summary>Sends the summoned retainer on the venture (a RetainerTask row id). False when the venture window would not take it.</summary>
+    bool AssignVenture(uint ventureTaskId);
+
+    /// <summary>Collects the summoned retainer's finished venture. False when nothing is waiting.</summary>
+    bool CollectVenture();
+
+    /// <summary>Sends the summoned retainer away and closes its windows.</summary>
+    void DismissRetainer();
+
+    /// <summary>Closes RetainerList if it is open.</summary>
+    void CloseRetainerList();
+
+    /// <summary>Opens the desynthesis dialog on one of the item's stacks (Salvage agent). False when it cannot be desynthesized.</summary>
+    bool Desynthesize(uint itemId);
+
+    /// <summary>Confirms an open SalvageDialog and dismisses the result window. False when neither is open.</summary>
+    bool ConfirmDesynthesis();
+
+    /// <summary>Discards one stack of the item (inventory context menu + SelectYesno). False when it is not in the bag.</summary>
+    bool DiscardItem(uint itemId);
 }
 
 /// <summary>One equipped piece's spiritbond (roadmap 7.2): the equipment slot, the item and 0..10000.</summary>

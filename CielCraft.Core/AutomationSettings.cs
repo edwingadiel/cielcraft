@@ -110,6 +110,16 @@ public class AutomationSettings
 
     /// <summary>Let the AutoHook plugin handle bite timing over IPC when it is installed (roadmap 7.4).</summary>
     public bool FishingPreferAutoHook { get; set; } = true;
+
+    // ---- P3b: retainers, desynthesis, trash cleanup (roadmap 7.17) ----
+
+    /// <summary>
+    /// The storage policy the inventory keeper applies after a run (roadmap
+    /// 7.17). Empty by default: with no rule the keeper does nothing, so
+    /// <see cref="DesynthUnusedByproducts"/> and <see cref="TrashCleanup"/>
+    /// can never act on an item the user has not named.
+    /// </summary>
+    public System.Collections.Generic.List<StorageRule> StorageRules { get; set; } = [];
 }
 
 /// <summary>Which turn-ins the collectables planner prefers when several earn the scrips an order needs (roadmap 7.17).</summary>
