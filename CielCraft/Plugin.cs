@@ -122,7 +122,7 @@ public sealed class Plugin : IDalamudPlugin
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open the CielCraft window. \"/cielcraft run\" start the order book, \"/cielcraft hold\" hold it after the current group, \"/cielcraft pause\" / \"/cielcraft resume\", \"/cielcraft stop\" emergency stop, \"/cielcraft config\" settings page, \"/cielcraft setup\" character checklist, \"/cielcraft debug\" debug page, \"/cielcraft plan\" print the production breakdown, \"/cielcraft report\" copy a diagnostic report.",
+            HelpMessage = "Open the CielCraft window. \"/cielcraft run\" start the order book, \"/cielcraft hold\" hold it after the current group, \"/cielcraft pause\" / \"/cielcraft resume\" / \"/cielcraft step\" (lock-step), \"/cielcraft stop\" emergency stop, \"/cielcraft config\" settings page, \"/cielcraft setup\" character checklist, \"/cielcraft debug\" debug page, \"/cielcraft plan\" print the production breakdown, \"/cielcraft report\" copy a diagnostic report.",
         });
 
         PluginInterface.UiBuilder.Draw += DrawUi;
@@ -181,6 +181,10 @@ public sealed class Plugin : IDalamudPlugin
                 break;
             case "resume":
                 ResumeTopLayer();
+                break;
+            case "step":
+                // Lock-step (roadmap 7.18): let exactly one craft action through.
+                ChatGui.Print(CraftAutomator.Step() ? CraftAutomator.StatusText : "Nothing is waiting for a step.", "CielCraft");
                 break;
             case "plan":
                 // Production breakdown as text (roadmap 7.12).
