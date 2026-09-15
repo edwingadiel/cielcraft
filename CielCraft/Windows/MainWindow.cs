@@ -83,6 +83,7 @@ public class MainWindow : Window, IDisposable
     private readonly PlanTreePanel planTree;
     private readonly CraftTestPanel craftTest;
     private readonly SpiritbondPanel spiritbond;
+    private readonly SchedulePanel schedule;
 
     /// <summary>The spiritbond-mode machine (roadmap 7.2), for the emergency stop and the report.</summary>
     public SpiritbondMode Spiritbond => spiritbond.Mode;
@@ -127,6 +128,7 @@ public class MainWindow : Window, IDisposable
         planTree = new PlanTreePanel(plugin);
         craftTest = new CraftTestPanel(plugin);
         spiritbond = new SpiritbondPanel(plugin);
+        schedule = new SchedulePanel(plugin);
         setup = new SetupPanel(plugin, ShowPage);
         debug = new DebugPanel(plugin);
         settings = new SettingsPanel(plugin);
@@ -280,8 +282,7 @@ public class MainWindow : Window, IDisposable
                 planTree.Draw();
                 break;
             case Pages.StatusSchedule:
-                ImGui.TextDisabled("Timed nodes arrive with 7.15.");
-                UiTheme.Hint("The schedule will list the unspoiled and legendary nodes a plan needs, with their Eorzea-time windows, and the wait the runner plans around them.");
+                schedule.Draw();
                 break;
             case Pages.StatusReport:
                 DrawReportPage();

@@ -117,6 +117,9 @@ internal sealed class SettingsPanel
             v => { configuration.UseCordials = v; Save(); },
             "Uses a cordial from the bag while walking to the next node when GP is low.");
 
+        UiTheme.SectionHeader("Timed nodes (7.15)");
+        SchedulePanel.DrawSettings(configuration);
+
         UiTheme.SectionHeader("Rotations (7.14)");
         GatheringRotationPanel.DrawSettings(configuration);
     }

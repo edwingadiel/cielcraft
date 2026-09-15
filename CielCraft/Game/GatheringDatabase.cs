@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using CielCraft.Core;
 using Lumina.Excel.Sheets;
@@ -19,6 +20,24 @@ public sealed class GatheringDatabase
     private readonly Func<CharacterCapabilities> capabilities;
     private Dictionary<uint, uint>? itemToJob;
     private Dictionary<uint, List<GatheringLocation>>? itemToLocations;
+    private Dictionary<uint, List<ReductionSource>>? crystalToReductions;
+
+    /// <summary>Elemental crystal item ids (Fire..Water, 8–13); the matching cluster is the crystal id + 6 (14–19).</summary>
+    public const uint FirstCrystalItemId = 8;
+    public const uint LastCrystalItemId = 13;
+    public const uint ClusterOffset = 6;
+
+    /// <summary>
+    /// An ephemeral collectable that aetherial reduction turns into crystals
+    /// and clusters of one element (roadmap 7.15): the collectable to gather,
+    /// where, and the crystal it yields. Read from the sheets: an ephemeral
+    /// node lists the element's crystal among its own items and the
+    /// reducible ones carry Item.AetherialReduce; the result table itself is
+    /// server-side, so the crystal/cluster counts per reduction are not known
+    /// here (a High-tier reduction of a level-cap collectable gives a few
+    /// clusters plus crystals).
+    /// </summary>
+    public sealed record ReductionSource(uint CollectableItemId, string CollectableName, uint CrystalItemId, GatheringLocation Location);
 
     public GatheringDatabase(Func<CharacterCapabilities>? capabilities = null)
     {
@@ -45,6 +64,59 @@ public sealed class GatheringDatabase
             ? CapabilityRules.ChooseSource(candidates, capabilities())
             : null;
     }
+
+    /// <summary>Whether the item is an elemental crystal or cluster (the reduction path's targets).</summary>
+    public static bool IsCrystalOrCluster(uint itemId) =>
+        itemId >= FirstCrystalItemId && itemId <= LastCrystalItemId + ClusterOffset;
+
+    /// <summary>The crystal of a cluster (or the crystal itself); 0 for anything else.</summary>
+    public static uint CrystalOf(uint itemId) =>
+        itemId >= FirstCrystalItemId && itemId <= LastCrystalItemId ? itemId
+        : itemId > LastCrystalItemId && itemId <= LastCrystalItemId + ClusterOffset ? itemId - ClusterOffset
+        : 0;
+
+    /// <summary>
+    /// The ephemeral collectable to reduce for a crystal or cluster (roadmap
+    /// 7.15), preferring the given territory (the per-element crystal spot)
+    /// and otherwise the highest-level node, whose collectables reduce to the
+    /// most clusters. Within a node the lowest-level reducible item is chosen
+    /// so no perception requirement gets in the way. Null when the element
+    /// has no ephemeral source.
+    /// </summary>
+    public ReductionSource? FindReductionSource(uint crystalOrClusterItemId, uint preferredTerritory = 0)
+    {
+        EnsureIndex();
+        var crystal = CrystalOf(crystalOrClusterItemId);
+        if (crystal == 0 || !crystalToReductions!.TryGetValue(crystal, out var sources))
+            return null;
+
+        ReductionSource? best = null;
+        foreach (var source in sources)
+        {
+            if (best == null
+                || (source.Location.TerritoryId == preferredTerritory && best.Location.TerritoryId != preferredTerritory)
+                || (best.Location.TerritoryId != preferredTerritory && source.Location.GatheringLevel > best.Location.GatheringLevel))
+                best = source;
+        }
+
+        return best;
+    }
+
+    /// <summary>Every ephemeral reduction source known, for the schedule page and the report.</summary>
+    public IReadOnlyList<ReductionSource> AllReductionSources()
+    {
+        EnsureIndex();
+        var all = new List<ReductionSource>();
+        foreach (var list in crystalToReductions!.Values)
+            all.AddRange(list);
+        return all;
+    }
+
+    /// <summary>Place name of a territory ("The Dravanian Forelands"); "zone N" when unknown.</summary>
+    public static string GetTerritoryName(uint territoryId) =>
+        territoryId != 0 && Plugin.DataManager.GetExcelSheet<TerritoryType>().TryGetRow(territoryId, out var territory)
+            ? territory.PlaceName.Value.Name.ExtractText()
+            : $"zone {territoryId}";
 
     private List<(uint ItemId, string Name)>? gatherableNames;
 
@@ -147,9 +219,12 @@ public sealed class GatheringDatabase
         // (base, territory) area is kept per item so the best one can be
         // chosen against the character's capabilities later.
         itemToLocations = new Dictionary<uint, List<GatheringLocation>>();
+        crystalToReductions = new Dictionary<uint, List<ReductionSource>>();
         var seen = new HashSet<(uint Item, uint Base, uint Territory)>();
+        var seenReductions = new HashSet<(uint Item, uint Base, uint Territory)>();
         var exported = Plugin.DataManager.GetExcelSheet<ExportedGatheringPoint>();
         var transients = Plugin.DataManager.GetExcelSheet<GatheringPointTransient>();
+        var itemSheet = Plugin.DataManager.GetExcelSheet<Item>();
         foreach (var point in Plugin.DataManager.GetExcelSheet<GatheringPoint>())
         {
             var baseId = point.GatheringPointBase.RowId;
@@ -160,7 +235,7 @@ public sealed class GatheringDatabase
             if (!exported.TryGetRow(baseId, out var coords) || (coords.X == 0 && coords.Y == 0))
                 continue;
 
-            var (windows, kind) = ReadTimeWindows(transients, point.RowId);
+            var (windows, kind) = ReadTimeWindows(transients, point.RowId, IsFolkloreNode(point));
             var location = new GatheringLocation(
                 0, info.Job, info.Level, territory, new Vector2(coords.X, coords.Y), coords.Radius,
                 windows, kind);
@@ -175,17 +250,59 @@ public sealed class GatheringDatabase
 
                 list.Add(location with { ItemId = itemId });
             }
+
+            // Ephemeral node (7.15): the element crystal it lists names the
+            // element; every item with AetherialReduce reduces to it. The
+            // lowest-level reducible item is the safe pick (no perception gate).
+            if (kind != NodeKind.Ephemeral)
+                continue;
+
+            var crystal = info.Items.FirstOrDefault(id => id >= FirstCrystalItemId && id <= LastCrystalItemId);
+            if (crystal == 0)
+                continue;
+
+            uint reducible = 0;
+            uint reducibleLevel = uint.MaxValue;
+            var reducibleName = "";
+            foreach (var itemId in info.Items)
+            {
+                if (!itemSheet.TryGetRow(itemId, out var item) || item.AetherialReduce == 0)
+                    continue;
+
+                if (item.LevelItem.RowId < reducibleLevel)
+                {
+                    reducible = itemId;
+                    reducibleLevel = item.LevelItem.RowId;
+                    reducibleName = item.Name.ExtractText();
+                }
+            }
+
+            if (reducible == 0 || !seenReductions.Add((reducible, baseId, territory)))
+                continue;
+
+            if (!crystalToReductions.TryGetValue(crystal, out var reductions))
+                crystalToReductions[crystal] = reductions = [];
+
+            reductions.Add(new ReductionSource(reducible, reducibleName, crystal, location with { ItemId = reducible }));
         }
+    }
+
+    /// <summary>A legendary (folklore) node: its sub-category names a folklore book (roadmap 7.15).</summary>
+    private static bool IsFolkloreNode(GatheringPoint point)
+    {
+        var sub = point.GatheringSubCategory;
+        return sub.RowId != 0 && sub.IsValid
+            && sub.Value.FolkloreBook.ExtractText().Contains("Folklore", StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>
     /// ET windows for a gathering point and the node kind they imply; empty =
-    /// always up (spec §38). Rare-pop windows make an unspoiled node (a
-    /// folklore node is told apart by its sub-category, roadmap 7.15),
-    /// ephemeral times an ephemeral one.
+    /// always up (spec §38). Rare-pop windows make an unspoiled node — a
+    /// legendary one when the point's sub-category is a folklore book
+    /// (roadmap 7.15) — and ephemeral times an ephemeral one.
     /// </summary>
     private static (IReadOnlyList<CielCraft.Core.EtWindow> Windows, NodeKind Kind) ReadTimeWindows(
-        Lumina.Excel.ExcelSheet<GatheringPointTransient> transients, uint gatheringPointId)
+        Lumina.Excel.ExcelSheet<GatheringPointTransient> transients, uint gatheringPointId, bool folklore)
     {
         if (!transients.TryGetRow(gatheringPointId, out var transient))
             return ([], NodeKind.Normal);
@@ -208,7 +325,7 @@ public sealed class GatheringDatabase
                 windows.Add(new CielCraft.Core.EtWindow(
                     CielCraft.Core.EorzeaClock.FromHhmm(start),
                     CielCraft.Core.EorzeaClock.FromHhmm(duration)));
-                kind = NodeKind.Unspoiled;
+                kind = folklore ? NodeKind.Legendary : NodeKind.Unspoiled;
             }
         }
 

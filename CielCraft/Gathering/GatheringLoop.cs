@@ -45,6 +45,7 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
 
     private uint itemId;
     private int targetQuantity;
+    private TimeSpan noNodeTimeout = NoNodeTimeout;
     private int baselineCount;
     private int consecutiveFailures;
     private bool controllerActive;
@@ -94,14 +95,18 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
     /// <summary>
     /// Starts the loop; a tier means the item is gathered as a collectable at
     /// that tier's collectability (7.1); kind picks the rotation table and
-    /// the GP a node wants for the cordial decision (7.14).
+    /// the GP a node wants for the cordial decision (7.14). noNodeTimeout replaces the 45 s
+    /// "no node appeared" budget for this run — the scheduler (7.15) starts
+    /// the loop right before a timed window opens and passes the time until
+    /// the window's start plus a minute.
     /// </summary>
     public bool Start(
         uint gatherItemId,
         int quantity,
         System.Numerics.Vector3? nodeAreaCenter = null,
         CollectableTier? tier = null,
-        NodeKind kind = NodeKind.Normal)
+        NodeKind kind = NodeKind.Normal,
+        TimeSpan? noNodeTimeout = null)
     {
         if (State is GatheringLoopState.Running or GatheringLoopState.Paused)
             return false;
@@ -121,6 +126,7 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
         collectableTier = tier;
         nodeKind = kind;
         collectablesTaken = 0;
+        this.noNodeTimeout = noNodeTimeout is { } custom && custom > NoNodeTimeout ? custom : NoNodeTimeout;
         noNodeSince = DateTime.MaxValue;
         navmeshWaitSince = DateTime.MaxValue;
         blacklistedNodes.Clear();
@@ -323,10 +329,10 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
                 navigation.MoveCloseTo(center, 15f, fly: false);
             }
 
-            if (Clock.UtcNow - noNodeSince > NoNodeTimeout)
+            if (Clock.UtcNow - noNodeSince > noNodeTimeout)
                 Transition(
                     GatheringLoopState.Failed,
-                    $"Failed: no usable gathering node appeared within {NoNodeTimeout.TotalSeconds:F0}s ({controller.StatusText}).");
+                    $"Failed: no usable gathering node appeared within {noNodeTimeout.TotalSeconds:F0}s ({controller.StatusText}).");
             else
                 StatusText = $"{ProgressText()} Waiting for a node to appear...";
         }
