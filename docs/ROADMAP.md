@@ -247,6 +247,14 @@ against inventory, pause with a reason.
   The final craft's HQ fill consumes them. Validate the initial-quality
   formula against a real recipe in game before trusting it.
 
+- [ ] 7.23 Collectable crafting as a target option (S) — today collectables
+  are only craftable by opening the log on the recipe and running a Batch.
+  Make it a production mode on the target / order (ties into 7.13): pick
+  the collectable, a count, and the collectability tier to hit (low / mid /
+  high threshold, from the recipe data); the solver targets that tier and
+  the run reports items per tier. Optional turn-in at the appraiser
+  afterwards belongs to the scrips planner (7.17).
+
 Cross-cutting for 2.0: the planner grows a "source" per missing material
 (gather / fish / buy / hunt / stored-in-retainer), chosen by preference and
 availability; the runner gets one phase per source. That is the point where
