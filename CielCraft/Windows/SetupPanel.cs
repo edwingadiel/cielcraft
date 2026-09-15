@@ -1,18 +1,17 @@
 using System;
-using System.Numerics;
 using CielCraft.Core;
 using Dalamud.Bindings.ImGui;
-using Dalamud.Interface.Windowing;
 
 namespace CielCraft.Windows;
 
 /// <summary>
-/// First-run setup checklist (roadmap 7.20): what the automation relies on
-/// and whether this character has it — gearsets per job, navigation, flight,
-/// master books, tribal reputations. Read-only: it points at what to fix in
-/// the game rather than changing anything.
+/// The character checklist (roadmap 7.20), now the Tools › Character page
+/// (7.21): what the automation relies on and whether this character has it —
+/// gearsets per job, navigation, flight, master books, tribal reputations.
+/// Read-only: it points at what to fix in the game rather than changing
+/// anything. Shown on first login until "Done" is clicked.
 /// </summary>
-public class SetupWindow : Window, IDisposable
+internal sealed class SetupPanel
 {
     private static readonly (uint JobId, string Name)[] CraftingJobs =
     [
@@ -26,26 +25,24 @@ public class SetupWindow : Window, IDisposable
     ];
 
     private readonly Plugin plugin;
+    private readonly Action<string> navigate;
 
-    public SetupWindow(Plugin plugin) : base("CielCraft Setup##Setup")
+    /// <param name="navigate">Page selector of the hosting window; "Done" leaves the checklist for the orders page.</param>
+    public SetupPanel(Plugin plugin, Action<string> navigate)
     {
-        // Grows to the checklist so the buttons are never below a scrollbar.
-        Flags = ImGuiWindowFlags.AlwaysAutoResize;
-        SizeConstraints = new WindowSizeConstraints { MinimumSize = new Vector2(440, 0) };
         this.plugin = plugin;
+        this.navigate = navigate;
     }
 
-    public void Dispose() { }
+    /// <summary>The page was just selected: re-read the character so the checks are current.</summary>
+    public void OnShown() => plugin.Capabilities.Refresh();
 
-    public override void OnOpen() => plugin.Capabilities.Refresh();
-
-    public override void Draw()
+    public void Draw()
     {
         var caps = plugin.Capabilities.Current;
         var bridge = plugin.GameBridge;
 
-        ImGui.PushTextWrapPos(430);
-        ImGui.TextWrapped(
+        UiTheme.Hint(
             "CielCraft drives the game through your own gearsets, mounts and unlocks. " +
             "Everything below is read from the character; fix the red items in the game, then Refresh.");
         ImGui.Spacing();
@@ -57,7 +54,7 @@ public class SetupWindow : Window, IDisposable
         }
 
         UiTheme.SectionHeader("Gearsets");
-        ImGui.TextDisabled("Every job a plan touches needs a saved gear set; the run refuses to start otherwise.");
+        UiTheme.Hint("Every job a plan touches needs a saved gear set; the run refuses to start otherwise.");
         DrawJobs(CraftingJobs, caps);
         DrawJobs(GatheringJobs, caps);
 
@@ -92,18 +89,21 @@ public class SetupWindow : Window, IDisposable
             plugin.Capabilities.Refresh();
         ImGui.SameLine();
         if (UiTheme.TintedButton("Settings", UiTheme.Muted))
-            plugin.ToggleConfigUi();
-        ImGui.SameLine();
-        if (UiTheme.TintedButton("Done — don't show again", UiTheme.Success))
+            navigate(MainWindow.Pages.SettingsGeneral);
+        if (!plugin.Configuration.SetupCompleted)
         {
-            plugin.Configuration.SetupCompleted = true;
-            plugin.Configuration.Save();
-            IsOpen = false;
+            // First run: the page opened by itself on login; "Done" stops that and moves on to the orders.
+            ImGui.SameLine();
+            if (UiTheme.TintedButton("Done — don't show again", UiTheme.Success))
+            {
+                plugin.Configuration.SetupCompleted = true;
+                plugin.Configuration.Save();
+                navigate(MainWindow.Pages.Orders);
+            }
         }
 
         if (caps.IsKnown)
             ImGui.TextDisabled($"Read at {caps.ReadAt.ToLocalTime():HH:mm:ss}.");
-        ImGui.PopTextWrapPos();
     }
 
     private void DrawJobs((uint JobId, string Name)[] jobs, CharacterCapabilities caps)

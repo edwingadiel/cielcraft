@@ -1,126 +1,152 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Text;
 using CielCraft.Core;
 using CielCraft.Game;
 using Dalamud.Bindings.ImGui;
-using Dalamud.Interface.Windowing;
+using Dalamud.Interface.Utility.Raii;
 
 namespace CielCraft.Windows;
 
-/// <summary>Developer window showing live game/plugin state (spec §46).</summary>
-public class DebugWindow : Window, IDisposable
+/// <summary>
+/// Developer views of live game/plugin state (spec §46), hosted by the
+/// Status page since 7.21: <see cref="DrawLog"/> is the Log sub-page and
+/// <see cref="DrawSections"/> the Debug sub-page, where the old Overview /
+/// Crafting / Gathering / Navigation tabs are collapsible sections.
+/// </summary>
+internal sealed class DebugPanel
 {
     private readonly Plugin plugin;
     private readonly IGameBridge gameBridge;
     private readonly CraftStateMonitor craftMonitor;
 
-    public DebugWindow(Plugin plugin) : base("CielCraft Debug##Debug")
-    {
-        SizeConstraints = new WindowSizeConstraints
-        {
-            MinimumSize = new Vector2(380, 300),
-            MaximumSize = new Vector2(float.MaxValue, float.MaxValue),
-        };
+    private string logFilter = "";
+    private bool logProblemsOnly;
+    private bool logHideDebug;
 
+    private int gatherItemId;
+    private int gatherQuantity = 1;
+    private Vector3 navDestination;
+
+    public DebugPanel(Plugin plugin)
+    {
         this.plugin = plugin;
         gameBridge = plugin.GameBridge;
         craftMonitor = plugin.CraftMonitor;
     }
 
-    public void Dispose() { }
+    // ---------------------------------------------------------------- log
 
-    private string logFilter = "";
-
-    public override void Draw()
+    public void DrawLog()
     {
-        if (UiTheme.TintedButton("Copy diagnostic report", UiTheme.Accent))
-            plugin.SaveAndCopyReport();
-        UiTheme.Tooltip("Copies a full state + log report to the clipboard and saves it in the plugin config folder (/cielcraft report). Paste it when reporting a problem.");
+        ImGui.SetNextItemWidth(Math.Max(120f, ImGui.GetContentRegionAvail().X - 260));
+        ImGui.InputTextWithHint("##logFilter", "filter (e.g. [Batch], [Raphael], ERR)", ref logFilter, 64);
         ImGui.SameLine();
-        ImGui.TextColored(UiTheme.Muted, $"log entries: {Plugin.Log.Snapshot().Count}");
-        ImGui.Spacing();
+        ImGui.Checkbox("Problems", ref logProblemsOnly);
+        UiTheme.Tooltip("Only warnings and errors");
+        ImGui.SameLine();
+        ImGui.Checkbox("Hide DBG", ref logHideDebug);
+        ImGui.SameLine();
+        if (UiTheme.LinkButton("Copy"))
+            CopyVisible();
+        UiTheme.Tooltip("Copy the visible lines to the clipboard; the Report page has the full picture");
 
-        if (!ImGui.BeginTabBar("##debugTabs"))
+        var entries = Plugin.Log.Snapshot();
+        ImGui.TextColored(UiTheme.Muted, $"{entries.Count} entries · newest last · times are UTC");
+
+        using var child = ImRaii.Child("##logEntries", new Vector2(0, 0), true);
+        if (!child)
             return;
 
-        if (ImGui.BeginTabItem("Overview"))
+        var shown = 0;
+        foreach (var entry in entries)
+        {
+            if (!Passes(entry))
+                continue;
+
+            ImGui.TextColored(LevelColor(entry.Level), entry.ToString());
+            shown++;
+        }
+
+        if (shown == 0)
+            ImGui.TextDisabled(entries.Count == 0 ? "Nothing logged yet." : "Nothing matches the filter.");
+
+        // Follow the tail unless the user scrolled up to read.
+        if (ImGui.GetScrollY() >= ImGui.GetScrollMaxY() - 4)
+            ImGui.SetScrollHereY(1.0f);
+    }
+
+    private bool Passes(Diagnostics.DiagnosticLog.Entry entry)
+    {
+        if (logProblemsOnly && entry.Level is not ("ERR" or "WRN"))
+            return false;
+        if (logHideDebug && entry.Level == "DBG")
+            return false;
+        return logFilter.Length == 0
+               || entry.Message.Contains(logFilter, StringComparison.OrdinalIgnoreCase)
+               || entry.Level.Contains(logFilter, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private void CopyVisible()
+    {
+        var sb = new StringBuilder();
+        foreach (var entry in Plugin.Log.Snapshot())
+            if (Passes(entry))
+                sb.AppendLine(entry.ToString());
+        try
+        {
+            ImGui.SetClipboardText(sb.ToString());
+        }
+        catch (Exception e)
+        {
+            Plugin.Log.Warning($"[Plugin] Could not copy the log to the clipboard: {e.Message}");
+        }
+    }
+
+    private static Vector4 LevelColor(string level) => level switch
+    {
+        "ERR" => UiTheme.Danger,
+        "WRN" => UiTheme.Warning,
+        "DBG" => UiTheme.Muted,
+        _ => new Vector4(0.90f, 0.90f, 0.92f, 1f),
+    };
+
+    // ----------------------------------------------------------- sections
+
+    public void DrawSections()
+    {
+        if (UiTheme.Collapsible("Overview", defaultOpen: true))
         {
             DrawDependencies();
             UiTheme.SectionHeader("Player");
             DrawPlayer();
             UiTheme.SectionHeader("Capabilities");
             DrawCapabilities();
-            ImGui.EndTabItem();
+            ImGui.Spacing();
         }
 
-        if (ImGui.BeginTabItem("Crafting"))
+        if (UiTheme.Collapsible("Crafting"))
         {
             DrawCraft();
             ImGui.Separator();
             DrawOrders();
-            ImGui.EndTabItem();
+            ImGui.Spacing();
         }
 
-        if (ImGui.BeginTabItem("Gathering"))
+        if (UiTheme.Collapsible("Gathering"))
         {
             DrawGathering();
             UiTheme.SectionHeader("Automation");
             DrawGatherAutomation();
-            ImGui.EndTabItem();
+            ImGui.Spacing();
         }
 
-        if (ImGui.BeginTabItem("Navigation"))
+        if (UiTheme.Collapsible("Navigation"))
         {
             DrawNavigation();
-            ImGui.EndTabItem();
+            ImGui.Spacing();
         }
-
-        if (ImGui.BeginTabItem("Log"))
-        {
-            DrawLog();
-            ImGui.EndTabItem();
-        }
-
-        ImGui.EndTabBar();
-    }
-
-    private void DrawLog()
-    {
-        ImGui.SetNextItemWidth(260);
-        ImGui.InputTextWithHint("##logFilter", "filter (e.g. [Batch], [Raphael], ERR)", ref logFilter, 64);
-        ImGui.SameLine();
-        ImGui.TextColored(UiTheme.Muted, "newest last; times are UTC");
-
-        if (ImGui.BeginChild("##logEntries", new Vector2(0, 0), true))
-        {
-            var entries = Plugin.Log.Snapshot();
-            var shown = 0;
-            foreach (var entry in entries)
-            {
-                if (logFilter.Length > 0 && !entry.Message.Contains(logFilter, StringComparison.OrdinalIgnoreCase)
-                    && !entry.Level.Contains(logFilter, StringComparison.OrdinalIgnoreCase))
-                    continue;
-
-                var color = entry.Level switch
-                {
-                    "ERR" => UiTheme.Danger,
-                    "WRN" => UiTheme.Warning,
-                    "DBG" => UiTheme.Muted,
-                    _ => new Vector4(0.90f, 0.90f, 0.92f, 1f),
-                };
-                ImGui.TextColored(color, entry.ToString());
-                shown++;
-            }
-
-            if (shown == 0)
-                ImGui.TextDisabled("Nothing logged yet.");
-
-            if (ImGui.GetScrollY() >= ImGui.GetScrollMaxY() - 4)
-                ImGui.SetScrollHereY(1.0f);
-        }
-
-        ImGui.EndChild();
     }
 
     private void DrawGathering()
@@ -146,13 +172,8 @@ public class DebugWindow : Window, IDisposable
         }
     }
 
-    private int gatherItemId;
-    private int gatherQuantity = 1;
-
     private void DrawGatherAutomation()
     {
-        
-
         var controller = plugin.GatheringController;
         var loop = plugin.GatheringLoop;
         var loopActive = loop.State is Gathering.GatheringLoopState.Running or Gathering.GatheringLoopState.Paused;
@@ -207,7 +228,7 @@ public class DebugWindow : Window, IDisposable
                 controller.Start((uint)gatherItemId);
 
             ImGui.SameLine();
-            using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(gatherItemId == 0))
+            using (ImRaii.Disabled(gatherItemId == 0))
             {
                 if (ImGui.Button($"Gather ×{gatherQuantity}"))
                     loop.Start((uint)gatherItemId, gatherQuantity);
@@ -221,12 +242,8 @@ public class DebugWindow : Window, IDisposable
         ImGui.BulletText($"Node run: {controller.State} — {controller.StatusText}");
     }
 
-    private Vector3 navDestination;
-
     private void DrawNavigation()
     {
-        UiTheme.SectionHeader("Navigation");
-
         var nav = plugin.Navigation;
         ImGui.BulletText($"Available: {nav.IsAvailable}   Mesh ready: {nav.IsReady}   Moving: {nav.IsMoving}");
 
@@ -240,7 +257,7 @@ public class DebugWindow : Window, IDisposable
                 navDestination = player.Position;
         }
 
-        using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!nav.IsReady))
+        using (ImRaii.Disabled(!nav.IsReady))
         {
             if (ImGui.Button("Go (walk)"))
                 nav.MoveTo(navDestination, fly: false);
@@ -258,7 +275,7 @@ public class DebugWindow : Window, IDisposable
     private void DrawDependencies()
     {
         UiTheme.SectionHeader("Dependencies");
-        ImGui.BulletText($"Dalamud: Ready");
+        ImGui.BulletText("Dalamud: Ready");
         ImGui.BulletText($"Raphael: {(CielCraft.Raphael.RaphaelSolver.IsAvailable ? "Ready" : "Native library missing")}");
         var nav = plugin.Navigation;
         ImGui.BulletText($"vnavmesh: {(!nav.IsAvailable ? "Unavailable — gathering automation disabled" : nav.IsReady ? "Ready" : "Installed, navmesh not ready")}");
@@ -266,7 +283,6 @@ public class DebugWindow : Window, IDisposable
 
     private void DrawPlayer()
     {
-        
         if (!gameBridge.IsLoggedIn)
         {
             ImGui.BulletText("Not logged in.");
@@ -341,8 +357,7 @@ public class DebugWindow : Window, IDisposable
         var player = gameBridge.GetPlayerState();
         var actionId = player != null ? CraftActionIds.BasicSynthesis(player.ClassJobId) : null;
 
-        using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(
-                   actionId == null || !gameBridge.IsCrafting || executor.State != Crafting.ExecutorState.Idle))
+        using (ImRaii.Disabled(actionId == null || !gameBridge.IsCrafting || executor.State != Crafting.ExecutorState.Idle))
         {
             if (ImGui.Button("Execute Basic Synthesis") && actionId != null)
                 executor.TryExecute(actionId.Value);
@@ -357,17 +372,16 @@ public class DebugWindow : Window, IDisposable
         ImGui.Separator();
         UiTheme.SectionHeader("Recent craft events");
 
-        if (ImGui.BeginChild("##craftEvents", new Vector2(0, 150), true))
-        {
-            var events = craftMonitor.RecentEvents;
-            if (events.Count == 0)
-                ImGui.TextUnformatted("None yet.");
+        using var events = ImRaii.Child("##craftEvents", new Vector2(0, 150), true);
+        if (!events)
+            return;
 
-            for (var i = events.Count - 1; i >= 0; i--)
-                ImGui.TextUnformatted(events[i]);
-        }
+        var recent = craftMonitor.RecentEvents;
+        if (recent.Count == 0)
+            ImGui.TextUnformatted("None yet.");
 
-        ImGui.EndChild();
+        for (var i = recent.Count - 1; i >= 0; i--)
+            ImGui.TextUnformatted(recent[i]);
     }
 
     /// <summary>Order book runner state (roadmap 7.13): the book with every order's outcome, as the report prints it.</summary>
@@ -411,7 +425,7 @@ public class DebugWindow : Window, IDisposable
                        && craft != null && player != null && onCrafterJob
                        && solverService.Status != Crafting.SolverStatus.Solving;
 
-        using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!canSolve))
+        using (ImRaii.Disabled(!canSolve))
         {
             if (ImGui.Button("Solve current craft") && craft != null && player != null)
             {
@@ -443,13 +457,14 @@ public class DebugWindow : Window, IDisposable
         if (solution is not { Success: true })
             return;
 
-        if (ImGui.BeginChild("##raphaelSolution", new Vector2(0, 150), true))
+        using (var child = ImRaii.Child("##raphaelSolution", new Vector2(0, 150), true))
         {
-            for (var i = 0; i < solution.ActionIds.Count; i++)
-                ImGui.TextUnformatted($"{i + 1,2}. {RaphaelActionNames.NameOf(solution.ActionIds[i])}");
+            if (child)
+            {
+                for (var i = 0; i < solution.ActionIds.Count; i++)
+                    ImGui.TextUnformatted($"{i + 1,2}. {RaphaelActionNames.NameOf(solution.ActionIds[i])}");
+            }
         }
-
-        ImGui.EndChild();
 
         ImGui.Separator();
         DrawAutomation(player, solution);
@@ -481,7 +496,7 @@ public class DebugWindow : Window, IDisposable
 
             default:
                 var canStart = player != null && gameBridge.IsCrafting;
-                using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!canStart))
+                using (ImRaii.Disabled(!canStart))
                 {
                     if (ImGui.Button("Run rotation") && player != null)
                         automator.Start(solution.ActionIds, player.ClassJobId, solution.BaseProgress);
