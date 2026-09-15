@@ -35,6 +35,9 @@ public class Configuration : AutomationSettings, IPluginConfiguration
     /// <summary>Pending production queue targets (roadmap 6.8).</summary>
     public List<QueuedTarget> QueueItems { get; set; } = [];
 
+    /// <summary>The order book (roadmap 7.13); replaces QueueItems.</summary>
+    public OrderBook Orders { get; set; } = new();
+
     /// <summary>Close the Trade window when a trade request arrives mid-run (roadmap 7.10).</summary>
     public bool SocialDeclineTrades { get; set; } = true;
 

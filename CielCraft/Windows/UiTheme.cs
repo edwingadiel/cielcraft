@@ -75,6 +75,52 @@ internal static class UiTheme
             ImGui.SetTooltip(text);
     }
 
+    /// <summary>A game icon inline, followed by SameLine; draws nothing for icon 0 or an unloaded texture.</summary>
+    public static void GameIcon(ushort iconId, float size = 20f)
+    {
+        if (iconId == 0)
+            return;
+
+        var wrap = Plugin.TextureProvider
+            .GetFromGameIcon(new Dalamud.Interface.Textures.GameIconLookup(iconId))
+            .GetWrapOrDefault();
+        if (wrap == null)
+            return;
+
+        ImGui.Image(wrap.Handle, new Vector2(size, size));
+        ImGui.SameLine(0, 5);
+    }
+
+    /// <summary>Colored state name followed by the wrapped status text; shared by every runner badge.</summary>
+    public static void StateBadge(string state, bool paused, string statusText)
+    {
+        // Every state enum shares the terminal names Failed/Completed; the
+        // badge keys off those names deliberately so one renderer serves all.
+        var color = state switch
+        {
+            "Failed" => Danger,
+            "Completed" => Success,
+            _ when paused => Warning,
+            _ => Info,
+        };
+
+        ImGui.TextColored(color, $"● {state}");
+        ImGui.SameLine(0, 8);
+        ImGui.PushTextWrapPos();
+        ImGui.TextColored(Muted, statusText);
+        ImGui.PopTextWrapPos();
+    }
+
+    /// <summary>Tint the next collapsing header (and its hover/active states); pair with <see cref="PopHeaderTint"/>.</summary>
+    public static void PushHeaderTint(Vector4 color)
+    {
+        ImGui.PushStyleColor(ImGuiCol.Header, color with { W = 0.18f });
+        ImGui.PushStyleColor(ImGuiCol.HeaderHovered, color with { W = 0.30f });
+        ImGui.PushStyleColor(ImGuiCol.HeaderActive, color with { W = 0.40f });
+    }
+
+    public static void PopHeaderTint() => ImGui.PopStyleColor(3);
+
     /// <summary>State-appropriate color for status badges.</summary>
     public static Vector4 StateColor(bool running, bool paused, bool failed, bool completed) =>
         failed ? Danger : paused ? Warning : completed ? Success : running ? Info : Muted;

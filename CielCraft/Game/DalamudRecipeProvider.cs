@@ -158,6 +158,24 @@ public sealed class DalamudRecipeProvider : IRecipeProvider
         return results.Count > maxResults ? results.GetRange(0, maxResults) : results;
     }
 
+    /// <summary>Exact (case-insensitive) craftable item name, for list imports where a substring hit would be a wrong item.</summary>
+    public (uint RecipeId, uint ItemId, string Name)? FindCraftableByName(string name)
+    {
+        EnsureIndex();
+        var needle = name.Trim();
+        if (needle.Length == 0)
+            return null;
+
+        foreach (var (itemId, recipeIds) in itemToRecipeIds!)
+        {
+            var itemName = GetItemName(itemId);
+            if (string.Equals(itemName, needle, StringComparison.OrdinalIgnoreCase))
+                return (recipeIds[0], itemId, itemName);
+        }
+
+        return null;
+    }
+
     private List<(uint ItemId, string Name)>? mealIndex;
 
     /// <summary>Case-insensitive name search over food items (ItemUICategory Meal).</summary>
