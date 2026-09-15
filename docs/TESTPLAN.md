@@ -414,6 +414,91 @@ a per-step table; "Copy macro" pastes valid Teamcraft lines; "Save as manual
 rotation" then Batch ×1 follows O2. A batch running at the same time keeps
 its own `[Raphael]` lines.
 
+## P. HQ-aware intermediates (roadmap 7.22)
+
+**P1. Initial-quality formula** — By hand as BSM: open Iron Rivets (recipe
+51), set the HQ column to 1 for the Iron Ingot, Synthesize (or run an order
+for it with an HQ ingot in the bag).
+Expect: the Synthesis window opens at quality **180 / 360** and the batch's
+`[Raphael] Solve requested: … (initial 180)` line agrees. Validated
+2026-09-15. Weighting (two HQ-able ingredients of different item level) is
+still to be checked: Bronze Cross-pein Hammer (max 150) with only the
+Undyed Hempen Cloth HQ should start at `floor(150 × 0.5 × 2/4) = 37`, with
+all three intermediates HQ at 75. The crafting log only lets HQ counts be
+set when every ingredient is owned.
+
+**P2 ★. Seeding pass** — Settings › Crafting: "HQ intermediates when needed"
+on. Be on the crafter job once this session (stats are recorded per job).
+Order a recipe with a crafted, HQ-able intermediate whose quality the
+character cannot fill from initial 0 (Tools › Craft Test shows an expected
+quality below 100%). Run orders.
+Expect the log sequence: `[Orders] Group "…": checking whether its quality
+targets are reachable from NQ intermediates...` → `[Raphael] Detached solve
+in N.Ns (… initial 0)` → `[Production] HQ intermediates: <item> reaches R/M
+quality from NQ materials (target T); seeding Q initial quality (rotation
+then reaches C): <Ingot> ×1 HQ per craft → k HQ of m crafts.` →
+`[Production] HQ intermediates: k intermediate craft(s) will be synthesized
+to HQ.` → `[Orders] Group …: 1 order(s), 2 craft step(s) (k HQ intermediate
+craft(s))`. Then `[Production] Step 1/2: <Ingot> ×m (m crafts, quick
+synthesis, k HQ first).`, `Batch of m started, k HQ first, then quick
+synthesis.`, `Craft 1/m verified HQ (1/k HQ intermediates).` …, `HQ
+intermediates done (k HQ in k crafts); the remaining r craft(s) quick
+synthesize.` On the final step the batch's `Solve requested … (initial Q)`
+matches the seeded Q — the second formula check.
+
+**P3. Visibility** — Status › Breakdown shows the ingot node as `m craft(s)
+× 1 = m; k HQ of m crafts` and the header `(k HQ intermediate craft(s))`;
+`/cielcraft plan` and the report's Plan section say the same. Orders ›
+Preview of the same group afterwards shows the same counts without a new
+solve (the answer is cached per recipe, stats and target for the session).
+
+**P4. Off / already reachable** — Toggle the setting off: the group starts
+immediately, no "checking" line, every intermediate quick synthesizes. With
+it on and a recipe the character fills from zero, expect `… reaches M/M …;
+no HQ intermediates needed` and no HqCrafts in the breakdown.
+
+**P5. Replan keeps the seeding** — During P2, remove one raw material from
+the bag (retainer) so the runner replans: the re-resolved plan still shows
+`k HQ of m crafts` (the cached answer is re-applied) and the HQ-first phase
+still runs. Same after a reload with a saved run (resume).
+
+## Q. Spiritbond and materia extraction (roadmap 7.2)
+
+**Q1 ★. Extraction between crafts** — Settings › Crafting › "Extract materia
+at 100% spiritbond" on; equip a crafter set with one piece at 100% (Tools ›
+Spiritbond shows every piece's bar). Batch ×N or run an order on a cheap
+recipe.
+Expect: `[Maintenance] <piece> (slot N) is at 100% spiritbond; extracting
+materia.`, the Materialize window opens, the confirmation dialog is
+answered, the extraction animation plays, `[Maintenance] Materia extracted
+from <piece> (1 this session).`, the window closes and the batch reopens
+the recipe and continues. One materia lands in the bag; the piece's bar is
+back near 0%. With two pieces at 100%, the second is extracted before the
+next craft (one per pass). Between nodes the same happens on a gatherer
+set.
+
+**Q2 ★. Spiritbond mode (craft)** — Tools › Spiritbond › Craft a recipe:
+search a cheap recipe you have materials for, target 2, Start.
+Expect `[Spiritbond] Spiritbond mode: crafting X until 2 materia are
+extracted.`, `[Spiritbond] Batch of N × X…`, normal crafting (never quick
+synthesis), extractions as in Q1, then `[Spiritbond] Completed: 2 materia
+extracted.` with a chat notification. Stop mid-run → `Stopped by user after
+k/2 materia.` and the batch stops. "Stop everything" also stops it.
+
+**Q3 ★. Spiritbond mode (gather)** — Gather an item: an untimed item (Iron
+Ore), Start on a gatherer set.
+Expect the gearset swap, `Teleporting to the nodes of…`, `Traveling to the
+node area…`, `[Spiritbond] Gathering X for spiritbond…`, node after node
+with extractions between nodes; the page shows the take count and the
+materia progress. A timed item or a missing vnavmesh is refused with a
+reason. Ran 2026-09-15 (Iron Ore, Western Thanalan) up to the node loop.
+
+**Q4. Failure is non-fatal** — With the toggle on and Materia Extraction
+unavailable (e.g. blocked window), after ~10 s expect `WRN [Maintenance] the
+materia extraction window did not respond; materia extraction is off for
+this session.` and the batch continues without pausing. A full bag logs a
+warning once and skips extraction.
+
 ---
 
 ## What to paste
