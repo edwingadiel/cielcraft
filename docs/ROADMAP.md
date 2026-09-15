@@ -148,8 +148,9 @@ against inventory, pause with a reason.
   hole's destination snapped to the navmesh floor, a probe ring around the
   marker when "no water in casting range", a rod left out is put away
   before a teleport, and a sourced task is handed over before the
-  node-window check. Follow-ups: remember the ring point that found water
-  per spot (probing costs ~25 s per visit); a Settings row for the
+  node-window check; the ring point that found water is remembered per
+  spot (FishingWaterEdges) and a run only finishes once the rod is stowed.
+  Follow-ups: a Settings row for the
   FishingBait overrides (today only the config file); the bundled bait
   table is wrong for Brass Loach at The Vein with Moth Pupa (30 casts, none)
   and Striped Goby is listed with Lugworm (ocean bait) — the table needs a
