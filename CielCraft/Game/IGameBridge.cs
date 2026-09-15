@@ -168,6 +168,12 @@ public interface IGameBridge : ITravelBridge
     /// <summary>Seconds left on the Well Fed buff; 0 when not fed.</summary>
     float GetFoodBuffRemainingSeconds();
 
+    /// <summary>Seconds left on the Medicated buff (potions, roadmap 7.11); 0 when none.</summary>
+    float GetMedicatedRemainingSeconds();
+
+    /// <summary>Every meal and medicine stack in the player inventory, one entry per NQ/HQ stack (roadmap 7.11).</summary>
+    IReadOnlyList<ConsumableItem> ListConsumables();
+
     /// <summary>
     /// Fills the selected recipe's ingredient slots with as many HQ materials
     /// as owned (NQ for the remainder). False when no recipe is selected.
