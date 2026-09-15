@@ -105,13 +105,15 @@ against inventory, pause with a reason.
   tier (the appraisal goal is the tier's collectability, taken from the
   gathering window). First in-game gather order ran on 2026-09-15 (Iron
   Ore ×3); D1/D3/D4 still to be run as written.
-- [ ] 7.2 Spiritbond / materia extraction (S–M) — detect any equipped piece
-  at 100% spiritbond, open Materialize and extract (general action, addon
-  callback — ids pending), between crafts/nodes like repair and food.
-  Applies to crafter and gatherer gear alike: extraction runs between
-  crafts and between nodes. Optional "spiritbond mode": loop a chosen cheap
-  recipe (crafters) or a chosen node/item (gatherers) purely to bond the
-  equipped set, stopping at a target materia count.
+- [x] 7.2 Spiritbond / materia extraction (S–M) — done 2026-09-15: the
+  maintenance service extracts materia from every equipped piece at 100%
+  spiritbond between crafts and between nodes (Materialize via the general
+  action, the confirmation dialog, verified by the spiritbond dropping;
+  non-fatal, off for the session after a timeout); Tools › Spiritbond runs a
+  chosen cheap recipe or a gather item purely to bond the set until a
+  target materia count, with live spiritbond bars. Toggle in Settings ›
+  Crafting. In game: the page and the gather path ran (Iron Ore, Western
+  Thanalan); an actual extraction still needs a piece at 100%.
 - [ ] 7.3 NPC interaction layer (M) — shared prerequisite for 7.4: locate an
   NPC (ENpcResident + Level sheet → territory/position), teleport to the
   nearest attuned aetheryte, navmesh to the NPC, interact, drive the
@@ -219,19 +221,35 @@ against inventory, pause with a reason.
   "copy as text" import via the clipboard. The old queue migrates into a
   "Queue" group on load. Side orders were folded into groups (an extra order
   in the same group is planned together with the rest).
-- [ ] 7.14 Gathering rotation engine (M) — today buffs are hard-coded (one
-  yield buff, Solid Reason when it pays). Replace with conditional rotation
-  tables per node class (normal / unspoiled yield / crystal / collectable):
-  GP thresholds, Gatherer's Boon, the unspoiled bonus conditions (bonus
-  yield / attempts / boon), Eureka Moment → Wise to the World, Twelve's
-  Bounty / Giving Land for crystals; user overrides in the same format.
-  Cordial types (HQ, watered, hi-cordial) and cooldown-at-node awareness.
-- [ ] 7.15 Timed-node scheduler (M) — a Schedule view: upcoming unspoiled /
-  legendary windows for every planned item, slots computed from GP
-  regeneration, cordials and rotation cost, travel started early enough to
-  be at the node when it pops; between windows do untimed work or wait at
-  the home spot (ties into 7.6). Aetherial reduction of ephemerals for
-  crystal clusters, with per-element crystal spot preferences.
+- [x] 7.14 Gathering rotation engine (M) — done 2026-09-15: action ids are
+  resolved by name from the Action sheet at load (36 actions), rotations are
+  rule tables per node class (Normal / Unspoiled / Crystal / Collectable)
+  evaluated one action per decision and confirmed by the observed GP,
+  integrity or collectability change; conditions cover GP, integrity,
+  remaining need, boon chance, the point's bonus conditions
+  (GatheringPointBonus), statuses (Eureka Moment → Wise to the World), used
+  / unusable actions and crystal nodes; user overrides per class in the
+  same text format (Settings › Gathering). Cordials are type- and
+  recast-aware and only drunk when the next node's want is not covered.
+  In game: a normal node read its boon (60%) and bonus condition and fired
+  Yield II by rule; unspoiled / crystal / collectable tables and cordials
+  still to be watched (test plan R3–R6).
+- [x] 7.15 Timed-node scheduler (M) — done 2026-09-15: a Core scheduler
+  builds the visits for every timed task (next windows within a horizon,
+  nodes per visit from time and GP incl. cordials and the rotation cost,
+  expected yield, windows needed, travel lead) and the plan order (untimed
+  gathers and ready craft steps in the gaps, go home for long waits when a
+  home is set, idle otherwise); the runner follows it (leave early, hold at
+  the area until the pop, re-schedule a visit that ends short, up to three
+  times); Status › Schedule shows the table and the current wait; settings
+  for wait-at-home. Legendary nodes are told apart by the folklore book.
+  Aetherial reduction of ephemerals for clusters is data-complete (the
+  ephemeral source is named) but not automated: the run refuses a cluster
+  with the source in the message. In game: an Adamantite Ore visit in Azys
+  Lla reached the node area inside the window; the first approach failed
+  on a ledge (fixed: no landing on another terrain level, a second
+  approach, re-schedule instead of fail), the wait / home paths still to
+  be watched (S2, S3, S5).
 - [x] 7.16 Character capability model (S–M) — flying unlocked per zone,
   master-book recipes, tribe reputation ranks, GP-regen traits, read from
   the game where possible; source availability and the planner honour them
@@ -254,15 +272,18 @@ against inventory, pause with a reason.
   macro" and "save as manual rotation"; Lock-step pauses before every action
   (Step / Continue buttons, `/cielcraft step`).
 
-- [ ] 7.22 HQ-aware intermediates (M) — today every non-final step is quick
-  synthesized (NQ) and the final craft solves from zero quality. For recipes
-  whose quality cannot be filled from zero: solve the final recipe once at
-  initial quality 0; if it caps short of the target, compute the HQ
-  material mix that seeds enough initial quality (per-ingredient share of
-  max quality by material value), re-solve to confirm, and mark those
-  intermediate steps "craft normally at 100%%" while the rest stay quick.
-  The final craft's HQ fill consumes them. Validate the initial-quality
-  formula against a real recipe in game before trusting it.
+- [x] 7.22 HQ-aware intermediates (M) — done 2026-09-15: initial quality =
+  floor(max quality × MaterialQualityFactor / 100 × Σ HQ×ilvl / Σ count×ilvl
+  over HQ-able ingredients) — validated in game for one ingredient (Iron
+  Rivets with an HQ ingot starts at 180 / 360); since 7.0 gathered items
+  cannot be HQ, so only crafted intermediates seed. Before a group runs,
+  every quality target is solved once from initial 0 and replayed; when it
+  falls short, the cheapest HQ mix is computed, confirmed by a re-solve and
+  written as HqCrafts on the intermediate steps; the batch crafts those
+  first as normal synthesis at 100%, the rest quick. Crafter stats are
+  remembered per job across sessions. Shown in the breakdown, the plan text
+  and the step log line. Two-ingredient weighting still to be checked in
+  game (test plan P1).
 
 - [x] 7.23 Collectable crafting as a target option (S) — done 2026-09-15: an
   order with Mode = Collectable and a tier (Low / Mid / High); thresholds
@@ -312,12 +333,12 @@ known base.
     lock-step (S–M + S–M): share the rotation view; build together.
 
 ### M2 — Smarter gathering and crafting (≈ 3 weeks)
-13. 7.14 Gathering rotation engine (M): conditional tables per node class.
-14. 7.15 Timed-node scheduler (M): needs 13 for GP costing and 10 for
+13. (done) 7.14 Gathering rotation engine (M): conditional tables per node class.
+14. (done) 7.15 Timed-node scheduler (M): needs 13 for GP costing and 10 for
     waiting at home.
-15. 7.22 HQ-aware intermediates (M): needs the solver to answer "reachable
+15. (done) 7.22 HQ-aware intermediates (M): needs the solver to answer "reachable
     from zero?"; validate the initial-quality formula in game.
-16. 7.2 Spiritbond / materia extraction (S–M).
+16. (done) 7.2 Spiritbond / materia extraction (S–M).
 
 ### M3 — Beyond gather and craft (≈ 6 weeks)
 17. 7.3 NPC interaction layer (M) → 7.3a mender repair (S) → 7.3b vendor
@@ -341,6 +362,21 @@ From the full-code review. Done under 5.1 (2026-09-15): one TravelDriver for
 the runner and the controller, the shared Throttle, and the AutomationMachine
 base. Still open: move interference detection (manual movement = user took
 over) below ProductionRunner so standalone batches/gathers are covered too.
+
+From the M2 smoke runs (2026-09-15):
+- Node picking: the loop approached three Rocky Outcrops (wrong node type,
+  each blacklisted after opening) before the Mineral Deposit that holds Iron
+  Ore. Rank candidates by the node type the item was last found at (the
+  GatheringPointBase name from the database) before distance.
+- Aetherial reduction of ephemerals for clusters (the 7.15 remainder): the
+  data side names the source; drive AgentPurify (ReducibleItems,
+  ReduceItem) between the ephemeral gather and the crafting phase.
+- 7.22: check the two-ingredient weighting of the initial-quality formula in
+  game (Bronze Cross-pein Hammer: cloth HQ only → 37); add per-slot HQ
+  assignment on the bridge so a batch of several crafts seeds only the
+  minimum instead of whole ingredients.
+- A 113 ms framework hitch at run start (planning + first schedule build);
+  move the schedule build and the HQ snapshot off the frame if it repeats.
 
 ## Testing
 
