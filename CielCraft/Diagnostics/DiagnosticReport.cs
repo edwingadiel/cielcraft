@@ -31,8 +31,9 @@ public static class DiagnosticReport
         Section(sb, "Settings");
         foreach (var property in typeof(Configuration).GetProperties(BindingFlags.Public | BindingFlags.Instance))
         {
+            // Structured sections print themselves below (orders, saved run).
             if (property.Name is nameof(Configuration.SavedProduction) or nameof(Configuration.QueueItems)
-                or nameof(Configuration.SocialBlacklist))
+                or nameof(Configuration.Orders) or nameof(Configuration.SocialBlacklist))
                 continue;
 
             sb.AppendLine($"{property.Name} = {property.GetValue(plugin.Configuration)}");
@@ -99,8 +100,15 @@ public static class DiagnosticReport
         Lines(sb, plugin.ProductionRunner.Describe);
         Lines(sb, plugin.Finisher.Describe);
 
-        Section(sb, "Production queue");
-        Lines(sb, plugin.ProductionQueue.Describe);
+        Section(sb, "Order runner");
+        Lines(sb, plugin.OrderRunner.Describe);
+        Safe(sb, () =>
+        {
+            var saved = plugin.Configuration.SavedProduction;
+            sb.AppendLine($"Saved production: active {saved.Active}; {saved.Targets.Count} target(s)");
+            foreach (var target in saved.Targets)
+                sb.AppendLine($"  {plugin.RecipeProvider.GetItemName(target.ItemId)} (item {target.ItemId}) ×{target.Quantity}; initial {target.InitialCount} (HQ {target.InitialHqCount}); mode {target.Mode}{(target.MaterialsOnly ? "; materials only" : "")}");
+        });
 
         Section(sb, "Gathering loop");
         Lines(sb, plugin.GatheringLoop.Describe);

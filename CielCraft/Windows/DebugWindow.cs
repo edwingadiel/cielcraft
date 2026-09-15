@@ -57,6 +57,8 @@ public class DebugWindow : Window, IDisposable
         if (ImGui.BeginTabItem("Crafting"))
         {
             DrawCraft();
+            ImGui.Separator();
+            DrawOrders();
             ImGui.EndTabItem();
         }
 
@@ -366,6 +368,37 @@ public class DebugWindow : Window, IDisposable
         }
 
         ImGui.EndChild();
+    }
+
+    /// <summary>Order book runner state (roadmap 7.13): the book with every order's outcome, as the report prints it.</summary>
+    private void DrawOrders()
+    {
+        UiTheme.SectionHeader("Orders");
+
+        var orders = plugin.OrderRunner;
+        if (orders.State is Crafting.OrderRunState.Running or Crafting.OrderRunState.Held)
+        {
+            if (orders.Running)
+            {
+                if (ImGui.Button("Hold##orders"))
+                    orders.Hold();
+            }
+            else if (ImGui.Button("Run##orders"))
+            {
+                orders.Start();
+            }
+
+            ImGui.SameLine();
+            if (ImGui.Button("Stop##orders"))
+                orders.Stop();
+        }
+        else if (ImGui.Button("Run orders##orders"))
+        {
+            orders.Start();
+        }
+
+        foreach (var line in orders.Describe())
+            ImGui.BulletText(line);
     }
 
     private void DrawSolver(PlayerSnapshot? player, bool onCrafterJob)

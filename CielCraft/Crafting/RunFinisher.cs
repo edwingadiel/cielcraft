@@ -7,9 +7,10 @@ namespace CielCraft.Crafting;
 
 /// <summary>
 /// "Exit the game when done" (roadmap 7.20): once a production completes and
-/// nothing is queued, wait a beat so the completion notification lands,
-/// send /shutdown and confirm the game's yes/no prompt. Gentle stops, failures
-/// and pauses never exit — those are the cases the user wants to look at.
+/// the order book is not running or held with work left, wait a beat so the
+/// completion notification lands, send /shutdown and confirm the game's
+/// yes/no prompt. Gentle stops, failures and pauses never exit — those are the
+/// cases the user wants to look at.
 /// </summary>
 public sealed class RunFinisher
 {
@@ -17,7 +18,7 @@ public sealed class RunFinisher
     private static readonly TimeSpan ConfirmTimeout = TimeSpan.FromSeconds(20);
 
     private readonly ProductionRunner runner;
-    private readonly ProductionQueue queue;
+    private readonly OrderRunner orders;
     private readonly Configuration configuration;
     private readonly IGameBridge gameBridge;
     private readonly ILog log;
@@ -30,14 +31,14 @@ public sealed class RunFinisher
 
     public RunFinisher(
         ProductionRunner runner,
-        ProductionQueue queue,
+        OrderRunner orders,
         Configuration configuration,
         IGameBridge gameBridge,
         ILog log,
         IClock clock)
     {
         this.runner = runner;
-        this.queue = queue;
+        this.orders = orders;
         this.configuration = configuration;
         this.gameBridge = gameBridge;
         this.log = log;
@@ -96,7 +97,7 @@ public sealed class RunFinisher
         if (exitAt != DateTime.MinValue)
         {
             // Anything starting up again in the grace window cancels the exit.
-            if (state is not (ProductionState.Completed or ProductionState.Idle) || queue.Running)
+            if (state is not (ProductionState.Completed or ProductionState.Idle) || orders.Running)
             {
                 Cancel();
                 return;
@@ -109,7 +110,7 @@ public sealed class RunFinisher
             confirmingSince = clock.UtcNow;
             retry.Reset();
             StatusText = "Exiting the game.";
-            log.Information("[Finish] Production and queue complete; exiting the game.");
+            log.Information("[Finish] Production and orders complete; exiting the game.");
             gameBridge.ExecuteChatCommand("/shutdown");
             return;
         }
@@ -117,7 +118,9 @@ public sealed class RunFinisher
         if (!changed || state != ProductionState.Completed || !configuration.ExitGameWhenDone)
             return;
 
-        if (queue.Running || queue.Count > 0)
+        // The book advances to its next group on this same completion; a held
+        // book still has work the user wants to come back to (7.13).
+        if (orders.State is OrderRunState.Running or OrderRunState.Held)
             return;
 
         exitAt = clock.UtcNow + Grace;

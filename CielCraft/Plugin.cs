@@ -52,8 +52,7 @@ public sealed class Plugin : IDalamudPlugin
     public Gathering.GatheringController GatheringController { get; init; }
     public Gathering.GatheringLoop GatheringLoop { get; init; }
     public MaintenanceService Maintenance { get; init; }
-    public ProductionQueue ProductionQueue { get; init; }
-    /// <summary>Order book runner (roadmap 7.13); replaces ProductionQueue.</summary>
+    /// <summary>Order book runner (roadmap 7.13); replaces the production queue.</summary>
     public OrderRunner OrderRunner { get; init; }
     public Social.SocialGuard SocialGuard { get; init; }
     /// <summary>Exit-when-done behaviour (roadmap 7.20).</summary>
@@ -77,6 +76,7 @@ public sealed class Plugin : IDalamudPlugin
         // via Assembly.Location; point it at the on-disk plugin folder instead.
         CielCraft.Raphael.RaphaelSolver.LibraryDirectory = PluginInterface.AssemblyLocation.DirectoryName;
         Configuration = PluginInterface.GetPluginConfig() as Configuration ?? new Configuration();
+        MigrateConfiguration(Configuration);
         GameBridge = new DalamudGameBridge();
         Notifier = new Infrastructure.ChatNotifier(ChatGui, Configuration, GameBridge, Log);
         RecipeProvider = new DalamudRecipeProvider(
@@ -100,17 +100,15 @@ public sealed class Plugin : IDalamudPlugin
         ProductionRunner = new ProductionRunner(
             GameBridge, BatchCrafter, RecipeProvider, GatheringLoop, GatheringDatabase, Navigation, Configuration,
             Capabilities, Log, SystemClock.Instance, Notifier);
-        ProductionQueue = new ProductionQueue(
-            GameBridge, ProductionRunner, RecipeProvider, Configuration, Notifier, Log, () => Capabilities.Current);
         SocialGuard = new Social.SocialGuard(this, GameBridge, Configuration);
         OrderRunner = new OrderRunner(
             ProductionRunner, RecipeProvider, GameBridge, Configuration, () => Capabilities.Current, Notifier, Log, SystemClock.Instance);
-                Finisher = new RunFinisher(ProductionRunner, ProductionQueue, Configuration, GameBridge, Log, SystemClock.Instance);
+        Finisher = new RunFinisher(ProductionRunner, OrderRunner, Configuration, GameBridge, Log, SystemClock.Instance);
 
         // One Framework.Update subscription for the automation layers, ticked in
         // the order they used to subscribe in (monitor before executor before
         // automator before batch before controller before loop before runner
-        // before queue).
+        // before the order book).
         Driver.Add(CraftMonitor.Tick);
         Driver.Add(ActionExecutor.Tick);
         Driver.Add(CraftAutomator.Tick);
@@ -118,7 +116,6 @@ public sealed class Plugin : IDalamudPlugin
         Driver.Add(GatheringController.Tick);
         Driver.Add(GatheringLoop.Tick);
         Driver.Add(ProductionRunner.Tick);
-        Driver.Add(ProductionQueue.Tick);
         Driver.Add(OrderRunner.Tick);
         Driver.Add(Finisher.Tick);
 
@@ -134,7 +131,7 @@ public sealed class Plugin : IDalamudPlugin
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open the CielCraft window. \"/cielcraft config\" settings, \"/cielcraft debug\" debug window, \"/cielcraft setup\" setup checklist, \"/cielcraft report\" copy a diagnostic report, \"/cielcraft pause\" / \"/cielcraft resume\", \"/cielcraft stop\" emergency stop.",
+            HelpMessage = "Open the CielCraft window. \"/cielcraft run\" start the order book, \"/cielcraft hold\" hold it after the current group, \"/cielcraft pause\" / \"/cielcraft resume\", \"/cielcraft stop\" emergency stop, \"/cielcraft config\" settings, \"/cielcraft setup\" setup checklist, \"/cielcraft debug\" debug window, \"/cielcraft report\" copy a diagnostic report.",
         });
 
         PluginInterface.UiBuilder.Draw += DrawUi;
@@ -182,6 +179,14 @@ public sealed class Plugin : IDalamudPlugin
                 break;
             case "stop":
                 StopEverything();
+                break;
+            case "run":
+                if (!OrderRunner.Start())
+                    ChatGui.Print(OrderRunner.StatusText, "CielCraft");
+                break;
+            case "hold":
+                OrderRunner.Hold();
+                ChatGui.Print(OrderRunner.StatusText.Length > 0 ? OrderRunner.StatusText : "The order book is not running.", "CielCraft");
                 break;
             case "pause":
                 PauseTopLayer();
@@ -245,7 +250,7 @@ public sealed class Plugin : IDalamudPlugin
         Log.Information("[Plugin] Emergency stop requested.");
         Finisher.Cancel();
         SocialGuard.Core.CancelSettle();
-        ProductionQueue.StopQueue();
+        OrderRunner.Stop();
         Maintenance.Abort();
         ProductionRunner.Stop();
         BatchCrafter.Stop();
@@ -292,6 +297,42 @@ public sealed class Plugin : IDalamudPlugin
             + (path != null ? $" and saved to {path}" : "") + ".",
             "CielCraft");
         return report;
+    }
+
+    /// <summary>
+    /// Config shape changes (roadmap 7.13): the production queue becomes one
+    /// "Queue" order group, and a pre-7.13 single-target saved production
+    /// becomes a one-entry target list. Saved only when something moved.
+    /// </summary>
+    private static void MigrateConfiguration(Configuration configuration)
+    {
+        var changed = false;
+
+        if (configuration.QueueItems.Count > 0 && configuration.Orders.Groups.Count == 0)
+        {
+            var group = new OrderGroup { Name = "Queue" };
+            foreach (var item in configuration.QueueItems)
+                group.Orders.Add(new Order { ItemId = item.ItemId, Amount = Math.Max(1, item.Quantity) });
+            configuration.Orders.Groups.Add(group);
+            Log.Information($"[Plugin] Moved {configuration.QueueItems.Count} production queue entries into the \"Queue\" order group.");
+            configuration.QueueItems.Clear();
+            changed = true;
+        }
+
+        var saved = configuration.SavedProduction;
+        if (saved.Targets.Count == 0 && saved.ItemId != 0)
+        {
+            saved.Targets.Add(new Configuration.SavedTarget
+            {
+                ItemId = saved.ItemId,
+                Quantity = saved.Quantity,
+                InitialCount = saved.InitialCount,
+            });
+            changed = true;
+        }
+
+        if (changed)
+            configuration.Save();
     }
 
     /// <summary>
