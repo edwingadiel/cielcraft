@@ -11,6 +11,24 @@ Before starting: open the debug window (`/cielcraft debug`), keep the **Log**
 tab visible on a second monitor if you have one. Check the Overview tab shows
 Raphael "Ready" and vnavmesh "Ready".
 
+**Validated against** (update this block whenever a run-through passes on a
+new game patch or plugin version; it is the known-good set to return to after
+an expansion):
+
+| Component | Version | Note |
+|---|---|---|
+| Game | 2026.09.01.0000.0000 | `game/ffxivgame.ver` |
+| Dalamud | 15.0.3.4 | release, master |
+| vnavmesh | 1.2.3.14 | required; navigation over IPC |
+| AutoHook | not installed | optional; every bite is a plain Hook without it |
+| Rotation Solver Reborn / BossMod Reborn | not installed | optional; hunting stays off without one |
+
+The external plugins are mirrored privately under github.com/edwingadiel
+(`mirror-ffxiv_navmesh`, `mirror-DotRecast` (its submodule), `mirror-AutoHook`,
+`mirror-RotationSolverReborn`, `mirror-BossModReborn`) as continuity
+insurance; a mirror is where a fork starts if an upstream stalls. vnavmesh
+has no published license, so its mirror stays private.
+
 Legend: **Expect** = pass condition. **Watch** = what to look at in the debug
 window. Tests marked ★ exercise code changed since the last validated build.
 

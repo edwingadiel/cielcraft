@@ -45,6 +45,26 @@ https://raw.githubusercontent.com/edwingadiel/cielcraft/main/repo.json
 
 then install CielCraft from `/xlplugins`. Releases are published by tagging (`git tag v0.7.0 && git push --tags`).
 
+## External plugins
+
+CielCraft talks to other Dalamud plugins over IPC only; nothing is linked in.
+
+| Plugin | Used for | Required |
+|---|---|---|
+| [vnavmesh](https://github.com/awgil/ffxiv_navmesh) | pathfinding, walking and flying, floor queries | yes |
+| [AutoHook](https://github.com/InitialDet/AutoHook) | bite timing while fishing | no (plain Hook otherwise) |
+| [Rotation Solver Reborn](https://github.com/FFXIV-CombatReborn/RotationSolverReborn) or [BossMod Reborn](https://github.com/FFXIV-CombatReborn/BossModReborn) | the combat rotation for hunting | no (hunting stays off) |
+
+Raphael (the crafting solver) is a bundled native library, not a plugin.
+
+The versions each in-game run-through was validated against are recorded at
+the top of [docs/TESTPLAN.md](docs/TESTPLAN.md). As continuity insurance the
+four plugins (and vnavmesh's DotRecast submodule) are mirrored privately under
+github.com/edwingadiel as `mirror-*` repositories; if an upstream stalls after
+an expansion, a fork starts from the mirrored commit rather than from nothing.
+The IPC subscribers in `CielCraft/Navigation`, `CielCraft/Fishing` and
+`CielCraft/Combat` are the whole contact surface.
+
 ## Testing in game (dev builds)
 
 1. In game, run `/xlsettings` → Experimental → Dev Plugin Locations.
