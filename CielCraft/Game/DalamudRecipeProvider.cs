@@ -14,11 +14,16 @@ public sealed class DalamudRecipeProvider : IRecipeProvider
     private Dictionary<uint, List<uint>>? itemToRecipeIds;
     private readonly Func<uint> currentJob;
     private readonly Func<uint, bool> hasGearsetForJob;
+    private readonly Func<CharacterCapabilities> capabilities;
 
-    public DalamudRecipeProvider(Func<uint>? currentJobProvider = null, Func<uint, bool>? gearsetLookup = null)
+    public DalamudRecipeProvider(
+        Func<uint>? currentJobProvider = null,
+        Func<uint, bool>? gearsetLookup = null,
+        Func<CharacterCapabilities>? capabilities = null)
     {
         currentJob = currentJobProvider ?? (() => 0);
         hasGearsetForJob = gearsetLookup ?? (_ => false);
+        this.capabilities = capabilities ?? (() => CharacterCapabilities.Unknown);
     }
 
     public RecipeInfo? FindRecipeForItem(uint itemId)
@@ -27,26 +32,28 @@ public sealed class DalamudRecipeProvider : IRecipeProvider
         if (!itemToRecipeIds!.TryGetValue(itemId, out var recipeIds))
             return null;
 
-        // Multi-job items (roadmap 4.5): prefer the current job, then a job
-        // with a gearset, then the lowest recipe id.
-        RecipeInfo? best = null;
-        var bestRank = int.MaxValue;
-        var job = currentJob();
+        // Multi-job items (roadmap 4.5) and locked master books (7.16): the
+        // ranking lives in Core so it is testable; ids are in ascending order.
+        var candidates = new List<RecipeInfo>();
         foreach (var recipeId in recipeIds)
         {
             var info = GetRecipeById(recipeId);
-            if (info == null)
-                continue;
-
-            var rank = info.ClassJobId == job ? 0 : hasGearsetForJob(info.ClassJobId) ? 1 : 2;
-            if (rank < bestRank)
-            {
-                best = info;
-                bestRank = rank;
-            }
+            if (info != null)
+                candidates.Add(info);
         }
 
-        return best;
+        return CapabilityRules.ChooseRecipe(candidates, currentJob(), hasGearsetForJob, capabilities());
+    }
+
+    /// <summary>Name of a master recipe book (SecretRecipeBook row); empty for 0.</summary>
+    public string GetRecipeBookName(uint bookId)
+    {
+        if (bookId == 0)
+            return "";
+
+        return Plugin.DataManager.GetExcelSheet<SecretRecipeBook>().TryGetRow(bookId, out var row)
+            ? row.Name.ExtractText()
+            : $"master book {bookId}";
     }
 
     public RecipeInfo? GetRecipeById(uint recipeId)
@@ -74,7 +81,8 @@ public sealed class DalamudRecipeProvider : IRecipeProvider
                 ingredients,
                 ClassJobId: row.CraftType.RowId + 8,
                 IsExpert: row.IsExpert,
-                RequiredQuality: row.RequiredQuality);
+                RequiredQuality: row.RequiredQuality,
+                SecretRecipeBookId: row.SecretRecipeBook.RowId);
         }
 
         byRecipeId[recipeId] = info;

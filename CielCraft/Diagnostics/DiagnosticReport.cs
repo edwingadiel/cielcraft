@@ -63,6 +63,9 @@ public static class DiagnosticReport
                 sb.AppendLine($"Current craft result: {plugin.RecipeProvider.GetItemName(result.Value.ItemId)} (item {result.Value.ItemId}) ×{result.Value.Amount}");
         });
 
+        Section(sb, "Capabilities");
+        Lines(sb, plugin.Capabilities.Describe);
+
         Section(sb, "Craft snapshot");
         Safe(sb, () =>
         {

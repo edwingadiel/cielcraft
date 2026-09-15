@@ -33,6 +33,19 @@ public enum CraftCondition
     GoodOmen,
 }
 
+/// <summary>Where an item can be gathered: territory plus approximate node-area center (spec §33/§35).</summary>
+public sealed record GatheringLocation(
+    uint ItemId,
+    uint JobId,
+    byte GatheringLevel,
+    uint TerritoryId,
+    Vector2 Position,
+    float Radius,
+    IReadOnlyList<EtWindow> Windows)
+{
+    public bool IsTimed => Windows.Count > 0;
+}
+
 /// <summary>A gathering point in the world.</summary>
 public sealed record GatheringNodeSnapshot(ulong ObjectId, string Name, Vector3 Position, float Distance);
 

@@ -17,6 +17,7 @@ public sealed class ProductionQueue : IDisposable
     private readonly ProductionRunner runner;
     private readonly DalamudRecipeProvider recipeProvider;
     private readonly Configuration configuration;
+    private readonly Func<CharacterCapabilities> capabilities;
 
     private bool startedCurrent;
 
@@ -27,12 +28,14 @@ public sealed class ProductionQueue : IDisposable
         IGameBridge gameBridge,
         ProductionRunner runner,
         DalamudRecipeProvider recipeProvider,
-        Configuration configuration)
+        Configuration configuration,
+        Func<CharacterCapabilities>? capabilities = null)
     {
         this.gameBridge = gameBridge;
         this.runner = runner;
         this.recipeProvider = recipeProvider;
         this.configuration = configuration;
+        this.capabilities = capabilities ?? (() => CharacterCapabilities.Unknown);
 
         Plugin.Framework.Update += OnUpdate;
     }
@@ -159,7 +162,7 @@ public sealed class ProductionQueue : IDisposable
         }
 
         var next = configuration.QueueItems[0];
-        var plan = DependencyResolver.Resolve(next.ItemId, next.Quantity, recipeProvider, gameBridge.GetItemCount);
+        var plan = DependencyResolver.Resolve(next.ItemId, next.Quantity, recipeProvider, gameBridge.GetItemCount, capabilities());
         if (runner.Start(plan))
         {
             startedCurrent = true;

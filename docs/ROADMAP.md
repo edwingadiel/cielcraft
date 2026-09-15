@@ -217,10 +217,16 @@ against inventory, pause with a reason.
   be at the node when it pops; between windows do untimed work or wait at
   the home spot (ties into 7.6). Aetherial reduction of ephemerals for
   crystal clusters, with per-element crystal spot preferences.
-- [ ] 7.16 Character capability model (S–M) — flying unlocked per zone,
+- [x] 7.16 Character capability model (S–M) — flying unlocked per zone,
   master-book recipes, tribe reputation ranks, GP-regen traits, read from
   the game where possible; source availability and the planner honour them
   (no fly-only nodes without flight, no locked recipes). Refresh on login.
+  Done 2026-09-15: CharacterCapabilities snapshot (Core) + CapabilityReader
+  (PlayerState aether-current sets, secret recipe books, tribe ranks, Trait
+  sheet + quest completion, ClassJobLevels); locked-book recipes are planned
+  around and refused at start with the book's name; fly decisions and
+  FindLocation prefer zones with flight; Capabilities section in the report
+  and the debug Overview. Tribe-rank index semantics still to confirm in game.
 - [ ] 7.17 Sourcing beyond gather/craft (L) — vendor purchase with a max gil
   cap (extends 7.3b), scrip / tomestone / Grand Company exchanges, a
   collectables planner that works out which turn-ins earn the scrips an

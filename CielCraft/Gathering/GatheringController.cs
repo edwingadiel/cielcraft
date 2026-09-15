@@ -69,11 +69,18 @@ public sealed class GatheringController : IDisposable
     public GatheringState State { get; private set; } = GatheringState.Idle;
     public string StatusText { get; private set; } = "Idle.";
 
-    public GatheringController(IGameBridge gameBridge, INavigationProvider navigation, Configuration configuration)
+    private readonly Func<CharacterCapabilities> capabilities;
+
+    public GatheringController(
+        IGameBridge gameBridge,
+        INavigationProvider navigation,
+        Configuration configuration,
+        Func<CharacterCapabilities>? capabilities = null)
     {
         this.gameBridge = gameBridge;
         this.navigation = navigation;
         this.configuration = configuration;
+        this.capabilities = capabilities ?? (() => CharacterCapabilities.Unknown);
 
         Plugin.Framework.Update += OnUpdate;
     }
@@ -381,7 +388,10 @@ public sealed class GatheringController : IDisposable
             if (flyAttempted)
                 flyBlocked = true;
 
-            var fly = gameBridge.IsMounted && !flyBlocked;
+            // Flight needs the zone's aether currents (roadmap 7.16); the
+            // blocked fallback stays for zones the snapshot gets wrong.
+            var fly = gameBridge.IsMounted && !flyBlocked
+                && capabilities().CanFlyIn(gameBridge.CurrentTerritoryId);
             flyAttempted = fly;
             if (fly)
             {

@@ -44,6 +44,7 @@ public sealed class ProductionRunner : IDisposable
     private readonly GatheringDatabase gatheringDatabase;
     private readonly INavigationProvider navigation;
     private readonly Configuration configuration;
+    private readonly CapabilityReader capabilities;
 
     private ProductionPlan? plan;
     private int stepIndex;
@@ -83,9 +84,11 @@ public sealed class ProductionRunner : IDisposable
         Gathering.GatheringLoop gatheringLoop,
         GatheringDatabase gatheringDatabase,
         INavigationProvider navigation,
-        Configuration configuration)
+        Configuration configuration,
+        CapabilityReader capabilities)
     {
         this.configuration = configuration;
+        this.capabilities = capabilities;
         this.gameBridge = gameBridge;
         this.batchCrafter = batchCrafter;
         this.recipeProvider = recipeProvider;
@@ -112,6 +115,10 @@ public sealed class ProductionRunner : IDisposable
             return false;
         }
 
+        // Fresh capabilities for the pre-flight checks below (roadmap 7.16):
+        // a book learned since login must not be refused.
+        capabilities.Refresh();
+
         if (!TryBuildGatherQueue(productionPlan))
             return false;
 
@@ -121,6 +128,18 @@ public sealed class ProductionRunner : IDisposable
         if (jobWithoutGearset != null)
         {
             Transition(ProductionState.Idle, $"No gearset for {jobWithoutGearset}. Save one in the Gear Set list, then run again.");
+            return false;
+        }
+
+        // Pre-flight: a step whose master book is not unlocked can never be
+        // crafted (roadmap 7.16); the planner already routed intermediates
+        // around locked books, so this is the target or an unavoidable step.
+        if (FindStepWithLockedBook(productionPlan) is { } lockedStep)
+        {
+            Transition(
+                ProductionState.Idle,
+                $"{recipeProvider.GetItemName(lockedStep.ItemId)} needs {recipeProvider.GetRecipeBookName(lockedStep.BookId)}, " +
+                "which is not unlocked. Learn the book, then run again.");
             return false;
         }
 
@@ -476,7 +495,10 @@ public sealed class ProductionRunner : IDisposable
             if (flyAttempted)
                 flyBlocked = true;
 
-            var fly = gameBridge.IsMounted && !flyBlocked;
+            // Flight needs the zone's aether currents (7.16); the blocked
+            // fallback stays for zones the snapshot gets wrong.
+            var fly = gameBridge.IsMounted && !flyBlocked
+                && capabilities.Current.CanFlyIn(gameBridge.CurrentTerritoryId);
             flyAttempted = fly;
             navigation.MoveCloseTo(areaDestination.Value, 10f, fly);
         });
@@ -548,6 +570,20 @@ public sealed class ProductionRunner : IDisposable
                 Fail($"no gearset found for {jobLabel} {jobId}");
         });
         return false;
+    }
+
+    /// <summary>First craft step whose master book is locked, with the book id; null when every step is craftable.</summary>
+    private (uint ItemId, uint BookId)? FindStepWithLockedBook(ProductionPlan productionPlan)
+    {
+        var caps = capabilities.Current;
+        foreach (var step in productionPlan.CraftSteps)
+        {
+            var info = recipeProvider.GetRecipeById(step.RecipeId);
+            if (info != null && !caps.IsRecipeUsable(info))
+                return (step.ItemId, info.SecretRecipeBookId);
+        }
+
+        return null;
     }
 
     /// <summary>Name of the first craft or gather job in the plan with no gearset; null when all are covered.</summary>
@@ -764,10 +800,15 @@ public sealed class ProductionRunner : IDisposable
             var job = gatheringDatabase.GetGatheringJob(material.ItemId);
             if (job == null)
             {
+                // A craftable-but-locked intermediate lands here as a raw
+                // material (7.16): say which book is missing, not "not gatherable".
+                var lockedRecipe = recipeProvider.FindRecipeForItem(material.ItemId);
+                var reason = lockedRecipe != null && !capabilities.Current.IsRecipeUsable(lockedRecipe)
+                    ? $"is only craftable from {recipeProvider.GetRecipeBookName(lockedRecipe.SecretRecipeBookId)}, which is not unlocked."
+                    : "is missing and not gatherable by MIN/BTN.";
                 Transition(
                     ProductionState.Idle,
-                    $"Cannot start: {recipeProvider.GetItemName(material.ItemId)} ×{material.Amount} " +
-                    "is missing and not gatherable by MIN/BTN.");
+                    $"Cannot start: {recipeProvider.GetItemName(material.ItemId)} ×{material.Amount} {reason}");
                 return false;
             }
 
@@ -815,7 +856,7 @@ public sealed class ProductionRunner : IDisposable
 
         Plugin.Log.Information($"[Production] Replanning ({reason}): {remaining} of the target still needed.");
         var newPlan = DependencyResolver.Resolve(
-            plan.TargetItemId, remaining, recipeProvider, gameBridge.GetItemCount);
+            plan.TargetItemId, remaining, recipeProvider, gameBridge.GetItemCount, capabilities.Current);
 
         if (!TryBuildGatherQueue(newPlan))
         {
@@ -941,7 +982,7 @@ public sealed class ProductionRunner : IDisposable
         }
 
         var resumedPlan = DependencyResolver.Resolve(
-            saved.ItemId, remaining, recipeProvider, gameBridge.GetItemCount);
+            saved.ItemId, remaining, recipeProvider, gameBridge.GetItemCount, capabilities.Current);
         Plugin.Log.Information(
             $"[Production] Resuming saved production: {recipeProvider.GetItemName(saved.ItemId)} ×{remaining} remaining.");
         return Start(resumedPlan);
@@ -981,7 +1022,7 @@ public sealed class ProductionRunner : IDisposable
         }
 
         yield return $"Phase since {phaseStartedAt:HH:mm:ss}Z; last attempt {lastAttemptAt:HH:mm:ss}Z; gearsetRequested {gearsetRequested}; sawLoadingScreen {sawLoadingScreen}; areaDestination {areaDestination?.ToString() ?? "-"}; lastNodeProbe {lastNodeProbe} at {lastNodeProbeAt:HH:mm:ss}Z";
-        yield return $"mountAttempts {mountAttempts}; flyBlocked {flyBlocked}; flyAttempted {flyAttempted}; interferenceAnchor {interferenceAnchor?.ToString() ?? "-"}";
+        yield return $"mountAttempts {mountAttempts}; flyBlocked {flyBlocked}; flyAttempted {flyAttempted}; flight unlocked here {capabilities.Current.CanFlyIn(gameBridge.CurrentTerritoryId)}; interferenceAnchor {interferenceAnchor?.ToString() ?? "-"}";
         yield return $"Target count initial {initialTargetCount} (HQ {initialHqCount}), now {(plan != null ? gameBridge.GetItemCount(plan.TargetItemId) : 0)}";
         var saved = configuration.SavedProduction;
         yield return $"Saved production: active {saved.Active}; item {saved.ItemId} ×{saved.Quantity}; initial count {saved.InitialCount}";
