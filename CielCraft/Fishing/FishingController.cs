@@ -638,14 +638,10 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         // AutoHook, when the user prefers it and it is there, owns the bite: it
         // knows the tug, which no struct in the installed ClientStructs carries.
         // If it has not hooked within the grace window, hook it ourselves.
-        if (autoHookEngaged)
+        if (autoHookEngaged && Clock.UtcNow - phaseChangedAt < AutoHookGrace)
         {
-            if (lineOutSince != DateTime.MaxValue && Clock.UtcNow - lineOutSince < BiteTimeout
-                && Clock.UtcNow - phaseChangedAt < AutoHookGrace)
-            {
-                StatusText = ProgressText("Bite — AutoHook is on it");
-                return;
-            }
+            StatusText = ProgressText("Bite — AutoHook is on it");
+            return;
         }
 
         var action = HooksetFor(snapshot.Tug);
