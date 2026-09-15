@@ -41,6 +41,8 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
     private int baselineCount;
     private int consecutiveFailures;
     private bool controllerActive;
+    private CollectableTier? collectableTier;
+    private int collectablesTaken;   // summed over finished node runs (7.1)
     private DateTime noNodeSince = DateTime.MaxValue;
     private DateTime navmeshWaitSince = DateTime.MaxValue;
     private DateTime lastStartAttempt = DateTime.MinValue;
@@ -48,7 +50,16 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
     private DateTime lastCordialAt = DateTime.MinValue;
     private DateTime lastHousekeepingAt = DateTime.MinValue;
 
-    public int Gathered => itemId == 0 ? 0 : Math.Max(0, gameBridge.GetItemCount(itemId) - baselineCount);
+    /// <summary>
+    /// Progress toward the amount: the inventory gain, and for a collectable
+    /// order (7.1) at least the collectables the controller took — the
+    /// appraisal window is the observed event there, the bag count the check.
+    /// </summary>
+    public int Gathered => itemId == 0 ? 0
+        : Math.Max(
+            Math.Max(0, gameBridge.GetItemCount(itemId) - baselineCount),
+            collectableTier != null ? collectablesTaken + (controllerActive ? controller.CollectablesTaken : 0) : 0);
+
     public int TargetQuantity => targetQuantity;
 
     public GatheringLoop(
@@ -68,7 +79,12 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
         this.configuration = configuration;
     }
 
-    public bool Start(uint gatherItemId, int quantity, System.Numerics.Vector3? nodeAreaCenter = null)
+    /// <summary>Starts the loop; a tier means the item is gathered as a collectable at that tier's collectability (7.1).</summary>
+    public bool Start(
+        uint gatherItemId,
+        int quantity,
+        System.Numerics.Vector3? nodeAreaCenter = null,
+        CollectableTier? tier = null)
     {
         if (State is GatheringLoopState.Running or GatheringLoopState.Paused)
             return false;
@@ -85,13 +101,17 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
         baselineCount = gameBridge.GetItemCount(itemId);
         consecutiveFailures = 0;
         controllerActive = false;
+        collectableTier = tier;
+        collectablesTaken = 0;
         noNodeSince = DateTime.MaxValue;
         navmeshWaitSince = DateTime.MaxValue;
         blacklistedNodes.Clear();
 
-        Transition(GatheringLoopState.Running, $"Gathering item {itemId} ×{quantity}.");
+        Transition(GatheringLoopState.Running, $"Gathering item {itemId} ×{quantity}{TierText()}.");
         return true;
     }
+
+    private string TierText() => collectableTier is { } tier ? $" as {tier} collectables" : "";
 
     public void Pause(string reason)
     {
@@ -201,11 +221,13 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
             case GatheringState.Completed when controllerActive:
                 consecutiveFailures = 0;
                 controllerActive = false;
+                collectablesTaken += controller.CollectablesTaken;
                 StatusText = ProgressText();
                 break;
 
             case GatheringState.Failed when controllerActive:
                 controllerActive = false;
+                collectablesTaken += controller.CollectablesTaken; // a node can fail after handing over collectables
                 consecutiveFailures++;
                 if (controller.LastNodeId != 0)
                     blacklistedNodes.Add(controller.LastNodeId);
@@ -263,7 +285,7 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
 
         navmeshWaitSince = DateTime.MaxValue;
 
-        if (controller.Start(itemId, blacklistedNodes, targetQuantity - Gathered, areaCenter))
+        if (controller.Start(itemId, blacklistedNodes, targetQuantity - Gathered, areaCenter, collectableTier))
         {
             controllerActive = true;
             noNodeSince = DateTime.MaxValue;
@@ -319,7 +341,7 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
         lastCordialAt = Clock.UtcNow;
     }
 
-    private string ProgressText() => $"Gathered {Gathered}/{targetQuantity} of item {itemId}.";
+    private string ProgressText() => $"Gathered {Gathered}/{targetQuantity} of item {itemId}{TierText()}.";
 
     /// <summary>A usable node is close enough to interact with without navigation.</summary>
     private bool NodeInReach() =>
@@ -330,7 +352,7 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
     public override IEnumerable<string> Describe()
     {
         yield return $"State {State} — {StatusText}";
-        yield return $"Item {itemId} ×{targetQuantity}: gathered {Gathered} (baseline {baselineCount}); consecutive failures {consecutiveFailures}; controllerActive {controllerActive}; blacklisted nodes {blacklistedNodes.Count}";
+        yield return $"Item {itemId} ×{targetQuantity}: gathered {Gathered} (baseline {baselineCount}; tier {collectableTier?.ToString() ?? "-"}, collectables taken {collectablesTaken}); consecutive failures {consecutiveFailures}; controllerActive {controllerActive}; blacklisted nodes {blacklistedNodes.Count}";
         yield return $"noNodeSince {(noNodeSince == DateTime.MaxValue ? "-" : noNodeSince.ToString("HH:mm:ss") + "Z")}; navmeshWaitSince {(navmeshWaitSince == DateTime.MaxValue ? "-" : navmeshWaitSince.ToString("HH:mm:ss") + "Z")}; last start attempt {lastStartAttempt:HH:mm:ss}Z; area center {areaCenter?.ToString() ?? "-"}; last cordial {lastCordialAt:HH:mm:ss}Z";
     }
 }

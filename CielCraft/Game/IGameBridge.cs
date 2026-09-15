@@ -104,6 +104,14 @@ public interface IGameBridge : ITravelBridge
     /// <summary>Teleports to an attuned aetheryte in the territory. False when none is attuned.</summary>
     bool TeleportToTerritory(uint territoryId);
 
+    /// <summary>
+    /// Teleports to the home point for crafting (roadmap 7.6): the estate hall,
+    /// the apartment, or — inn rooms being out of Telepo's reach — the nearest
+    /// inn city's aetheryte. territoryId is where the teleport lands, 0 when
+    /// no such aetheryte is in the teleport list. False when not issued.
+    /// </summary>
+    bool TeleportHome(CraftingLocation location, out uint territoryId);
+
     // IsMounted / TryMount / TryDismount / PlayerPosition come from ITravelBridge.
 
     /// <summary>Free bag slots in the main inventory.</summary>

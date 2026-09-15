@@ -82,11 +82,76 @@ public sealed class DalamudRecipeProvider : IRecipeProvider
                 ClassJobId: row.CraftType.RowId + 8,
                 IsExpert: row.IsExpert,
                 RequiredQuality: row.RequiredQuality,
-                SecretRecipeBookId: row.SecretRecipeBook.RowId);
+                SecretRecipeBookId: row.SecretRecipeBook.RowId,
+                IsCollectable: IsCollectableItem(row.ItemResult.RowId));
         }
 
         byRecipeId[recipeId] = info;
         return info;
+    }
+
+    /// <summary>The Item sheet's collectable flag; the recipe's RequiredQuality is 0 for every collectable recipe (7.23).</summary>
+    public bool IsCollectableItem(uint itemId) =>
+        Plugin.DataManager.GetExcelSheet<Item>().TryGetRow(itemId, out var item) && item.IsCollectable;
+
+    private Dictionary<uint, (int Low, int Mid, int High)>? collectableThresholds;
+
+    /// <summary>
+    /// Collectability tiers of a collectable item as *quality* targets for the
+    /// solver (the game shows collectability = quality / 10). Read from
+    /// CollectablesShopItem → CollectablesShopRefine (Low/Mid/HighCollectability;
+    /// scrip turn-ins) and SatisfactionSupply (CollectabilityLow/Mid/High;
+    /// custom deliveries). Null when neither sheet lists the item (roadmap 7.23).
+    /// </summary>
+    public (int Low, int Mid, int High)? GetCollectableThresholds(uint itemId)
+    {
+        if (collectableThresholds == null)
+        {
+            collectableThresholds = new Dictionary<uint, (int Low, int Mid, int High)>();
+            foreach (var subrows in Plugin.DataManager.GetSubrowExcelSheet<CollectablesShopItem>())
+            {
+                foreach (var row in subrows)
+                {
+                    if (row.Item.RowId == 0 || !row.CollectablesShopRefine.IsValid)
+                        continue;
+
+                    var refine = row.CollectablesShopRefine.Value;
+                    if (refine.LowCollectability == 0)
+                        continue;
+
+                    collectableThresholds.TryAdd(
+                        row.Item.RowId,
+                        (refine.LowCollectability * 10, refine.MidCollectability * 10, refine.HighCollectability * 10));
+                }
+            }
+
+            foreach (var subrows in Plugin.DataManager.GetSubrowExcelSheet<SatisfactionSupply>())
+            {
+                foreach (var row in subrows)
+                {
+                    if (row.Item.RowId != 0 && row.CollectabilityLow > 0)
+                        collectableThresholds.TryAdd(
+                            row.Item.RowId,
+                            (row.CollectabilityLow * 10, row.CollectabilityMid * 10, row.CollectabilityHigh * 10));
+                }
+            }
+        }
+
+        return collectableThresholds.TryGetValue(itemId, out var thresholds) ? thresholds : null;
+    }
+
+    /// <summary>The quality target for one tier of a collectable; null when the item's thresholds are unknown.</summary>
+    public int? GetCollectableTargetQuality(uint itemId, CollectableTier tier)
+    {
+        if (GetCollectableThresholds(itemId) is not { } thresholds)
+            return null;
+
+        return tier switch
+        {
+            CollectableTier.Low => thresholds.Low,
+            CollectableTier.Mid => thresholds.Mid,
+            _ => thresholds.High,
+        };
     }
 
     private readonly Dictionary<uint, ushort> icons = new();

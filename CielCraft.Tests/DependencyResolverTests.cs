@@ -314,4 +314,53 @@ public class MultiTargetResolverTests
         Assert.Equal(10, plan.CraftSteps.Count);
         Assert.Equal(110u, Assert.Single(plan.RawMaterials).ItemId);
     }
+
+    // Gather targets (roadmap 7.1): raw materials of the plan, never crafted, never taken from stock.
+
+    [Fact]
+    public void GatherTargetIsARawMaterialWithoutACraftStep()
+    {
+        var plan = DependencyResolver.Resolve(
+            [new PlanTarget(Ore, 7, Kind: OrderKind.Gather)], TwoFinals(), Owned((Ore, 100)));
+
+        Assert.Empty(plan.CraftSteps);
+        var ore = Assert.Single(plan.RawMaterials);
+        Assert.Equal(Ore, ore.ItemId);
+        Assert.Equal(7, ore.Amount); // owned stock is not a substitute for gathering
+        Assert.Equal(OrderKind.Gather, Assert.Single(plan.Targets).Kind);
+    }
+
+    [Fact]
+    public void GatherTargetOfACraftableItemIsNotExpanded()
+    {
+        var plan = DependencyResolver.Resolve(
+            [new PlanTarget(Ingot, 3, Kind: OrderKind.Gather)], TwoFinals(), Owned());
+
+        Assert.Empty(plan.CraftSteps);
+        Assert.Equal(3, Assert.Single(plan.RawMaterials, m => m.ItemId == Ingot).Amount);
+    }
+
+    [Fact]
+    public void GatherTargetMergesWithACraftsRawNeedIntoOneTrip()
+    {
+        // The sword needs 2 ore through its ingots; the gather order adds 5 more of the same ore.
+        var plan = DependencyResolver.Resolve(
+            [new PlanTarget(Sword, 1), new PlanTarget(Ore, 5, Kind: OrderKind.Gather)], TwoFinals(), Owned());
+
+        Assert.Equal(7, Assert.Single(plan.RawMaterials, m => m.ItemId == Ore).Amount);
+        Assert.Equal(2, plan.CraftSteps.Count);
+    }
+
+    [Fact]
+    public void CollectableGatherTargetKeepsItsTierOnTheTarget()
+    {
+        var plan = DependencyResolver.Resolve(
+            [new PlanTarget(Ore, 2, ProductionMode.Collectable, Kind: OrderKind.Gather, CollectableTier: CollectableTier.Mid)],
+            TwoFinals(), Owned());
+
+        var target = Assert.Single(plan.Targets);
+        Assert.Equal(ProductionMode.Collectable, target.Mode);
+        Assert.Equal(CollectableTier.Mid, target.CollectableTier);
+        Assert.Equal(2, Assert.Single(plan.RawMaterials).Amount);
+    }
 }

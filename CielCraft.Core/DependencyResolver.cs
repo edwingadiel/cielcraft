@@ -1,6 +1,10 @@
 namespace CielCraft.Core;
 
-/// <summary>A recipe as the planner sees it (spec §19).</summary>
+/// <summary>
+/// A recipe as the planner sees it (spec §19). IsCollectable is the result
+/// item's flag (roadmap 7.23): collectable recipes carry RequiredQuality 0 in
+/// the game data, so the item flag is the only reliable signal.
+/// </summary>
 public sealed record RecipeInfo(
     uint RecipeId,
     uint ResultItemId,
@@ -9,7 +13,8 @@ public sealed record RecipeInfo(
     uint ClassJobId = 0,
     bool IsExpert = false,
     uint RequiredQuality = 0,
-    uint SecretRecipeBookId = 0);
+    uint SecretRecipeBookId = 0,
+    bool IsCollectable = false);
 
 /// <summary>Recipe lookup boundary (spec §6): game data in the plugin, fakes in tests.</summary>
 public interface IRecipeProvider
@@ -89,7 +94,8 @@ public static class DependencyResolver
     /// once across all of them, shared intermediates merge into one step, and
     /// a materials-only target expands its ingredients without its own craft.
     /// Targets are expanded in order, so an earlier target's surplus feeds a
-    /// later one.
+    /// later one. A gather target (roadmap 7.1) is a raw material of the plan:
+    /// never expanded into a recipe and never taken from stock.
     /// </summary>
     public static ProductionPlan Resolve(
         IReadOnlyList<PlanTarget> targets,
@@ -113,7 +119,9 @@ public static class DependencyResolver
 
         foreach (var target in targets)
         {
-            if (target.MaterialsOnly)
+            if (target.Kind == OrderKind.Gather)
+                state.AddRaw(target.ItemId, target.Quantity);
+            else if (target.MaterialsOnly)
                 state.ExpandIngredientsOnly(target.ItemId, target.Quantity);
             else
                 state.Expand(target.ItemId, target.Quantity, useStock: false, depth: 0);
@@ -150,6 +158,13 @@ public static class DependencyResolver
 
         /// <summary>Keep the owned count of a target item out of the shared stock.</summary>
         public void Reserve(uint itemId) => reserved.Add(itemId);
+
+        /// <summary>Gather target (7.1): the amount is gathered as-is, whatever the recipe sheet says about the item.</summary>
+        public void AddRaw(uint itemId, int needed)
+        {
+            if (needed > 0)
+                Raw[itemId] = Raw.GetValueOrDefault(itemId) + needed;
+        }
 
         /// <summary>Materials-only target: what its crafts would consume, without the crafts themselves.</summary>
         public void ExpandIngredientsOnly(uint itemId, int needed)

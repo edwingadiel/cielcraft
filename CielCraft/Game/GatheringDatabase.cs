@@ -46,6 +46,59 @@ public sealed class GatheringDatabase
             : null;
     }
 
+    private List<(uint ItemId, string Name)>? gatherableNames;
+
+    /// <summary>
+    /// Case-insensitive substring search over the names of items the node
+    /// data lists as MIN/BTN gatherable (roadmap 7.1); names that start with
+    /// the query first, then shorter names, like the craftable search.
+    /// </summary>
+    public IReadOnlyList<(uint ItemId, string Name)> SearchGatherable(string query, int maxResults = 10)
+    {
+        var needle = query.Trim();
+        if (needle.Length < 2)
+            return [];
+
+        if (gatherableNames == null)
+        {
+            EnsureIndex();
+            gatherableNames = [];
+            var items = Plugin.DataManager.GetExcelSheet<Item>();
+            foreach (var itemId in itemToJob!.Keys)
+            {
+                if (items.TryGetRow(itemId, out var item))
+                {
+                    var name = item.Name.ExtractText();
+                    if (name.Length > 0)
+                        gatherableNames.Add((itemId, name));
+                }
+            }
+        }
+
+        var results = new List<(uint ItemId, string Name)>();
+        foreach (var entry in gatherableNames)
+        {
+            if (!entry.Name.Contains(needle, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            results.Add(entry);
+            if (results.Count >= maxResults * 4)
+                break;
+        }
+
+        results.Sort((a, b) =>
+        {
+            var aStarts = a.Name.StartsWith(needle, StringComparison.OrdinalIgnoreCase);
+            var bStarts = b.Name.StartsWith(needle, StringComparison.OrdinalIgnoreCase);
+            if (aStarts != bStarts)
+                return aStarts ? -1 : 1;
+
+            return a.Name.Length.CompareTo(b.Name.Length);
+        });
+
+        return results.Count > maxResults ? results.GetRange(0, maxResults) : results;
+    }
+
     private void EnsureIndex()
     {
         if (itemToJob != null)

@@ -59,8 +59,12 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
     private bool keepSavedOnIdle;     // a gentle stop leaves the run resumable
     private bool sawLoadingScreen;
     private System.Numerics.Vector3? areaDestination;
-    private bool returnTeleport;      // Teleporting phase is the post-gather return to the aetheryte
+    private bool returnTeleport;      // Teleporting phase is the pre-craft return (zone aetheryte or home, 7.6)
     private uint returnTerritoryId;
+    private string returnLabel = "Back at the aetheryte";
+    private bool homeTeleportPending; // 7.6: teleport to the crafting location before the first craft step
+    private bool homeFallbackToZone;  // ...and when that fails after gathering, the zone aetheryte return
+    private int homeTeleportAttempts;
     private DateTime zoneArrivedAt = DateTime.MinValue;
     private DateTime gatherDoneAt = DateTime.MinValue;
     private DateTime lastNodeProbeAt = DateTime.MinValue;
@@ -70,7 +74,15 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
     private int replanCount;
     private System.Numerics.Vector3? interferenceAnchor;
 
-    private sealed record GatherTask(uint ItemId, int Amount, uint JobId, uint TerritoryId, System.Numerics.Vector2 AreaPosition, IReadOnlyList<EtWindow> Windows);
+    /// <summary>One material to gather; Tier is set for a collectable gather order (7.1), null for plain gathering.</summary>
+    private sealed record GatherTask(
+        uint ItemId,
+        int Amount,
+        uint JobId,
+        uint TerritoryId,
+        System.Numerics.Vector2 AreaPosition,
+        IReadOnlyList<EtWindow> Windows,
+        CollectableTier? Tier = null);
 
     /// <summary>
     /// One target of the run (roadmap 7.13) with the bag counts at start, so
@@ -95,6 +107,9 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
     }
 
     public int CompletedSteps => stepIndex;
+
+    /// <summary>Whether MIN/BTN can gather the item, per the node data; what the order planner needs for gather orders (7.1).</summary>
+    public bool IsGatherable(uint itemId) => gatheringDatabase.GetGatheringJob(itemId) != null;
 
     /// <summary>"Stop gently" (roadmap 7.20): finish the current step or gather task, then stop with the run left resumable.</summary>
     public bool StopAfterStep { get; private set; }
@@ -197,7 +212,7 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         if (gatherQueue.Count > 0)
             Transition(ProductionState.PreparingGather, GatherText("Preparing to gather"));
         else
-            Transition(ProductionState.PreparingStep, StepText("Preparing"));
+            GoToCraftingSpotThenCraft(afterGathering: false);
         return true;
     }
 
@@ -395,11 +410,12 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
             return;
         }
 
-        if (gatheringLoop.Start(task.ItemId, task.Amount, AreaCenterFor(task)))
+        if (gatheringLoop.Start(task.ItemId, task.Amount, AreaCenterFor(task), task.Tier))
         {
             Log.Information(
                 $"[Production] Gather task {gatherIndex + 1}/{gatherQueue.Count}: " +
-                $"{recipeProvider.GetItemName(task.ItemId)} ×{task.Amount}.");
+                $"{recipeProvider.GetItemName(task.ItemId)} ×{task.Amount}" +
+                (task.Tier is { } tier ? $" ({tier} collectables)" : "") + ".");
             Transition(ProductionState.RunningGather, GatherText("Gathering"));
         }
     }
@@ -450,13 +466,37 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
             if (returnTeleport)
             {
                 returnTeleport = false;
-                Transition(ProductionState.PreparingStep, StepText("Back at the aetheryte; preparing"));
+                Transition(ProductionState.PreparingStep, StepText($"{returnLabel}; preparing"));
             }
             else
             {
                 Transition(ProductionState.PreparingGather, GatherText("Arrived; preparing to gather"));
             }
         }
+    }
+
+    /// <summary>
+    /// Where the craft steps happen (roadmap 7.6). With a crafting location
+    /// set, the home teleport is attempted from the preparing phase (the
+    /// crafting log may need closing first and Telepo can refuse a cast).
+    /// Otherwise, after gathering, the zone-aetheryte return below; with no
+    /// gathering the character crafts where it stands.
+    /// </summary>
+    private void GoToCraftingSpotThenCraft(bool afterGathering)
+    {
+        if (configuration.CraftingLocation != CraftingLocation.Stay)
+        {
+            homeTeleportPending = true;
+            homeFallbackToZone = afterGathering;
+            homeTeleportAttempts = 0;
+            Transition(ProductionState.PreparingStep, StepText($"Heading to the {LocationLabel()} before"));
+            return;
+        }
+
+        if (afterGathering)
+            ReturnToAetheryteThenCraft();
+        else
+            Transition(ProductionState.PreparingStep, StepText("Preparing"));
     }
 
     /// <summary>
@@ -472,12 +512,70 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         {
             returnTeleport = true;
             returnTerritoryId = territory;
+            returnLabel = "Back at the aetheryte";
             EnterPhase(ProductionState.Teleporting, StepText("Returning to the aetheryte before"));
             return;
         }
 
         Transition(ProductionState.PreparingStep, StepText("Preparing"));
     }
+
+    /// <summary>
+    /// The pending home teleport (7.6), ticked from the preparing phase. True
+    /// while it still owns the tick (closing the log, waiting on the retry
+    /// throttle, or having just moved to Teleporting); false once the
+    /// character is home-bound no more and the step should be prepared here.
+    /// </summary>
+    private bool TickHomeTeleport()
+    {
+        // Telepo refuses while the crafting log is open; close it first.
+        if (gameBridge.IsPreparingToCraft || gameBridge.IsAddonVisible("RecipeNote"))
+        {
+            retry.Try(gameBridge.CloseRecipeNote);
+            return true;
+        }
+
+        retry.Try(() =>
+        {
+            homeTeleportAttempts++;
+            sawLoadingScreen = false;
+            if (gameBridge.TeleportHome(configuration.CraftingLocation, out var territory))
+            {
+                homeTeleportPending = false;
+                returnTeleport = true;
+                returnTerritoryId = territory;
+                returnLabel = configuration.CraftingLocation == CraftingLocation.InnRoom
+                    ? "At the inn city aetheryte"
+                    : "Home";
+                EnterPhase(ProductionState.Teleporting, StepText($"Teleporting to the {LocationLabel()} before"));
+                return;
+            }
+
+            // No such aetheryte, or the cast keeps being refused: craft where
+            // we are (after gathering: at the zone aetheryte, as before 7.6).
+            if (territory == 0 || homeTeleportAttempts >= 3)
+            {
+                homeTeleportPending = false;
+                Log.Information(territory == 0
+                    ? $"[Production] No {LocationLabel()} aetheryte to teleport to; crafting in place."
+                    : $"[Production] The teleport to the {LocationLabel()} was refused {homeTeleportAttempts} times; crafting in place.");
+                if (homeFallbackToZone)
+                    ReturnToAetheryteThenCraft();
+                else
+                    EnterPhase(ProductionState.PreparingStep, StepText("Preparing"));
+            }
+        });
+
+        return homeTeleportPending || State != ProductionState.PreparingStep;
+    }
+
+    private string LocationLabel() => configuration.CraftingLocation switch
+    {
+        CraftingLocation.EstateHall => "estate hall",
+        CraftingLocation.Apartment => "apartment",
+        CraftingLocation.InnRoom => "inn city",
+        _ => "crafting spot",
+    };
 
     private void TickMovingToArea()
     {
@@ -563,9 +661,9 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
                 if (gatherIndex < gatherQueue.Count)
                     Transition(ProductionState.PreparingGather, GatherText("Preparing to gather"));
                 else if (plan!.CraftSteps.Count == 0)
-                    Transition(ProductionState.Completed, "Completed: materials gathered."); // gather-only plan (7.13)
+                    Transition(ProductionState.Completed, "Completed: materials gathered."); // gather-only plan (7.13 / 7.1)
                 else
-                    ReturnToAetheryteThenCraft();
+                    GoToCraftingSpotThenCraft(afterGathering: true);
                 break;
 
             case Gathering.GatheringLoopState.Paused:
@@ -738,6 +836,15 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
             return;
         }
 
+        // Crafting location (7.6): go home before the first step's preparation.
+        if (homeTeleportPending)
+        {
+            if (TickHomeTeleport())
+                return;
+
+            phaseStartedAt = Clock.UtcNow; // the prepare budget starts once the detour is settled
+        }
+
         if (!EnsureJob(recipe.ClassJobId))
             return;
 
@@ -767,17 +874,32 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         // Intermediates quick-synth per the setting (roadmap 1.4); a target
         // step follows its order's production mode (7.13). The batch falls
         // back to a normal craft by itself when the game refuses quick synth.
+        var collectable = IsTargetStep(step) && step.Mode == ProductionMode.Collectable;
         var quick = IsTargetStep(step)
             ? step.Mode == ProductionMode.QuickSynth && gameBridge.IsQuickSynthAvailable
             : configuration.QuickSynthIntermediates && gameBridge.IsQuickSynthAvailable;
         var requireHq = IsTargetStep(step) && step.Mode == ProductionMode.ForceHq;
 
-        if (batchCrafter.Start(step.Crafts, quick, requireHq))
+        // Collectable (7.23): the tier's collectability threshold, as quality,
+        // replaces the settings' quality percentage; with no thresholds known
+        // for the item the batch solves for the configured percentage.
+        var targetQuality = 0;
+        if (collectable)
+        {
+            targetQuality = recipeProvider.GetCollectableTargetQuality(step.ItemId, step.CollectableTier) ?? 0;
+            if (targetQuality == 0)
+                Log.Warning(
+                    $"[Production] No collectability thresholds known for {recipeProvider.GetItemName(step.ItemId)}; " +
+                    "solving for the configured target quality.");
+        }
+
+        if (batchCrafter.Start(step.Crafts, quick, requireHq, targetQuality))
         {
             Log.Information(
                 $"[Production] Step {stepIndex + 1}/{TotalSteps}: " +
                 $"{recipeProvider.GetItemName(step.ItemId)} ×{step.TotalProduced} ({step.Crafts} crafts" +
-                (quick ? ", quick synthesis" : "") + (requireHq ? ", HQ required" : "") + ").");
+                (quick ? ", quick synthesis" : "") + (requireHq ? ", HQ required" : "") +
+                (collectable ? $", {step.CollectableTier} collectable" + (targetQuality > 0 ? $" ≥ {targetQuality / 10} collectability" : "") : "") + ").");
             Transition(ProductionState.RunningBatch, StepText("Crafting"));
         }
     }
@@ -832,6 +954,7 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         gatherIndex = 0;
         areaDestination = null; // a new plan never inherits a previous area point
         returnTeleport = false;
+        homeTeleportPending = false;
         if (productionPlan.RawMaterials.Count == 0)
             return true;
 
@@ -863,13 +986,20 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
             // Known node area enables cross-territory travel (spec §68);
             // without one, gathering is attempted in the current zone.
             var location = gatheringDatabase.FindLocation(material.ItemId);
+
+            // A collectable gather order (7.1) carries its tier on the plan's
+            // target; plain materials (and normal gather orders) have none.
+            var collectableOrder = productionPlan.Targets.FirstOrDefault(t =>
+                t.Kind == OrderKind.Gather && t.ItemId == material.ItemId && t.Mode == ProductionMode.Collectable);
+
             gatherQueue.Add(new GatherTask(
                 material.ItemId,
                 material.Amount,
                 location?.JobId ?? job.Value,
                 location?.TerritoryId ?? 0,
                 location?.Position ?? default,
-                location?.Windows ?? []));
+                location?.Windows ?? [],
+                collectableOrder?.CollectableTier));
         }
 
         // Timed materials go last, soonest window first, so untimed work
@@ -989,7 +1119,7 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         }
     }
 
-    /// <summary>End-of-run summary (roadmap 6.5): one entry per target (7.13).</summary>
+    /// <summary>End-of-run summary (roadmap 6.5): one entry per target (7.13); collectables say the quality the solve targeted (7.23).</summary>
     private string BuildSummary()
     {
         var elapsed = Clock.UtcNow - productionStartedAt;
@@ -998,6 +1128,19 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
             var name = recipeProvider.GetItemName(t.Target.ItemId);
             if (t.Target.MaterialsOnly)
                 return $"materials for {t.Target.Quantity}× {name}";
+
+            if (t.Target.Mode == ProductionMode.Collectable)
+            {
+                var tier = t.Target.CollectableTier;
+                var quality = t.Target.Kind == OrderKind.Craft
+                    ? recipeProvider.GetCollectableTargetQuality(t.Target.ItemId, tier)
+                    : null;
+                return $"{t.Produced(gameBridge)}× {name} ({tier} collectables" +
+                       (quality is { } q ? $", targeted quality {q} = collectability {q / 10}" : "") + ")";
+            }
+
+            if (t.Target.Kind == OrderKind.Gather)
+                return $"gathered {t.Produced(gameBridge)}× {name}";
 
             var hq = t.ProducedHq(gameBridge);
             return $"{t.Produced(gameBridge)}× {name}" + (hq > 0 ? $" ({hq} HQ)" : "");
@@ -1086,7 +1229,7 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         {
             yield return $"Plan: {plan.Targets.Count} target(s); step {stepIndex + 1}/{plan.CraftSteps.Count}; replans {replanCount}; started {productionStartedAt:HH:mm:ss}Z";
             foreach (var target in plan.Targets)
-                yield return $"  target: {recipeProvider.GetItemName(target.ItemId)} (item {target.ItemId}) ×{target.Quantity}; mode {target.Mode}{(target.MaterialsOnly ? "; materials only" : "")}";
+                yield return $"  target: {recipeProvider.GetItemName(target.ItemId)} (item {target.ItemId}) ×{target.Quantity}; {target.Kind}; mode {target.Mode}{(target.Mode == ProductionMode.Collectable ? $" ({target.CollectableTier})" : "")}{(target.MaterialsOnly ? "; materials only" : "")}";
             for (var i = 0; i < plan.CraftSteps.Count; i++)
             {
                 var step = plan.CraftSteps[i];
@@ -1103,11 +1246,12 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
             for (var i = 0; i < gatherQueue.Count; i++)
             {
                 var task = gatherQueue[i];
-                yield return $"  {i}{(i == gatherIndex ? " (current)" : "")}: {recipeProvider.GetItemName(task.ItemId)} (item {task.ItemId}) ×{task.Amount}; job {task.JobId}; territory {task.TerritoryId}; area {task.AreaPosition.X:F0},{task.AreaPosition.Y:F0}; windows {task.Windows.Count}";
+                yield return $"  {i}{(i == gatherIndex ? " (current)" : "")}: {recipeProvider.GetItemName(task.ItemId)} (item {task.ItemId}) ×{task.Amount}; job {task.JobId}; territory {task.TerritoryId}; area {task.AreaPosition.X:F0},{task.AreaPosition.Y:F0}; windows {task.Windows.Count}; tier {task.Tier?.ToString() ?? "-"}";
             }
         }
 
         yield return $"Phase since {phaseStartedAt:HH:mm:ss}Z; last attempt {retry.LastAttempt:HH:mm:ss}Z; gearsetRequested {gearsetRequested}; sawLoadingScreen {sawLoadingScreen}; areaDestination {areaDestination?.ToString() ?? "-"}; lastNodeProbe {lastNodeProbe} at {lastNodeProbeAt:HH:mm:ss}Z";
+        yield return $"Crafting location {configuration.CraftingLocation}; homeTeleportPending {homeTeleportPending} (attempts {homeTeleportAttempts}, fallback to zone {homeFallbackToZone}); returnTeleport {returnTeleport} to territory {returnTerritoryId}";
         foreach (var line in travel.Describe())
             yield return line;
         yield return $"flight unlocked here {capabilities.Current.CanFlyIn(gameBridge.CurrentTerritoryId)}; interferenceAnchor {interferenceAnchor?.ToString() ?? "-"}";
