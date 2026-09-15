@@ -79,7 +79,7 @@ public sealed class OrderRunner
             solverService = new SolverService(new CielCraft.Raphael.RaphaelSolver(), new SolutionCache(version, path: null), log);
         }
 
-        HqPlanner = new HqIntermediatePlanner(solverService, recipeProvider, configuration, log);
+        HqPlanner = new HqIntermediatePlanner(solverService, recipeProvider, configuration, log, configuration.Save);
     }
 
     public OrderRunState State { get; private set; } = OrderRunState.Idle;

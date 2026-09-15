@@ -45,12 +45,25 @@ public sealed class HqIntermediatePlanner
     private int solves;
     private string lastOutcome = "none yet";
 
-    public HqIntermediatePlanner(SolverService solver, DalamudRecipeProvider recipes, AutomationSettings settings, ILog log)
+    private readonly Action? persist;
+
+    /// <param name="persist">Saves the settings after new crafter stats were recorded (null = keep them in memory only).</param>
+    public HqIntermediatePlanner(SolverService solver, DalamudRecipeProvider recipes, AutomationSettings settings, ILog log, Action? persist = null)
     {
         this.solver = solver;
         this.recipes = recipes;
         this.settings = settings;
         this.log = log;
+        this.persist = persist;
+        // Stats seen in an earlier session: the check can run before the
+        // character has been on the job this session (they are refreshed
+        // the moment it is).
+        foreach (var (job, entry) in settings.KnownCrafterStats)
+        {
+            if (entry.Craftsmanship > 0)
+                statsByJob[job] = new CrafterStats(entry.Craftsmanship, entry.Control, entry.Cp, entry.Level);
+        }
+
         Current = this;
     }
 
@@ -78,8 +91,22 @@ public sealed class HqIntermediatePlanner
             return;
 
         var stats = new CrafterStats((int)player.Craftsmanship, (int)player.Control, (int)player.MaxCp, player.Level);
+        bool changed;
         lock (gate)
+        {
+            changed = !statsByJob.TryGetValue(player.ClassJobId, out var known) || known != stats;
             statsByJob[player.ClassJobId] = stats;
+        }
+
+        if (!changed)
+            return;
+
+        // Gear or level changed (or first sight): remember it across sessions.
+        settings.KnownCrafterStats[player.ClassJobId] = new CrafterStatsEntry
+        {
+            Craftsmanship = stats.Craftsmanship, Control = stats.Control, Cp = stats.Cp, Level = stats.Level,
+        };
+        persist?.Invoke();
     }
 
     /// <summary>Everything the off-thread pass reads, looked up on the framework thread.</summary>
@@ -143,7 +170,7 @@ public sealed class HqIntermediatePlanner
         foreach (var job in quiet ? [] : missingStats)
         {
             log.Information(
-                $"[Production] HQ intermediates: no crafter stats seen for {recipes.GetJobAbbreviation(job)} this session; " +
+                $"[Production] HQ intermediates: no crafter stats seen for {recipes.GetJobAbbreviation(job)} yet; " +
                 "recipes of that job are not checked until the character has been on the job once.");
         }
 

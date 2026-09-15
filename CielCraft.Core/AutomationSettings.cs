@@ -74,6 +74,25 @@ public class AutomationSettings
 
     /// <summary>Only waits longer than this go home; shorter ones idle in place (roadmap 7.15).</summary>
     public int WaitAtHomeMinutes { get; set; } = 8;
+
+    /// <summary>
+    /// Crafter stats last seen per job (ClassJob row id), so the HQ-intermediates
+    /// check (roadmap 7.22) can run at plan time right after a reload, before
+    /// the character has been on the job this session.
+    /// </summary>
+    public System.Collections.Generic.Dictionary<uint, CrafterStatsEntry> KnownCrafterStats { get; set; } = new();
+}
+
+/// <summary>Craftsmanship / control / CP / level of a crafter job as last seen (roadmap 7.22).</summary>
+public sealed class CrafterStatsEntry
+{
+    public int Craftsmanship { get; set; }
+
+    public int Control { get; set; }
+
+    public int Cp { get; set; }
+
+    public int Level { get; set; }
 }
 
 /// <summary>One consumable choice: an item and whether the HQ version is preferred; ItemId 0 = none.</summary>

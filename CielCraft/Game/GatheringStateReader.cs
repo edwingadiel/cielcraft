@@ -82,11 +82,29 @@ internal static unsafe class GatheringStateReader
     /// </summary>
     public static int ReadBoonChance(int slotIndex)
     {
+        // The row shows the chance and the boon as "NN%" — or, as observed
+        // on 2026-09-15, as separate "%" and "NN" text nodes; a "%" pairs
+        // with the number next to it.
+        var texts = ReadSlotTexts(slotIndex);
         var percentages = new List<int>();
-        foreach (var text in ReadSlotTexts(slotIndex))
+        for (var i = 0; i < texts.Count; i++)
         {
-            if (TryParsePercent(text, out var value))
+            if (TryParsePercent(texts[i], out var value))
+            {
                 percentages.Add(value);
+            }
+            else if (texts[i].Trim() == "%")
+            {
+                if (i + 1 < texts.Count && int.TryParse(texts[i + 1].Trim(), out var next) && next is >= 0 and <= 100)
+                {
+                    percentages.Add(next);
+                    i++;
+                }
+                else if (i > 0 && int.TryParse(texts[i - 1].Trim(), out var previous) && previous is >= 0 and <= 100)
+                {
+                    percentages.Add(previous);
+                }
+            }
         }
 
         return percentages.Count >= 2 ? percentages[^1] : -1;

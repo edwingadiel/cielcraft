@@ -350,11 +350,33 @@ public sealed class DalamudGameBridge : IGameBridge
     public unsafe void OpenRecipe(uint recipeId)
     {
         var agent = FFXIVClientStructs.FFXIV.Client.UI.Agent.AgentRecipeNote.Instance();
-        if (agent != null)
+        if (agent == null)
+            return;
+
+        lastOpenedRecipeId = recipeId;
+        var activeBefore = agent->AgentInterface.IsAgentActive();
+        var visibleBefore = IsAddonVisible("RecipeNote");
+        agent->OpenRecipeByRecipeId(recipeId);
+
+        // Observed 2026-09-15: right after a gearset change the request is
+        // ignored (four calls, no window). Diagnose every call that finds the
+        // log closed, and when the agent stays inactive show it first — the
+        // log then opens on its last recipe and the request is re-issued.
+        if (visibleBefore)
+            return;
+
+        var activeAfter = agent->AgentInterface.IsAgentActive();
+        if (!activeAfter)
         {
-            lastOpenedRecipeId = recipeId;
+            agent->AgentInterface.Show();
             agent->OpenRecipeByRecipeId(recipeId);
         }
+
+        Plugin.Log.Information(
+            $"[Bridge] OpenRecipe {recipeId}: agent active {activeBefore}→{activeAfter}" +
+            (activeAfter ? "" : $" (shown: now {agent->AgentInterface.IsAgentActive()})") +
+            $"; job {CurrentClassJobId}; occupied {Plugin.Condition[ConditionFlag.Occupied]}/{Plugin.Condition[ConditionFlag.Occupied30]}/{Plugin.Condition[ConditionFlag.Occupied33]}/{Plugin.Condition[ConditionFlag.Occupied38]}/{Plugin.Condition[ConditionFlag.Occupied39]}" +
+            $"; between areas {IsBetweenAreas}; mounted {IsMounted}; casting {Plugin.Condition[ConditionFlag.Casting]}; preparing {IsPreparingToCraft}; gathering {IsGathering}.");
     }
 
     public unsafe void CloseRecipeNote()
