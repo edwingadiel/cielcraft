@@ -1,3 +1,4 @@
+using System;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 
@@ -124,4 +125,96 @@ internal static class UiTheme
     /// <summary>State-appropriate color for status badges.</summary>
     public static Vector4 StateColor(bool running, bool paused, bool failed, bool completed) =>
         failed ? Danger : paused ? Warning : completed ? Success : running ? Info : Muted;
+
+    // ----------------------------------------------------- layout (7.21)
+
+    /// <summary>Sidebar width of the main window; wide enough for "Crafting Steps" without clipping.</summary>
+    public const float SidebarWidth = 150f;
+
+    /// <summary>
+    /// One sidebar entry: a full-width selectable with the accent tint when
+    /// active. Section entries are drawn in normal text, sub-pages indented
+    /// and muted so the two levels read at a glance.
+    /// </summary>
+    public static bool SidebarItem(string label, string id, bool selected, bool subPage, bool accent = false)
+    {
+        var indent = subPage ? 14f : 0f;
+        if (indent > 0)
+            ImGui.Indent(indent);
+        ImGui.PushStyleColor(ImGuiCol.Header, Accent with { W = 0.22f });
+        ImGui.PushStyleColor(ImGuiCol.HeaderHovered, Accent with { W = 0.14f });
+        ImGui.PushStyleColor(ImGuiCol.HeaderActive, Accent with { W = 0.32f });
+        // The active section keeps the accent text while its sub-page carries the tint.
+        ImGui.PushStyleColor(ImGuiCol.Text, selected || accent ? Accent : subPage ? Muted : new Vector4(0.90f, 0.90f, 0.92f, 1f));
+        var clicked = ImGui.Selectable($"{label}##nav{id}", selected);
+        ImGui.PopStyleColor(4);
+        if (indent > 0)
+            ImGui.Unindent(indent);
+        return clicked;
+    }
+
+    /// <summary>Page heading: muted section crumb (none for a single-page section), accent page name, accent rule.</summary>
+    public static void PageTitle(string? section, string page)
+    {
+        if (section != null)
+        {
+            ImGui.TextColored(Muted, section + " ›");
+            ImGui.SameLine(0, 6);
+        }
+
+        ImGui.TextColored(Accent, page);
+        ImGui.PushStyleColor(ImGuiCol.Separator, AccentDim);
+        ImGui.Separator();
+        ImGui.PopStyleColor();
+        ImGui.Spacing();
+    }
+
+    /// <summary>A collapsible section in the theme's tint; the pages built from the old tabs use it.</summary>
+    public static bool Collapsible(string title, bool defaultOpen = false)
+    {
+        PushHeaderTint(Accent);
+        var open = ImGui.CollapsingHeader(title, defaultOpen ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None);
+        PopHeaderTint();
+        return open;
+    }
+
+    /// <summary>A settings checkbox that persists through <paramref name="set"/> on change, with an optional muted hint below.</summary>
+    public static void Toggle(string label, bool value, Action<bool> set, string? hint = null)
+    {
+        if (ImGui.Checkbox(label, ref value))
+            set(value);
+        if (hint != null)
+            Hint(hint);
+    }
+
+    /// <summary>Muted explanatory text wrapped to the page width.</summary>
+    public static void Hint(string text)
+    {
+        ImGui.PushTextWrapPos();
+        ImGui.TextDisabled(text);
+        ImGui.PopTextWrapPos();
+    }
+
+    /// <summary>The small-button form of <see cref="TintedButton"/>, for the status bar.</summary>
+    public static bool TintedButtonSmall(string label, Vector4 color)
+    {
+        ImGui.PushStyleColor(ImGuiCol.Button, color with { W = 0.22f });
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, color with { W = 0.40f });
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, color with { W = 0.55f });
+        ImGui.PushStyleColor(ImGuiCol.Text, color with { W = 1f });
+        var clicked = ImGui.SmallButton(label);
+        ImGui.PopStyleColor(4);
+        return clicked;
+    }
+
+    /// <summary>A quiet small button for the status bar and inline "go to page" links.</summary>
+    public static bool LinkButton(string label)
+    {
+        ImGui.PushStyleColor(ImGuiCol.Button, new Vector4(1f, 1f, 1f, 0.05f));
+        ImGui.PushStyleColor(ImGuiCol.ButtonHovered, Accent with { W = 0.25f });
+        ImGui.PushStyleColor(ImGuiCol.ButtonActive, Accent with { W = 0.40f });
+        var clicked = ImGui.SmallButton(label);
+        ImGui.PopStyleColor(3);
+        return clicked;
+    }
 }

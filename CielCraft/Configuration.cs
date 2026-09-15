@@ -29,6 +29,9 @@ public class Configuration : AutomationSettings, IPluginConfiguration
     /// <summary>The first-run setup checklist was dismissed (roadmap 7.20).</summary>
     public bool SetupCompleted { get; set; } = false;
 
+    /// <summary>UI only (roadmap 7.21): the main window's last page id ("Section/Page"), reopened next time.</summary>
+    public string LastPage { get; set; } = "Orders";
+
     /// <summary>Interrupted production, offered for resume on load (roadmap 6.3); one entry per target since 7.13.</summary>
     public SavedProductionState SavedProduction { get; set; } = new();
 

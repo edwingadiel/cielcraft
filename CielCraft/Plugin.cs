@@ -59,10 +59,8 @@ public sealed class Plugin : IDalamudPlugin
     public RunFinisher Finisher { get; init; }
 
     public readonly WindowSystem WindowSystem = new("CielCraft");
-    private ConfigWindow ConfigWindow { get; init; }
+    /// <summary>The one window (roadmap 7.21); settings, debug and setup are pages in it.</summary>
     private MainWindow MainWindow { get; init; }
-    private DebugWindow DebugWindow { get; init; }
-    private SetupWindow SetupWindow { get; init; }
 
     /// <summary>Crafting stays usable without vnavmesh; only gathering automation needs it (spec §31).</summary>
     internal static bool IsVNavmeshAvailable =>
@@ -119,19 +117,12 @@ public sealed class Plugin : IDalamudPlugin
         Driver.Add(OrderRunner.Tick);
         Driver.Add(Finisher.Tick);
 
-        ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);
-        DebugWindow = new DebugWindow(this);
-        SetupWindow = new SetupWindow(this);
-
-        WindowSystem.AddWindow(ConfigWindow);
         WindowSystem.AddWindow(MainWindow);
-        WindowSystem.AddWindow(DebugWindow);
-        WindowSystem.AddWindow(SetupWindow);
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open the CielCraft window. \"/cielcraft run\" start the order book, \"/cielcraft hold\" hold it after the current group, \"/cielcraft pause\" / \"/cielcraft resume\", \"/cielcraft stop\" emergency stop, \"/cielcraft config\" settings, \"/cielcraft setup\" setup checklist, \"/cielcraft debug\" debug window, \"/cielcraft report\" copy a diagnostic report.",
+            HelpMessage = "Open the CielCraft window. \"/cielcraft run\" start the order book, \"/cielcraft hold\" hold it after the current group, \"/cielcraft pause\" / \"/cielcraft resume\", \"/cielcraft stop\" emergency stop, \"/cielcraft config\" settings page, \"/cielcraft setup\" character checklist, \"/cielcraft debug\" debug page, \"/cielcraft plan\" print the production breakdown, \"/cielcraft report\" copy a diagnostic report.",
         });
 
         PluginInterface.UiBuilder.Draw += DrawUi;
@@ -155,10 +146,7 @@ public sealed class Plugin : IDalamudPlugin
         CraftAutomator.Dispose();
         Notifier.Dispose();
 
-        ConfigWindow.Dispose();
         MainWindow.Dispose();
-        DebugWindow.Dispose();
-        SetupWindow.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
         Driver.Dispose();
@@ -175,7 +163,7 @@ public sealed class Plugin : IDalamudPlugin
                 ToggleDebugUi();
                 break;
             case "setup":
-                SetupWindow.Toggle();
+                ToggleSetupUi();
                 break;
             case "stop":
                 StopEverything();
@@ -367,20 +355,22 @@ public sealed class Plugin : IDalamudPlugin
     private void OnLogin()
     {
         Capabilities.Refresh();
-        // First run on this install: show the checklist once (roadmap 7.20).
+        // First run on this install: open on the checklist once (roadmap 7.20); it moves on to Orders when done.
         if (!Configuration.SetupCompleted)
-            SetupWindow.IsOpen = true;
-        if (Configuration.OpenMainWindowOnLogin)
+            MainWindow.ShowPage(MainWindow.Pages.ToolsCharacter);
+        else if (Configuration.OpenMainWindowOnLogin)
             MainWindow.IsOpen = true;
     }
 
     private void DrawUi() => WindowSystem.Draw();
 
-    public void ToggleConfigUi() => ConfigWindow.Toggle();
+    // The settings, debug and setup windows became pages (roadmap 7.21); the
+    // toggles stay as page selectors for Dalamud's config button and the commands.
+    public void ToggleConfigUi() => MainWindow.TogglePage(MainWindow.Pages.SettingsGeneral);
 
     public void ToggleMainUi() => MainWindow.Toggle();
 
-    public void ToggleDebugUi() => DebugWindow.Toggle();
+    public void ToggleDebugUi() => MainWindow.TogglePage(MainWindow.Pages.StatusDebug);
 
-    public void ToggleSetupUi() => SetupWindow.Toggle();
+    public void ToggleSetupUi() => MainWindow.TogglePage(MainWindow.Pages.ToolsCharacter);
 }
