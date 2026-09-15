@@ -110,6 +110,10 @@ public static class DiagnosticReport
                 sb.AppendLine($"  {plugin.RecipeProvider.GetItemName(target.ItemId)} (item {target.ItemId}) ×{target.Quantity}; initial {target.InitialCount} (HQ {target.InitialHqCount}); mode {target.Mode}{(target.MaterialsOnly ? "; materials only" : "")}");
         });
 
+        // The breakdown tree of the group in flight or the last preview (7.12).
+        Section(sb, "Plan");
+        Lines(sb, () => Windows.PlanTreePanel.PlanText(plugin).Split('\n'));
+
         Section(sb, "Gathering loop");
         Lines(sb, plugin.GatheringLoop.Describe);
 
