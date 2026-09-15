@@ -36,6 +36,16 @@ public sealed class SolverService
     public CraftSolution? Solution { get; private set; }
     public string StatusText { get; private set; } = "No solve requested yet.";
 
+    /// <summary>Wall time of the last finished solve; zero for a cache hit (roadmap 7.18 craft test).</summary>
+    public TimeSpan LastSolveTime { get; private set; }
+
+    public bool LastSolveCached { get; private set; }
+
+    /// <summary>What the current <see cref="Solution"/> was solved for, so a rotation view can replay it (roadmap 7.8).</summary>
+    public CraftSetup? LastSetup => lastSetup;
+
+    public CraftObjective? LastObjective => lastObjective;
+
     public SolverService(ICraftSolver solver, SolutionCache cache, ILog log)
     {
         this.solver = solver;
@@ -87,6 +97,8 @@ public sealed class SolverService
         lock (gate)
         {
             Solution = result;
+            LastSolveTime = elapsed;
+            LastSolveCached = false;
             Status = result.Success ? SolverStatus.Done : SolverStatus.Failed;
             StatusText = result.Success
                 ? $"Solved in {elapsed.TotalSeconds:F1}s: {result.ActionIds.Count} actions."
@@ -132,6 +144,8 @@ public sealed class SolverService
             lock (gate)
             {
                 Solution = cached;
+                LastSolveTime = TimeSpan.Zero;
+                LastSolveCached = true;
                 Status = SolverStatus.Done;
                 StatusText = $"Cached: {cached.ActionIds.Count} actions.";
             }
