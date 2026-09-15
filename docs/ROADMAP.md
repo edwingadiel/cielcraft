@@ -92,6 +92,8 @@ follow the same rules as everything else: observed transitions, verify
 against inventory, pause with a reason.
 
 - [ ] 7.1 Standalone gather target (S) — "Gather X ×N" from the main window,
+  including collectables; ship with tests D1, D3 and D4 run through it (the
+  debug-tab path was never validated in game; deferred 2026-09-15),
   the way a recipe is entered today: plan = the runner's gather phase alone
   (teleport, travel, timed windows, loop), no crafting. Fish targets join
   this once 7.5 exists.
