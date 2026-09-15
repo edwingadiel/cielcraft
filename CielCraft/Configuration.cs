@@ -29,10 +29,17 @@ public class Configuration : AutomationSettings, IPluginConfiguration
     /// <summary>The first-run setup checklist was dismissed (roadmap 7.20).</summary>
     public bool SetupCompleted { get; set; } = false;
 
-    /// <summary>Interrupted production, offered for resume on load (roadmap 6.3).</summary>
+    /// <summary>Interrupted production, offered for resume on load (roadmap 6.3); one entry per target since 7.13.</summary>
     public SavedProductionState SavedProduction { get; set; } = new();
 
-    /// <summary>Pending production queue targets (roadmap 6.8).</summary>
+    /// <summary>The order book (roadmap 7.13): groups of orders run in sequence by the OrderRunner.</summary>
+    public OrderBook Orders { get; set; } = new();
+
+    /// <summary>
+    /// Obsolete (roadmap 6.8 queue, replaced by <see cref="Orders"/> in 7.13).
+    /// Kept so older configs still deserialize; Plugin folds any entries into
+    /// a "Queue" order group on load and clears the list.
+    /// </summary>
     public List<QueuedTarget> QueueItems { get; set; } = [];
 
     /// <summary>Close the Trade window when a trade request arrives mid-run (roadmap 7.10).</summary>
@@ -70,9 +77,34 @@ public class Configuration : AutomationSettings, IPluginConfiguration
     public class SavedProductionState
     {
         public bool Active { get; set; }
+
+        /// <summary>The plan's targets with their start-of-run bag counts (roadmap 7.13); resume re-plans what each still needs.</summary>
+        public List<SavedTarget> Targets { get; set; } = [];
+
+        // The first target, mirrored for the resume banner and for pre-7.13
+        // configs (Plugin folds a legacy single target into Targets on load).
         public uint ItemId { get; set; }
         public int Quantity { get; set; }
         public int InitialCount { get; set; }
+    }
+
+    [Serializable]
+    public class SavedTarget
+    {
+        public uint ItemId { get; set; }
+
+        /// <summary>The ordered amount; what is still missing is measured against the bag on resume.</summary>
+        public int Quantity { get; set; }
+
+        /// <summary>NQ+HQ count when the run started.</summary>
+        public int InitialCount { get; set; }
+
+        /// <summary>HQ count when the run started; ForceHq progress is measured against this one.</summary>
+        public int InitialHqCount { get; set; }
+
+        public ProductionMode Mode { get; set; } = ProductionMode.Any;
+
+        public bool MaterialsOnly { get; set; }
     }
 
     [Serializable]

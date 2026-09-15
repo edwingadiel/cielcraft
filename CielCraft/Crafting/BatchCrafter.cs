@@ -46,6 +46,9 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
     private uint resultItemId;
     private int resultAmount;
     private int baselineItemCount;
+    private bool requireHq;            // ForceHq order (roadmap 7.13): only HQ results count toward the target
+    private int hqBaseline;            // HQ count of the result item when the batch started
+    private int verifiedCrafts;        // every craft that landed in the bag, HQ or not
     private CraftSolution? solution;
     private bool solveRequested;
     private bool synthesisFired;
@@ -97,9 +100,12 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
     /// <summary>
     /// Starts a batch. Requires either the crafting log open with a recipe
     /// selected, or an active craft still on its first step (which then counts
-    /// as craft #1 of the batch).
+    /// as craft #1 of the batch). With <paramref name="requireHq"/> (roadmap
+    /// 7.13 ForceHq) the rotation is solved for full quality with HQ materials
+    /// and the batch runs until the HQ count has risen by the quantity; NQ
+    /// results are logged but do not count, and quick synthesis is never used.
     /// </summary>
-    public bool Start(int quantity, bool quickSynth = false)
+    public bool Start(int quantity, bool quickSynth = false, bool requireHq = false)
     {
         if (State is BatchState.Solving or BatchState.StartingCraft or BatchState.Crafting
             or BatchState.QuickStarting or BatchState.QuickRunning or BatchState.Paused)
@@ -139,10 +145,13 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
 
         targetQuantity = quantity;
         CompletedCrafts = 0;
+        verifiedCrafts = 0;
         recipeId = gameBridge.SelectedRecipeId;
         resultItemId = 0;
         resultAmount = 0;
         baselineItemCount = 0;
+        this.requireHq = requireHq;
+        hqBaseline = 0;
         solution = null;
         solveRequested = false;
         solvedSetup = null;
@@ -156,7 +165,8 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
         waitStartedAt = Clock.UtcNow;
         verifyUntil = DateTime.MinValue;
 
-        quickMode = quickSynth && !gameBridge.IsCrafting && gameBridge.IsQuickSynthAvailable
+        // Quick synthesis only ever yields NQ, so an HQ batch never uses it.
+        quickMode = quickSynth && !requireHq && !gameBridge.IsCrafting && gameBridge.IsQuickSynthAvailable
                     && !quickSynthRefused.Contains(gameBridge.SelectedRecipeId);
         if (quickMode)
         {
@@ -178,7 +188,7 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
 
         Transition(
             gameBridge.IsCrafting ? BatchState.Solving : BatchState.StartingCraft,
-            $"Batch of {quantity} started.");
+            requireHq ? $"HQ batch of {quantity} started." : $"Batch of {quantity} started.");
         return true;
     }
 
@@ -431,11 +441,14 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
             // Collectables (roadmap 4.1): never solve below the recipe's
             // required quality. A mid-craft recovery keeps the original target
             // — recomputing from live quality would inflate it for the rest of
-            // the batch.
+            // the batch. An HQ batch (7.13) always solves for full quality.
             if (!midSolve || solveTargetQuality == 0)
+            {
+                var percent = requireHq ? 100 : Math.Clamp(configuration.TargetQualityPercent, 1, 100);
                 solveTargetQuality = Math.Max(
                     Math.Max((int)craft.Quality, craft.RequiredQuality),
-                    craft.MaxQuality * Math.Clamp(configuration.TargetQualityPercent, 1, 100) / 100);
+                    craft.MaxQuality * percent / 100);
+            }
 
             if (midSolve)
             {
@@ -553,7 +566,7 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
                 }
 
                 recipeId = gameBridge.SelectedRecipeId;
-                if (configuration.PreferHqMaterials)
+                if (configuration.PreferHqMaterials || requireHq)
                     gameBridge.FillIngredients(preferHq: true);
 
                 if (gameBridge.StartSynthesis())
@@ -567,6 +580,19 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
                 return;
             }
 
+            // An HQ batch keeps crafting past its nominal count while NQ
+            // results land (7.13); the materials are what ends it, so say so
+            // instead of timing out on a log that can never become ready.
+            if (requireHq && gameBridge.IsAddonVisible("RecipeNote") && gameBridge.SelectedRecipeId != 0)
+            {
+                var requirements = gameBridge.GetRecipeRequirements(gameBridge.SelectedRecipeId);
+                if (requirements.Count > 0 && InventoryMath.CraftableCount(requirements) < 1)
+                {
+                    Fail($"materials ran out with {CompletedCrafts}/{targetQuantity} HQ made ({verifiedCrafts} crafts)");
+                    return;
+                }
+            }
+
             // The log is open on our recipe but the game has not assigned the
             // materials (ingredients owned only as HQ stay at 0 until the HQ
             // column is selected): press the log's own fill button.
@@ -575,8 +601,9 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
                 && Clock.UtcNow - lastFillAttempt > TimeSpan.FromSeconds(2))
             {
                 lastFillAttempt = Clock.UtcNow;
-                var assigned = gameBridge.FillIngredients(configuration.PreferHqMaterials);
-                Log.Information($"[Production] Assigning materials via the crafting log's {(configuration.PreferHqMaterials ? "HQ" : "NQ")} fill button: {(assigned ? "all assigned" : "still incomplete")}.");
+                var preferHq = configuration.PreferHqMaterials || requireHq;
+                var assigned = gameBridge.FillIngredients(preferHq);
+                Log.Information($"[Production] Assigning materials via the crafting log's {(preferHq ? "HQ" : "NQ")} fill button: {(assigned ? "all assigned" : "still incomplete")}.");
             }
 
             if (Clock.UtcNow - waitStartedAt > StartTimeout)
@@ -696,7 +723,7 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
     {
         if (resultItemId != 0)
         {
-            var expected = baselineItemCount + (CompletedCrafts + 1) * Math.Max(resultAmount, 1);
+            var expected = baselineItemCount + (verifiedCrafts + 1) * Math.Max(resultAmount, 1);
             var actual = gameBridge.GetItemCount(resultItemId);
             if (actual < expected)
             {
@@ -711,12 +738,34 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
 
         verifyUntil = DateTime.MinValue;
         lastCraftEndedAt = Clock.UtcNow;
-        CompletedCrafts++;
-        Log.Information($"[Production] Craft {CompletedCrafts}/{targetQuantity} verified.");
+        verifiedCrafts++;
+
+        if (requireHq)
+        {
+            // Only the HQ gain counts (7.13 ForceHq); an NQ result is a craft
+            // spent, not progress, and the batch keeps going while materials last.
+            var hqGain = Math.Max(0, gameBridge.GetHqItemCount(resultItemId) - hqBaseline) / Math.Max(resultAmount, 1);
+            if (hqGain > CompletedCrafts)
+            {
+                CompletedCrafts = hqGain;
+                Log.Information($"[Production] Craft {verifiedCrafts} verified HQ ({CompletedCrafts}/{targetQuantity} HQ).");
+            }
+            else
+            {
+                Log.Information($"[Production] Craft {verifiedCrafts} landed NQ; not counted ({CompletedCrafts}/{targetQuantity} HQ).");
+            }
+        }
+        else
+        {
+            CompletedCrafts++;
+            Log.Information($"[Production] Craft {CompletedCrafts}/{targetQuantity} verified.");
+        }
 
         if (CompletedCrafts >= targetQuantity)
         {
-            Transition(BatchState.Completed, $"Completed: {CompletedCrafts}/{targetQuantity} crafts.");
+            Transition(BatchState.Completed, requireHq
+                ? $"Completed: {CompletedCrafts}/{targetQuantity} HQ in {verifiedCrafts} crafts."
+                : $"Completed: {CompletedCrafts}/{targetQuantity} crafts.");
             return;
         }
 
@@ -753,13 +802,16 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
             resultItemId = result.Value.ItemId;
             resultAmount = result.Value.Amount;
         }
-        baselineItemCount = gameBridge.GetItemCount(resultItemId) - CompletedCrafts * Math.Max(resultAmount, 1);
+        baselineItemCount = gameBridge.GetItemCount(resultItemId) - verifiedCrafts * Math.Max(resultAmount, 1);
+        hqBaseline = gameBridge.GetHqItemCount(resultItemId) - CompletedCrafts * Math.Max(resultAmount, 1);
         Log.Information(
             $"[Production] Batch target item {resultItemId} x{resultAmount} per craft; " +
-            $"inventory baseline {baselineItemCount}.");
+            $"inventory baseline {baselineItemCount}" + (requireHq ? $" (HQ {hqBaseline})" : "") + ".");
     }
 
-    private string ProgressText() => $"Crafting {CompletedCrafts + 1}/{targetQuantity}...";
+    private string ProgressText() => requireHq
+        ? $"Crafting for HQ {CompletedCrafts}/{targetQuantity} (craft #{verifiedCrafts + 1})..."
+        : $"Crafting {CompletedCrafts + 1}/{targetQuantity}...";
 
     private void Fail(string reason) => Transition(BatchState.Failed, $"Failed: {reason}.");
 
@@ -767,7 +819,7 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
     public override IEnumerable<string> Describe()
     {
         yield return $"State {State} — {StatusText}";
-        yield return $"Crafts {CompletedCrafts}/{targetQuantity}; recipe {recipeId}; result item {resultItemId} ×{resultAmount}; baseline count {baselineItemCount}, now {(resultItemId != 0 ? gameBridge.GetItemCount(resultItemId) : 0)}";
+        yield return $"Crafts {CompletedCrafts}/{targetQuantity} (verified {verifiedCrafts}, requireHq {requireHq}); recipe {recipeId}; result item {resultItemId} ×{resultAmount}; baseline count {baselineItemCount} (HQ {hqBaseline}), now {(resultItemId != 0 ? gameBridge.GetItemCount(resultItemId) : 0)}";
         yield return $"solveRequested {solveRequested}; synthesisFired {synthesisFired}; automatorStarted {automatorStarted}; wasCrafting {wasCrafting}; quickMode {quickMode}; quickDialogRequested {quickDialogRequested}; midSolve {midSolve}; midSolveTried {midSolveTried}";
         yield return $"Target quality {solveTargetQuality}; wait started {waitStartedAt:HH:mm:ss}Z; quick last progress {quickLastProgressAt:HH:mm:ss}Z; last recipe open attempt {lastRecipeOpenAttempt:HH:mm:ss}Z";
         yield return $"Solved setup: {solvedSetup?.ToString() ?? "none"}";

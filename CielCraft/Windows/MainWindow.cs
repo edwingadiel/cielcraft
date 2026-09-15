@@ -222,10 +222,6 @@ public class MainWindow : Window, IDisposable
         UiTheme.Tooltip(runner.StopAfterStep
             ? "Stops once the current step or gather task completes. Click again to cancel."
             : "Finish the current step or gather task, then stop; Resume continues from there.");
-
-        // Keep the queue visible (and holdable) while it is driving the runner.
-        if (plugin.ProductionQueue.Running || plugin.Configuration.QueueItems.Count > 0)
-            DrawQueue();
     }
 
     private void DrawBatchActive(BatchCrafter batch)
@@ -285,21 +281,6 @@ public class MainWindow : Window, IDisposable
 
         UiTheme.Tooltip("Craft the crafting-log selection repeatedly (no sub-recipes)");
 
-        ImGui.SameLine();
-        using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!haveTarget))
-        {
-            if (UiTheme.TintedButton("Queue +", UiTheme.Muted))
-            {
-                var recipe = plugin.RecipeProvider.GetRecipeById(EffectiveRecipeId);
-                if (recipe != null)
-                    plugin.ProductionQueue.Add(recipe.ResultItemId, batchQuantity);
-            }
-        }
-
-        UiTheme.Tooltip("Add the current target and quantity to the production queue");
-
-        DrawQueue();
-
         if (runner.State is ProductionState.Completed or ProductionState.Failed)
             DrawStateBadge(runner.State.ToString(), false, runner.StatusText);
         else if (batch.State is BatchState.Completed or BatchState.Failed)
@@ -309,49 +290,6 @@ public class MainWindow : Window, IDisposable
             ImGui.TextColored(UiTheme.Danger, planError);
 
         DrawPlanPreview();
-    }
-
-    private void DrawQueue()
-    {
-        var queue = plugin.ProductionQueue;
-        var items = plugin.Configuration.QueueItems;
-        if (items.Count == 0 && !queue.Running)
-            return;
-
-        ImGui.Spacing();
-        ImGui.TextColored(UiTheme.Muted, $"Queue ({items.Count})");
-        ImGui.SameLine();
-        if (queue.Running)
-        {
-            if (ImGui.SmallButton("Hold##queue"))
-                queue.StopQueue();
-        }
-        else if (items.Count > 0 && ImGui.SmallButton("Run queue"))
-        {
-            queue.StartQueue();
-        }
-
-        for (var i = 0; i < items.Count; i++)
-        {
-            ItemIcon(items[i].ItemId, 18f);
-            ImGui.TextUnformatted($"{plugin.RecipeProvider.GetItemName(items[i].ItemId)} ×{items[i].Quantity}");
-            if (queue.IsInFlight(i))
-            {
-                ImGui.SameLine();
-                ImGui.TextColored(UiTheme.Info, "● producing");
-                continue;
-            }
-
-            ImGui.SameLine();
-            if (ImGui.SmallButton($"×##q{i}"))
-            {
-                queue.RemoveAt(i);
-                break;
-            }
-        }
-
-        if (queue.StatusText.Length > 0)
-            ImGui.TextColored(UiTheme.Muted, queue.StatusText);
     }
 
     private void ComputePlan()

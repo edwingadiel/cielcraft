@@ -64,13 +64,34 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
     private DateTime gatherDoneAt = DateTime.MinValue;
     private DateTime lastNodeProbeAt = DateTime.MinValue;
     private bool lastNodeProbe;
-    private int initialTargetCount;
-    private int initialHqCount;
+    private readonly List<TargetProgress> targets = []; // the ordered targets with their start-of-run bag counts
     private DateTime productionStartedAt;
     private int replanCount;
     private System.Numerics.Vector3? interferenceAnchor;
 
     private sealed record GatherTask(uint ItemId, int Amount, uint JobId, uint TerritoryId, System.Numerics.Vector2 AreaPosition, IReadOnlyList<EtWindow> Windows);
+
+    /// <summary>
+    /// One target of the run (roadmap 7.13) with the bag counts at start, so
+    /// progress is always "count now − initial" and survives replans and a
+    /// reload. The plan in flight may carry smaller (remaining) quantities;
+    /// this keeps the ordered amount.
+    /// </summary>
+    private sealed record TargetProgress(PlanTarget Target, int InitialCount, int InitialHqCount)
+    {
+        public int Produced(IGameBridge bridge) => Math.Max(0, bridge.GetItemCount(Target.ItemId) - InitialCount);
+
+        public int ProducedHq(IGameBridge bridge) => Math.Max(0, bridge.GetHqItemCount(Target.ItemId) - InitialHqCount);
+
+        /// <summary>
+        /// What the order still needs: the HQ gain for ForceHq, the total gain
+        /// otherwise. A materials-only target has no craft to count, so it is
+        /// always re-planned in full — the resolver drops what is in stock.
+        /// </summary>
+        public int Remaining(IGameBridge bridge) => Target.MaterialsOnly
+            ? Target.Quantity
+            : Target.Quantity - (Target.Mode == ProductionMode.ForceHq ? ProducedHq(bridge) : Produced(bridge));
+    }
 
     public int CompletedSteps => stepIndex;
 
@@ -105,12 +126,22 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         this.navigation = navigation;
     }
 
-    public bool Start(ProductionPlan productionPlan)
+    public bool Start(ProductionPlan productionPlan) =>
+        Start(productionPlan, productionPlan.Targets.Select(BaselineNow).ToList());
+
+    /// <summary>Bag counts of a target right now; the baseline a fresh run measures progress against.</summary>
+    private TargetProgress BaselineNow(PlanTarget target) =>
+        new(target, gameBridge.GetItemCount(target.ItemId), gameBridge.GetHqItemCount(target.ItemId));
+
+    /// <summary>Starts a plan against given baselines (a resumed run keeps the ones it was saved with).</summary>
+    private bool Start(ProductionPlan productionPlan, List<TargetProgress> progress)
     {
         if (State is ProductionState.PreparingStep or ProductionState.RunningBatch or ProductionState.Paused)
             return false;
 
-        if (productionPlan.CraftSteps.Count == 0)
+        // A materials-only order can be all gathering (7.13); only a plan with
+        // neither crafts nor materials has nothing to do.
+        if (productionPlan.CraftSteps.Count == 0 && productionPlan.RawMaterials.Count == 0)
         {
             Transition(ProductionState.Idle, "Nothing to craft in this plan.");
             return false;
@@ -153,8 +184,8 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         plan = productionPlan;
         stepIndex = 0;
         StopAfterStep = false;
-        initialTargetCount = gameBridge.GetItemCount(productionPlan.TargetItemId);
-        initialHqCount = HqCountOfTarget();
+        targets.Clear();
+        targets.AddRange(progress);
         productionStartedAt = Clock.UtcNow;
         replanCount = 0;
         SaveProgress(active: true);
@@ -206,6 +237,11 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         {
             EnterPreparing();
             Transition(ProductionState.PreparingGather, GatherText("Preparing to gather"));
+        }
+        else if (plan == null || stepIndex >= plan.CraftSteps.Count)
+        {
+            // Gather-only plan (materials-only order) paused after its last node.
+            Transition(ProductionState.Completed, "Completed: materials gathered.");
         }
         else
         {
@@ -519,10 +555,12 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
                     break;
                 }
 
-                if (gatherIndex >= gatherQueue.Count)
-                    ReturnToAetheryteThenCraft();
-                else
+                if (gatherIndex < gatherQueue.Count)
                     Transition(ProductionState.PreparingGather, GatherText("Preparing to gather"));
+                else if (plan!.CraftSteps.Count == 0)
+                    Transition(ProductionState.Completed, "Completed: materials gathered."); // gather-only plan (7.13)
+                else
+                    ReturnToAetheryteThenCraft();
                 break;
 
             case Gathering.GatheringLoopState.Paused:
@@ -719,20 +757,27 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
             }
         }
 
-        // Quick synthesis for intermediates when enabled and offered (roadmap 1.4).
-        var quick = configuration.QuickSynthIntermediates
-                    && stepIndex < plan!.CraftSteps.Count - 1
-                    && gameBridge.IsQuickSynthAvailable;
+        // Intermediates quick-synth per the setting (roadmap 1.4); a target
+        // step follows its order's production mode (7.13). The batch falls
+        // back to a normal craft by itself when the game refuses quick synth.
+        var quick = IsTargetStep(step)
+            ? step.Mode == ProductionMode.QuickSynth && gameBridge.IsQuickSynthAvailable
+            : configuration.QuickSynthIntermediates && gameBridge.IsQuickSynthAvailable;
+        var requireHq = IsTargetStep(step) && step.Mode == ProductionMode.ForceHq;
 
-        if (batchCrafter.Start(step.Crafts, quick))
+        if (batchCrafter.Start(step.Crafts, quick, requireHq))
         {
             Log.Information(
                 $"[Production] Step {stepIndex + 1}/{TotalSteps}: " +
                 $"{recipeProvider.GetItemName(step.ItemId)} ×{step.TotalProduced} ({step.Crafts} crafts" +
-                (quick ? ", quick synthesis" : "") + ").");
+                (quick ? ", quick synthesis" : "") + (requireHq ? ", HQ required" : "") + ").");
             Transition(ProductionState.RunningBatch, StepText("Crafting"));
         }
     }
+
+    /// <summary>A step that produces one of the plan's (crafted) targets, as opposed to an intermediate.</summary>
+    private bool IsTargetStep(PlannedCraft step) =>
+        plan != null && plan.Targets.Any(t => !t.MaterialsOnly && t.ItemId == step.ItemId);
 
     private void TickRunning()
     {
@@ -842,17 +887,19 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
             return;
         }
 
-        var produced = Math.Max(0, gameBridge.GetItemCount(plan.TargetItemId) - initialTargetCount);
-        var remaining = plan.TargetQuantity - produced;
-        if (remaining <= 0)
+        // Every target is re-planned for what it still needs (7.13); mode
+        // and materials-only carry over with the target.
+        var remaining = RemainingTargets();
+        if (remaining.Count == 0)
         {
-            Transition(ProductionState.Completed, $"Completed: target already satisfied ({produced} produced).");
+            Transition(ProductionState.Completed, "Completed: every target already satisfied.");
             return;
         }
 
-        Log.Information($"[Production] Replanning ({reason}): {remaining} of the target still needed.");
-        var newPlan = DependencyResolver.Resolve(
-            plan.TargetItemId, remaining, recipeProvider, gameBridge.GetItemCount, capabilities.Current);
+        Log.Information(
+            $"[Production] Replanning ({reason}): still needed " +
+            string.Join(", ", remaining.Select(t => $"{recipeProvider.GetItemName(t.ItemId)} ×{t.Quantity}")) + ".");
+        var newPlan = DependencyResolver.Resolve(remaining, recipeProvider, gameBridge.GetItemCount, capabilities.Current);
 
         if (!TryBuildGatherQueue(newPlan))
         {
@@ -870,6 +917,13 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         else
             Transition(ProductionState.Completed, "Completed after replanning.");
     }
+
+    /// <summary>The run's targets with what each still needs, dropping the satisfied ones.</summary>
+    private List<PlanTarget> RemainingTargets() =>
+        targets
+            .Select(t => t.Target with { Quantity = t.Remaining(gameBridge) })
+            .Where(t => t.Quantity > 0)
+            .ToList();
 
     private void EnterPhase(ProductionState state, string statusText)
     {
@@ -928,57 +982,86 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         }
     }
 
-    /// <summary>End-of-run summary (roadmap 6.5).</summary>
+    /// <summary>End-of-run summary (roadmap 6.5): one entry per target (7.13).</summary>
     private string BuildSummary()
     {
-        var produced = Math.Max(0, gameBridge.GetItemCount(plan!.TargetItemId) - initialTargetCount);
-        var hq = Math.Max(0, HqCountOfTarget() - initialHqCount);
         var elapsed = Clock.UtcNow - productionStartedAt;
-        var name = recipeProvider.GetItemName(plan.TargetItemId);
-        return $"Production complete: {produced}× {name}" +
-               (hq > 0 ? $" ({hq} HQ)" : "") +
-               $" in {(int)elapsed.TotalMinutes}m {elapsed.Seconds}s.";
+        var parts = targets.Select(t =>
+        {
+            var name = recipeProvider.GetItemName(t.Target.ItemId);
+            if (t.Target.MaterialsOnly)
+                return $"materials for {t.Target.Quantity}× {name}";
+
+            var hq = t.ProducedHq(gameBridge);
+            return $"{t.Produced(gameBridge)}× {name}" + (hq > 0 ? $" ({hq} HQ)" : "");
+        });
+        return $"Production complete: {string.Join(", ", parts)} in {(int)elapsed.TotalMinutes}m {elapsed.Seconds}s.";
     }
 
-    private int HqCountOfTarget() => plan == null ? 0 : gameBridge.GetHqItemCount(plan.TargetItemId);
-
-    /// <summary>Persists the run so a reload/crash can offer resume (roadmap 6.3).</summary>
+    /// <summary>Persists the run so a reload/crash can offer resume (roadmap 6.3); one entry per target (7.13).</summary>
     private void SaveProgress(bool active)
     {
         if (plan == null)
             return;
 
+        var first = targets.Count > 0 ? targets[0] : null;
         configuration.SavedProduction = new Configuration.SavedProductionState
         {
             Active = active,
-            ItemId = plan.TargetItemId,
-            Quantity = plan.TargetQuantity,
-            InitialCount = initialTargetCount,
+            Targets = targets.Select(t => new Configuration.SavedTarget
+            {
+                ItemId = t.Target.ItemId,
+                Quantity = t.Target.Quantity,
+                InitialCount = t.InitialCount,
+                InitialHqCount = t.InitialHqCount,
+                Mode = t.Target.Mode,
+                MaterialsOnly = t.Target.MaterialsOnly,
+            }).ToList(),
+            // First target mirrored for the resume banner (callers not yet on Targets).
+            ItemId = first?.Target.ItemId ?? 0,
+            Quantity = first?.Target.Quantity ?? 0,
+            InitialCount = first?.InitialCount ?? 0,
         };
         configuration.Save();
     }
 
-    /// <summary>Resumes a persisted run by re-planning what is still missing.</summary>
+    /// <summary>Resumes a persisted run by re-planning what every target still needs.</summary>
     public bool TryResumeSaved()
     {
         var saved = configuration.SavedProduction;
-        if (!saved.Active || saved.ItemId == 0)
+        if (!saved.Active || saved.Targets.Count == 0)
             return false;
 
-        var produced = Math.Max(0, gameBridge.GetItemCount(saved.ItemId) - saved.InitialCount);
-        var remaining = saved.Quantity - produced;
-        if (remaining <= 0)
+        // The saved baselines stay the baselines: progress made before the
+        // interruption must count toward the summary and later saves.
+        var progress = saved.Targets
+            .Where(t => t.ItemId != 0)
+            .Select(t => new TargetProgress(
+                new PlanTarget(t.ItemId, t.Quantity, t.Mode, t.MaterialsOnly), t.InitialCount, t.InitialHqCount))
+            .ToList();
+        var remaining = progress
+            .Select(t => t.Target with { Quantity = t.Remaining(gameBridge) })
+            .Where(t => t.Quantity > 0)
+            .ToList();
+        if (remaining.Count == 0)
         {
             DiscardSaved();
             Transition(ProductionState.Completed, "Saved production was already complete.");
             return true;
         }
 
-        var resumedPlan = DependencyResolver.Resolve(
-            saved.ItemId, remaining, recipeProvider, gameBridge.GetItemCount, capabilities.Current);
+        var resumedPlan = DependencyResolver.Resolve(remaining, recipeProvider, gameBridge.GetItemCount, capabilities.Current);
+        if (resumedPlan.CraftSteps.Count == 0 && resumedPlan.RawMaterials.Count == 0)
+        {
+            DiscardSaved();
+            Transition(ProductionState.Completed, "Saved production was already complete.");
+            return true;
+        }
+
         Log.Information(
-            $"[Production] Resuming saved production: {recipeProvider.GetItemName(saved.ItemId)} ×{remaining} remaining.");
-        return Start(resumedPlan);
+            "[Production] Resuming saved production: " +
+            string.Join(", ", remaining.Select(t => $"{recipeProvider.GetItemName(t.ItemId)} ×{t.Quantity}")) + " remaining.");
+        return Start(resumedPlan, progress);
     }
 
     public void DiscardSaved()
@@ -994,11 +1077,13 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
             yield return line;
         if (plan != null)
         {
-            yield return $"Plan: {recipeProvider.GetItemName(plan.TargetItemId)} (item {plan.TargetItemId}) ×{plan.TargetQuantity}; step {stepIndex + 1}/{plan.CraftSteps.Count}; replans {replanCount}; started {productionStartedAt:HH:mm:ss}Z";
+            yield return $"Plan: {plan.Targets.Count} target(s); step {stepIndex + 1}/{plan.CraftSteps.Count}; replans {replanCount}; started {productionStartedAt:HH:mm:ss}Z";
+            foreach (var target in plan.Targets)
+                yield return $"  target: {recipeProvider.GetItemName(target.ItemId)} (item {target.ItemId}) ×{target.Quantity}; mode {target.Mode}{(target.MaterialsOnly ? "; materials only" : "")}";
             for (var i = 0; i < plan.CraftSteps.Count; i++)
             {
                 var step = plan.CraftSteps[i];
-                yield return $"  step {i + 1}{(i == stepIndex ? " (current)" : "")}: recipe {step.RecipeId} -> {recipeProvider.GetItemName(step.ItemId)} (item {step.ItemId}) ×{step.Crafts} crafts, yield {step.ResultAmount}";
+                yield return $"  step {i + 1}{(i == stepIndex ? " (current)" : "")}: recipe {step.RecipeId} -> {recipeProvider.GetItemName(step.ItemId)} (item {step.ItemId}) ×{step.Crafts} crafts, yield {step.ResultAmount}, mode {step.Mode}";
             }
 
             foreach (var raw in plan.RawMaterials)
@@ -1019,8 +1104,11 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         foreach (var line in travel.Describe())
             yield return line;
         yield return $"flight unlocked here {capabilities.Current.CanFlyIn(gameBridge.CurrentTerritoryId)}; interferenceAnchor {interferenceAnchor?.ToString() ?? "-"}";
-        yield return $"Target count initial {initialTargetCount} (HQ {initialHqCount}), now {(plan != null ? gameBridge.GetItemCount(plan.TargetItemId) : 0)}";
+        foreach (var t in targets)
+            yield return $"Target {recipeProvider.GetItemName(t.Target.ItemId)} (item {t.Target.ItemId}) ×{t.Target.Quantity}: initial {t.InitialCount} (HQ {t.InitialHqCount}), now {gameBridge.GetItemCount(t.Target.ItemId)} (HQ {gameBridge.GetHqItemCount(t.Target.ItemId)}), remaining {t.Remaining(gameBridge)}";
         var saved = configuration.SavedProduction;
-        yield return $"Saved production: active {saved.Active}; item {saved.ItemId} ×{saved.Quantity}; initial count {saved.InitialCount}";
+        yield return $"Saved production: active {saved.Active}; {saved.Targets.Count} target(s)";
+        foreach (var t in saved.Targets)
+            yield return $"  saved: {recipeProvider.GetItemName(t.ItemId)} (item {t.ItemId}) ×{t.Quantity}; initial {t.InitialCount} (HQ {t.InitialHqCount}); mode {t.Mode}{(t.MaterialsOnly ? "; materials only" : "")}";
     }
 }
