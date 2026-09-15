@@ -160,9 +160,10 @@ public sealed class GatheringDatabase
             if (!exported.TryGetRow(baseId, out var coords) || (coords.X == 0 && coords.Y == 0))
                 continue;
 
+            var (windows, kind) = ReadTimeWindows(transients, point.RowId);
             var location = new GatheringLocation(
                 0, info.Job, info.Level, territory, new Vector2(coords.X, coords.Y), coords.Radius,
-                ReadTimeWindows(transients, point.RowId));
+                windows, kind);
 
             foreach (var itemId in info.Items)
             {
@@ -177,14 +178,20 @@ public sealed class GatheringDatabase
         }
     }
 
-    /// <summary>ET windows for a gathering point; empty = always up (spec §38).</summary>
-    private static IReadOnlyList<CielCraft.Core.EtWindow> ReadTimeWindows(
+    /// <summary>
+    /// ET windows for a gathering point and the node kind they imply; empty =
+    /// always up (spec §38). Rare-pop windows make an unspoiled node (a
+    /// folklore node is told apart by its sub-category, roadmap 7.15),
+    /// ephemeral times an ephemeral one.
+    /// </summary>
+    private static (IReadOnlyList<CielCraft.Core.EtWindow> Windows, NodeKind Kind) ReadTimeWindows(
         Lumina.Excel.ExcelSheet<GatheringPointTransient> transients, uint gatheringPointId)
     {
         if (!transients.TryGetRow(gatheringPointId, out var transient))
-            return [];
+            return ([], NodeKind.Normal);
 
         var windows = new List<CielCraft.Core.EtWindow>();
+        var kind = NodeKind.Normal;
 
         // Unspoiled/legendary nodes: up to three windows in the pop table.
         var table = transient.GatheringRarePopTimeTable;
@@ -201,6 +208,7 @@ public sealed class GatheringDatabase
                 windows.Add(new CielCraft.Core.EtWindow(
                     CielCraft.Core.EorzeaClock.FromHhmm(start),
                     CielCraft.Core.EorzeaClock.FromHhmm(duration)));
+                kind = NodeKind.Unspoiled;
             }
         }
 
@@ -211,8 +219,9 @@ public sealed class GatheringDatabase
             var start = CielCraft.Core.EorzeaClock.FromHhmm(transient.EphemeralStartTime);
             var end = CielCraft.Core.EorzeaClock.FromHhmm(transient.EphemeralEndTime);
             windows.Add(new CielCraft.Core.EtWindow(start, ((end - start) % 1440 + 1440) % 1440));
+            kind = NodeKind.Ephemeral;
         }
 
-        return windows;
+        return (windows, kind);
     }
 }

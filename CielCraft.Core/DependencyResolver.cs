@@ -31,6 +31,9 @@ public interface IRecipeProvider
 /// One aggregated craft step; total output is Crafts * ResultAmount. Mode is
 /// the order's production mode for a target step (roadmap 7.13) and Any for
 /// intermediates, which the runner quick-synthesizes per the settings.
+/// HqCrafts (roadmap 7.22) is how many of an intermediate's crafts must be
+/// synthesized normally to HQ so the final craft starts with enough quality;
+/// the rest stay quick.
 /// </summary>
 public sealed record PlannedCraft(
     uint RecipeId,
@@ -38,7 +41,8 @@ public sealed record PlannedCraft(
     int Crafts,
     int ResultAmount,
     ProductionMode Mode = ProductionMode.Any,
-    CollectableTier CollectableTier = CollectableTier.High)
+    CollectableTier CollectableTier = CollectableTier.High,
+    int HqCrafts = 0)
 {
     public int TotalProduced => Crafts * ResultAmount;
 }

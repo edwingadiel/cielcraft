@@ -55,6 +55,25 @@ public class AutomationSettings
 
     /// <summary>Manual rotations per recipe id (roadmap 7.8): action names or Teamcraft macro text; replaces the solver when set.</summary>
     public System.Collections.Generic.Dictionary<uint, string> ManualRotations { get; set; } = new();
+
+    /// <summary>
+    /// Gathering rotation overrides per node class (roadmap 7.14), keyed by
+    /// the class name ("Normal", "Unspoiled", "Crystal", "Collectable"), in
+    /// the same text format as the built-in tables; empty = built-in.
+    /// </summary>
+    public System.Collections.Generic.Dictionary<string, string> GatheringRotationOverrides { get; set; } = new();
+
+    /// <summary>Extract materia from gear at 100% spiritbond between crafts and nodes (roadmap 7.2).</summary>
+    public bool AutoExtractMateria { get; set; } = true;
+
+    /// <summary>Craft intermediates HQ when the final recipe cannot reach its quality target from zero (roadmap 7.22).</summary>
+    public bool HqIntermediates { get; set; } = true;
+
+    /// <summary>Wait for a timed node's window at the home point (7.6) instead of beside the node (roadmap 7.15).</summary>
+    public bool WaitAtHomeForWindows { get; set; } = true;
+
+    /// <summary>Only waits longer than this go home; shorter ones idle in place (roadmap 7.15).</summary>
+    public int WaitAtHomeMinutes { get; set; } = 8;
 }
 
 /// <summary>One consumable choice: an item and whether the HQ version is preferred; ItemId 0 = none.</summary>

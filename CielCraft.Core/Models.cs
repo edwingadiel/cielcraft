@@ -41,7 +41,8 @@ public sealed record GatheringLocation(
     uint TerritoryId,
     Vector2 Position,
     float Radius,
-    IReadOnlyList<EtWindow> Windows)
+    IReadOnlyList<EtWindow> Windows,
+    NodeKind Kind = NodeKind.Normal)
 {
     public bool IsTimed => Windows.Count > 0;
 }
