@@ -329,6 +329,91 @@ food owned only as NQ: the log says the NQ one is used. Choose a food that
 is not in the bag: the run pauses with "crafting food <name> is not in the
 inventory"; clear the slot and resume.
 
+## N. Gather orders, collectables, home (roadmap 7.1, 7.23, 7.6)
+
+**N1 ★. Gather order** — Orders: search kind **Gather**, add an untimed ore
+or log ×10, Preview.
+Expect: `×10 · gather`, "Gather first:" lists it, no craft step. Run orders:
+teleport / travel → node loop → `Completed: materials gathered.` and the
+chat summary `gathered 10× <item>`. The report's target line reads
+`Gather; mode Any`.
+
+**N2. Gather restock and non-gatherable** — The same order in Restock with
+amount = owned + 3 → planned 3; amount ≤ owned → `already stocked`. Switch a
+craftable-only item's row to Kind Gather → Preview shows `not gatherable`.
+
+**N3 ★. Collectable gather** — Gather order for a rarefied ore, Production
+Collectable, Tier Mid, ×2. Run.
+Expect: `[Gather] … as Mid collectables` in the log; at the node the
+appraisal stops once the Mid threshold is reached and Collect fires; a
+Low-only result on the last integrity point is not collected; the loop
+completes at 2 with `collectables taken 2` in the report. Repeat with High.
+
+**N4 ★. Collectable craft** — Craft order for a rarefied recipe ×2, mode
+Collectable, tier Low; and a non-collectable recipe with mode Collectable.
+Expect: the second reads `not a collectable recipe`; the first's Step line
+says `Low collectable ≥ N collectability`, the report's Batch section shows
+the target quality (N × 10), two collectables land in the bag, and the
+chat summary names the tier. Check the turn-in window shows collectability
+at or above the tier — the ×10 mapping is validated from data only.
+
+**N5 ★. Home teleport** — Settings › Home: Estate Hall (with a house). Run a
+craft-only order from a field zone.
+Expect: `Heading to the estate hall before step 1/…`, `[Travel] Teleporting
+home: estate hall, aetheryte …`, loading screen, `Home; preparing step 1`,
+the craft runs there. Set Apartment without owning one: `No apartment
+aetheryte to teleport to; crafting in place.` Set Inn Room: the run
+teleports to the cheapest inn city and the log says the inn is not entered.
+
+**N6. Home after gathering / refused cast** — With a home set, an order that
+gathers first goes home after the last node instead of the zone aetheryte.
+Start a craft-only order with the crafting log open: the log is closed
+first; a refused cast retries every 2 s up to three times, then `… was
+refused 3 times; crafting in place.`
+
+## O. Rotations, assist, lock-step, craft test (roadmap 7.8, 7.18)
+
+**O1 ★. Rotation view** — Batch ×1 on a mid-level recipe; Status › Crafting
+Steps.
+Expect: Source "solved" (or "cached solve"), an Expected line with progress,
+quality and HQ %, ✓ on executed rows, ▶ on the one in flight, per-step
+progress / quality / durability / CP; Normal-condition rows match the
+Synthesis window exactly, Good / Excellent steps land higher.
+
+**O2 ★. Manual rotation** — With the crafting log on a recipe you HQ easily,
+paste Teamcraft macro lines (or "Use current" after O1) into Manual
+rotation, Save, Batch ×1.
+Expect: `[Production] Manual rotation for recipe N: k actions …; skipping
+the solve.`, no `[Raphael] Solve requested`, source "manual rotation".
+Clear → the next batch solves again. A line with an unknown action
+disables Save and names the line; hand-edited garbage in the config falls
+back to the solver with `… ignored (line …); solving instead.`
+
+**O3. Manual rotation recovery** — O2, Pause after three actions, use one
+quality action by hand, Resume: the B2 flow (`Mid-craft re-solve`), source
+"mid-craft re-solve".
+
+**O4 ★. Lock-step** — Enable Lock-step, Batch ×1.
+Expect: `[Craft] Paused: lock-step, next Muscle Memory (1/n).`; Step (or
+`/cielcraft step`, or Resume) fires exactly one action and holds again;
+Continue turns the setting off and the rest runs; no "Recovering:
+re-solving" while held.
+
+**O5 ★. Assist mode** — Enable Assist, nothing running, press Synthesize by
+hand.
+Expect: `[Production] Assist: attaching to the synthesis started by hand.`
+on step 1 and the craft completes; a second hand craft is assisted again; a
+craft cancelled mid-way leaves the batch Idle; a craft on which you already
+used an action (step 2) and a quick synthesis are not adopted; Run orders
+with assist on shows no "Assist:" lines.
+
+**O6 ★. Craft Test** — Tools › Craft Test: search a recipe, "Use my stats",
+Solve.
+Expect: solve time (a second Solve says cached), an Expected line with HQ %,
+a per-step table; "Copy macro" pastes valid Teamcraft lines; "Save as manual
+rotation" then Batch ×1 follows O2. A batch running at the same time keeps
+its own `[Raphael]` lines.
+
 ---
 
 ## What to paste

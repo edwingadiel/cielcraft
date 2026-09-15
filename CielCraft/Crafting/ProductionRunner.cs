@@ -63,6 +63,7 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
     private uint returnTerritoryId;
     private string returnLabel = "Back at the aetheryte";
     private bool homeTeleportPending; // 7.6: teleport to the crafting location before the first craft step
+    private bool finishAfterReturn;   // 7.1: a gather-only plan still goes home / to the aetheryte before completing
     private bool homeFallbackToZone;  // ...and when that fails after gathering, the zone aetheryte return
     private int homeTeleportAttempts;
     private DateTime zoneArrivedAt = DateTime.MinValue;
@@ -466,7 +467,15 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
             if (returnTeleport)
             {
                 returnTeleport = false;
-                Transition(ProductionState.PreparingStep, StepText($"{returnLabel}; preparing"));
+                if (finishAfterReturn)
+                {
+                    finishAfterReturn = false;
+                    Transition(ProductionState.Completed, $"Completed: materials gathered; {returnLabel.ToLowerInvariant()}.");
+                }
+                else
+                {
+                    Transition(ProductionState.PreparingStep, StepText($"{returnLabel}; preparing"));
+                }
             }
             else
             {
@@ -660,10 +669,13 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
 
                 if (gatherIndex < gatherQueue.Count)
                     Transition(ProductionState.PreparingGather, GatherText("Preparing to gather"));
-                else if (plan!.CraftSteps.Count == 0)
-                    Transition(ProductionState.Completed, "Completed: materials gathered."); // gather-only plan (7.13 / 7.1)
                 else
+                {
+                    // A gather-only plan (7.1) ends next to the last node, often
+                    // beside mobs: take the same way home as a crafting run.
+                    finishAfterReturn = plan!.CraftSteps.Count == 0;
                     GoToCraftingSpotThenCraft(afterGathering: true);
+                }
                 break;
 
             case Gathering.GatheringLoopState.Paused:
@@ -809,7 +821,24 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
 
     private void TickPreparing()
     {
-        var step = plan!.CraftSteps[stepIndex];
+        // Gather-only plan (7.1): nothing to prepare, only the way home.
+        if (plan!.CraftSteps.Count == 0)
+        {
+            if (gameBridge.GetGatheringState() != null || gameBridge.IsGathering)
+            {
+                retry.Try(gameBridge.CloseGatheringWindow);
+                return;
+            }
+
+            if (homeTeleportPending && TickHomeTeleport())
+                return;
+
+            finishAfterReturn = false;
+            Transition(ProductionState.Completed, "Completed: materials gathered.");
+            return;
+        }
+
+        var step = plan.CraftSteps[stepIndex];
         var recipe = recipeProvider.GetRecipeById(step.RecipeId);
         if (recipe == null)
         {
@@ -955,6 +984,7 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         areaDestination = null; // a new plan never inherits a previous area point
         returnTeleport = false;
         homeTeleportPending = false;
+        finishAfterReturn = false;
         if (productionPlan.RawMaterials.Count == 0)
             return true;
 
@@ -1079,7 +1109,10 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
 
     private string StepText(string verb)
     {
-        var step = plan!.CraftSteps[stepIndex];
+        if (plan == null || stepIndex >= plan.CraftSteps.Count)
+            return $"{verb} finishing (materials gathered).";
+
+        var step = plan.CraftSteps[stepIndex];
         return $"{verb} step {stepIndex + 1}/{TotalSteps}: " +
                $"{recipeProvider.GetItemName(step.ItemId)} ×{step.TotalProduced}.";
     }

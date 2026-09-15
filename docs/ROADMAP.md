@@ -98,12 +98,13 @@ first three are cheap, the last two are projects of their own. All of them
 follow the same rules as everything else: observed transitions, verify
 against inventory, pause with a reason.
 
-- [ ] 7.1 Standalone gather target (S) — "Gather X ×N" from the main window,
-  including collectables; ship with tests D1, D3 and D4 run through it (the
-  debug-tab path was never validated in game; deferred 2026-09-15),
-  the way a recipe is entered today: plan = the runner's gather phase alone
-  (teleport, travel, timed windows, loop), no crafting. Fish targets join
-  this once 7.5 exists.
+- [x] 7.1 Standalone gather target (S) — done 2026-09-15 as an order kind:
+  an order with Kind = Gather plans as a raw material (teleport, travel,
+  timed windows, node loop; no craft), Restock applies, the search finds
+  gatherable items; Mode = Collectable gathers collectables at the order's
+  tier (the appraisal goal is the tier's collectability, taken from the
+  gathering window). First in-game gather order ran on 2026-09-15 (Iron
+  Ore ×3); D1/D3/D4 still to be run as written.
 - [ ] 7.2 Spiritbond / materia extraction (S–M) — detect any equipped piece
   at 100% spiritbond, open Materialize and extract (general action, addon
   callback — ids pending), between crafts/nodes like repair and food.
@@ -144,11 +145,13 @@ against inventory, pause with a reason.
   retreat/heal rules, death handling, "someone else is here" etiquette.
   Combat-job gearsets and level gating decide feasibility per item.
 
-- [ ] 7.6 Teleport to the estate / home point for crafting (S) — after the
-  gather phase the runner already returns to the zone aetheryte (safe idle
-  spot); 2.0 should let the user pick where crafting happens (estate hall,
-  apartment, inn room) and teleport there before the first craft step.
-
+- [x] 7.6 Teleport to the estate / home point for crafting (S) — done 2026-09-15:
+  Settings › Home picks Stay / Estate Hall / Apartment / Inn Room; the runner
+  teleports there before the first craft step (after gathering instead of
+  the zone-aetheryte return), waits for the loading screen, retries a
+  refused cast three times, and crafts in place with a log line when no
+  such aetheryte exists. Inn Room teleports to the nearest inn city (the
+  inn itself is not entered).
 - [x] 7.7 Solution cache (S) — done 2026-09-15 (M0); — the solver runs on every craft even when the
   same recipe repeats with the same stats, buffs and initial quality. Key a
   cache on the full CraftSetup + CraftObjective (stats, CP, food, specialist
@@ -160,13 +163,14 @@ against inventory, pause with a reason.
   gather jobs have no gearset, naming the job, instead of failing 15s into
   the step. Done 2026-09-14.
 
-- [ ] 7.8 Rotation visibility and manual rotations (S–M) — show the solved
-  rotation (action list, expected progress/quality per step) in the main
-  window before and during a craft, not just in the log; and let the user
-  enter or paste a manual rotation (action names / Teamcraft macro format)
-  per recipe that replaces the solver when set, with the same adaptive
-  recovery on a bad condition.
-
+- [x] 7.8 Rotation visibility and manual rotations (S–M) — done 2026-09-15:
+  Status › Crafting Steps shows the active rotation (solved / cached /
+  manual / mid-craft re-solve) with executed / current / pending marks and
+  the expected progress, quality and HQ chance per step from a
+  Normal-condition replay (`Core/Rotations/RotationSimulator`, the HQ table
+  in `HqChance`); manual rotations per recipe (action names or Teamcraft
+  macro text, `RotationText`) replace the solve and keep the adaptive
+  recovery.
 - [x] 7.10 Trade-request blacklist (S) — a trade request during automation is
   the usual "is that a bot?" poke. On an incoming trade (Trade addon / the
   chat notice) decline it, add the sender to the game blacklist automatically,
@@ -243,37 +247,12 @@ against inventory, pause with a reason.
   collectables planner that works out which turn-ins earn the scrips an
   order needs (cheapest or fastest), retainer inventory + ventures +
   storage rules, desynthesis and trash cleanup of unused byproducts.
-- [ ] 7.18 Assist mode, craft test, lock-step (S–M) — Assist: auto-run any
-  synthesis the user starts by hand. Craft Test: solve for chosen stats and
-  recipe and show the rotation with expected progress/quality/HQ%% and solve
-  time (extends 7.8). Lock-step: pause before every action for expensive
-  crafts (fits the pause command).
-- [ ] 7.19 Equipment set builder (M) — "make a full gear set for job X at
-  level Y" as generated orders, with tradeable-only / rarity / tomestone /
-  scrip / GC-seal switches; in-game optimizer auto-equip; mender fallback
-  when self-repair is not possible (extends 7.3a).
-- [x] 7.20 Finish-and-idle behaviours (S) — done 2026-09-15: precise legs
-  land on a random spot within 8y of the node (`TravelDriver.RandomLandingSpot`);
-  "Stop after step" on the run panel finishes the current step or gather
-  task, then stops with the run saved as resumable (`ProductionRunner.StopGently`);
-  Settings → Alerts: in-game sound effect (`<se.N>`) and Windows speech on
-  completion/attention notifications, "Exit the game when the run and queue
-  complete" (`RunFinisher`: /shutdown + confirm, 5 s grace, cancelled by any
-  new activity or Stop everything); a first-run setup checklist window
-  (`/cielcraft setup`, shown once on login until dismissed) listing gearsets
-  per job, vnavmesh, flight zones, master books and tribal reputations.
-  Not added on purpose: "go to the aetheryte when done" — the runner already
-  returns to the zone aetheryte after gathering and crafts there; and a
-  "debug mode that stops on unreadable results" — stopping is already the
-  only behaviour (an action that does not resolve pauses the automator, a
-  craft whose inventory gain cannot be verified pauses the batch).
-- [x] 7.21 Window layout (S) — done 2026-09-15: one window with a sidebar —
-  Orders; Status (Progress, Crafting Steps, Breakdown, Schedule placeholder,
-  Report, Log, Debug); Tools (Character checklist, Craft Test, Solution
-  cache); Settings (General, Crafting, Gathering, Consumables, Home, Alerts,
-  Social). The config, debug and setup windows became pages; Dalamud's
-  settings cog opens Settings, `/cielcraft config`, `debug` and `setup`
-  select pages, the last page is remembered.
+- [x] 7.18 Assist mode, craft test, lock-step (S–M) — done 2026-09-15: Assist
+  attaches a batch to a synthesis started by hand on step 1; Craft Test
+  (Tools) solves for chosen stats and a recipe on a detached solver and
+  shows the rotation, expected outcome, HQ % and solve time, with "copy
+  macro" and "save as manual rotation"; Lock-step pauses before every action
+  (Step / Continue buttons, `/cielcraft step`).
 
 - [ ] 7.22 HQ-aware intermediates (M) — today every non-final step is quick
   synthesized (NQ) and the final craft solves from zero quality. For recipes
@@ -285,13 +264,13 @@ against inventory, pause with a reason.
   The final craft's HQ fill consumes them. Validate the initial-quality
   formula against a real recipe in game before trusting it.
 
-- [ ] 7.23 Collectable crafting as a target option (S) — today collectables
-  are only craftable by opening the log on the recipe and running a Batch.
-  Make it a production mode on the target / order (ties into 7.13): pick
-  the collectable, a count, and the collectability tier to hit (low / mid /
-  high threshold, from the recipe data); the solver targets that tier and
-  the run reports items per tier. Optional turn-in at the appraiser
-  afterwards belongs to the scrips planner (7.17).
+- [x] 7.23 Collectable crafting as a target option (S) — done 2026-09-15: an
+  order with Mode = Collectable and a tier (Low / Mid / High); thresholds
+  from CollectablesShopRefine / SatisfactionSupply (quality = collectability
+  × 10), the solve targets the tier, the summary reports the count and the
+  targeted quality. Not covered: Ishgard Restoration items (no threshold
+  data → solves for the configured quality with a warning). Turn-in stays
+  with the scrips planner (7.17).
 
 Cross-cutting for 2.0: the planner grows a "source" per missing material
 (gather / fish / buy / hunt / stored-in-retainer), chosen by preference and
@@ -324,12 +303,12 @@ known base.
    materials-only, JSON + Teamcraft import. Replaces target + queue.
 6. (done) 7.21 Window layout (S): sidebar; orders/status/settings pages. Do with 5
    so the UI is built once around orders.
-7. 7.1 Standalone gather target (S) incl. collectables; run tests D1/D3/D4.
-8. 7.23 Collectable crafting as a target option (S) — a production mode on 5.
+7. (done) 7.1 Standalone gather target (S) incl. collectables; run tests D1/D3/D4.
+8. (done) 7.23 Collectable crafting as a target option (S) — a production mode on 5.
 9. (done) 7.11 Per-activity food and potion (S–M).
-10. 7.6 Estate / home teleport for crafting (S).
+10. (done) 7.6 Estate / home teleport for crafting (S).
 11. (done) 7.12 Production breakdown tree (M).
-12. 7.8 Rotation visibility + manual rotations, and 7.18 assist / craft test /
+12. (done) 7.8 Rotation visibility + manual rotations, and 7.18 assist / craft test /
     lock-step (S–M + S–M): share the rotation view; build together.
 
 ### M2 — Smarter gathering and crafting (≈ 3 weeks)
