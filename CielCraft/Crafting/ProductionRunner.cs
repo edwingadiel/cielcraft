@@ -41,6 +41,8 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
 {
     private static readonly TimeSpan PrepareTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan TeleportTimeout = TimeSpan.FromSeconds(90);
+    private static readonly TimeSpan TeleportReissueAfter = TimeSpan.FromSeconds(8);
+    private int teleportReissues; // Telepo casts re-issued in the current Teleporting phase
     private static readonly TimeSpan AreaTimeout = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(2);
     private const float NodeAreaArrivalRange = 60f;
@@ -617,6 +619,18 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
     private void TickTeleporting()
     {
         var targetTerritory = returnTeleport ? returnTerritoryId : gatherQueue[gatherIndex].TerritoryId;
+
+        // A Telepo cast issued right after a shop or dialog closes can be
+        // swallowed (no loading screen ever comes; seen 2026-09-15 after a
+        // vendor purchase). Re-issue it a few times before giving up.
+        if (!sawLoadingScreen && teleportReissues < 3
+            && Clock.UtcNow - phaseStartedAt > TeleportReissueAfter * (teleportReissues + 1))
+        {
+            teleportReissues++;
+            Log.Information($"[Production] The teleport cast did not start; re-issuing ({teleportReissues}/3).");
+            gameBridge.TeleportToTerritory(targetTerritory);
+            return;
+        }
 
         if (Clock.UtcNow - phaseStartedAt > TeleportTimeout)
         {
@@ -1686,6 +1700,7 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
 
     private void EnterPhase(ProductionState state, string statusText)
     {
+        teleportReissues = 0;
         EnterPreparing();
         Transition(state, statusText);
     }
