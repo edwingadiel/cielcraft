@@ -231,6 +231,44 @@ public interface IGameBridge : ITravelBridge
 
     /// <summary>The item's recast timer is running (cordials share one).</summary>
     bool IsItemOnCooldown(uint itemId);
+
+    // ---- Exchanges (7.17) ----
+
+    /// <summary>
+    /// How much of a currency the character holds: scrips and tomestones live
+    /// in the Currency container, Grand Company seals in the company purse
+    /// (the seal items 20/21/22 map to the character's own company).
+    /// </summary>
+    long GetCurrencyCount(uint currencyItemId);
+
+    /// <summary>GrandCompany row id the character belongs to; 0 when none.</summary>
+    uint GrandCompanyId { get; }
+
+    /// <summary>Grand Company rank (GrandCompanyRank row id); 0 when unranked or unaffiliated.</summary>
+    int GrandCompanyRank { get; }
+
+    /// <summary>
+    /// Buys from the currency-exchange window that is open
+    /// (ShopExchangeCurrency / InclusionShop / GrandCompanyExchange). False
+    /// when no exchange window is up or the item is not on its list; the
+    /// caller verifies by inventory delta either way.
+    /// </summary>
+    bool ExchangeBuy(uint shopId, uint itemId, int count);
+
+    /// <summary>Closes whichever currency-exchange window is open.</summary>
+    void CloseExchangeShop();
+
+    /// <summary>Items in the bag that are collectables at or above a collectability (quality / 10, roadmap 7.23).</summary>
+    int GetCollectableCount(uint itemId, int minCollectability);
+
+    /// <summary>Selects the collectable's row in the open CollectablesShop window. False when it is not listed.</summary>
+    bool TurnInCollectable(uint itemId);
+
+    /// <summary>Confirms the selected turn-in in the open CollectablesShop window.</summary>
+    bool HandInCollectable();
+
+    /// <summary>Closes the CollectablesShop window if it is open.</summary>
+    void CloseCollectablesShop();
 }
 
 /// <summary>One equipped piece's spiritbond (roadmap 7.2): the equipment slot, the item and 0..10000.</summary>
