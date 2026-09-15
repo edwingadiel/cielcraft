@@ -443,6 +443,15 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
             if (Clock.UtcNow - lastCraftEndedAt < Core.Pacing.BetweenCrafts)
                 return;
 
+            // The game refuses a synthesis without a free slot ("Insufficient
+            // inventory space", seen 2026-09-15 on the second craft of a batch):
+            // pause with the reason instead of pressing into the void.
+            if (gameBridge.GetFreeInventorySlots() < 1)
+            {
+                Pause("inventory is full");
+                return;
+            }
+
             if (gameBridge.OpenQuickSynthesisDialog())
                 quickDialogRequested = true;
             return;
