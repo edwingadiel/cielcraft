@@ -34,6 +34,10 @@ public class ConfigWindow : Window, IDisposable
             configuration.Save();
         }
 
+        if (ImGui.SmallButton("Setup checklist"))
+            plugin.ToggleSetupUi();
+        UiTheme.Tooltip("Gearsets, navigation, flight, books and reputations this character has (shown once on first run).");
+
         UiTheme.SectionHeader("Crafting");
         var adaptive = configuration.AdaptiveCrafting;
         if (ImGui.Checkbox("Adaptive crafting", ref adaptive))
@@ -157,10 +161,49 @@ public class ConfigWindow : Window, IDisposable
 
         ImGui.TextDisabled("Completed/paused/failed production is announced in the game chat.");
 
+        DrawAlertSection();
+
         DrawSocialSection();
     }
 
     /// <summary>Roadmap 7.10: what to do when another player pokes a running character.</summary>
+    /// <summary>Sound, speech and exit-on-done (roadmap 7.20).</summary>
+    private void DrawAlertSection()
+    {
+        UiTheme.SectionHeader("Alerts");
+
+        var sound = configuration.AlertSoundEffect;
+        ImGui.SetNextItemWidth(160);
+        if (ImGui.SliderInt("Sound effect##alertSound", ref sound, 0, 16, sound == 0 ? "off" : $"<se.{sound}>"))
+        {
+            configuration.AlertSoundEffect = Math.Clamp(sound, 0, 16);
+            configuration.Save();
+        }
+
+        UiTheme.Tooltip("Played in game when a run completes or stops for you (the same <se.N> sounds as chat macros).");
+
+        var speak = configuration.SpeakAlerts;
+        if (ImGui.Checkbox("Read alerts aloud (Windows speech)", ref speak))
+        {
+            configuration.SpeakAlerts = speak;
+            configuration.Save();
+        }
+
+        ImGui.SameLine();
+        if (ImGui.SmallButton("Test##alert"))
+            plugin.Notifier.Alert("CielCraft test alert.");
+
+        var exit = configuration.ExitGameWhenDone;
+        if (ImGui.Checkbox("Exit the game when the run and queue complete", ref exit))
+        {
+            configuration.ExitGameWhenDone = exit;
+            configuration.Save();
+        }
+
+        if (exit)
+            ImGui.TextColored(UiTheme.Warning, "Sends /shutdown a few seconds after the last production completes. Failures and gentle stops never exit.");
+    }
+
     private void DrawSocialSection()
     {
         UiTheme.SectionHeader("Social");

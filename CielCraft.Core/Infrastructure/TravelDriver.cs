@@ -202,7 +202,7 @@ public sealed class TravelDriver
     /// characters landing on the exact node coordinate look like bots, and
     /// the walk-up leg makes the last stretch precise anyway.
     /// </summary>
-    internal Vector3 RandomLandingSpot()
+    public Vector3 RandomLandingSpot()
     {
         var angle = random.NextDouble() * Math.PI * 2;
         var radius = LandingRange * (0.4 + 0.6 * random.NextDouble());

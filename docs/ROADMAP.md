@@ -59,17 +59,24 @@ This tracks the remaining work toward 1.0. Sizes: S / M / L.
 
 ## Phase 5 — Engineering health
 
-- [ ] 5.1 Extract batch/production/gathering state machines into Core for offline
-  tests (spec §50–51) (L) — still deferred, now the top post-1.0 item: the
-  orchestrators (BatchCrafter, ProductionRunner, GatheringController/Loop) are
-  the riskiest code and the least testable. Plan: give each a pure core driven
-  by synthetic events (CraftStarted, ActionResolved, CraftEnded,
-  InventoryChanged, NavigationCompleted, NodeOpened, Timeout, Pause, Resume)
-  with time/log/framework as seams, and keep the Dalamud classes as thin
-  adapters. Do it after the v1.0 in-game gate, since a pure refactor of
-  validated code needs its own regression pass. All pure decision logic
-  (resolution, adaptive engine, planner, inventory, ET, live-effect mapping,
-  digit parsing) is already in Core with 60 tests
+- [x] 5.1 State machines on Core seams (L) — done 2026-09-15 in two halves.
+  Seams in Core: `ILog`, `IClock`, `IUserNotifier` (with notification
+  kinds), `IActionResolver`, `Throttle`, `AutomationMachine<TState>` (state,
+  status, logged transitions, tick-safe, `OnTransitioned` hook, `Describe`)
+  and `TravelDriver` (mount/fly/land/walk-up, random landing spot). Every
+  machine (CraftStateMonitor, ActionExecutor, CraftAutomator, BatchCrafter,
+  GatheringController, GatheringLoop, ProductionRunner, ProductionQueue,
+  MaintenanceService, SocialGuard core) now derives from the base or reads the
+  seams, and one `FrameworkDriver` ticks them in the original order. The
+  runner and the controller hand their legs to the shared TravelDriver, so the
+  duplicated mount/fly/land logic is gone. `Configuration` derives from
+  `AutomationSettings`, the Dalamud-free settings the machines read.
+- [ ] 5.4 Machines into Core with a fake game bridge (M) — the remaining half
+  of 5.1: move `IGameBridge` and the machines out of the plugin assembly and
+  write offline scenario tests (a batch of three with a verification lag, a
+  gather run across two nodes, a production with a replan) against a scripted
+  bridge. Blocked only on the Dalamud types the bridge interface still
+  mentions (addon names, condition flags) and `Configuration.Save`.
 - [x] 5.2 Weekly scheduled CI against the latest Dalamud distrib to catch API drift (S)
 - [x] 5.3 UI polish to spec §44–46 (plan preview, live production panel, debug errors) (M)
 
@@ -241,12 +248,21 @@ against inventory, pause with a reason.
   level Y" as generated orders, with tradeable-only / rarity / tomestone /
   scrip / GC-seal switches; in-game optimizer auto-equip; mender fallback
   when self-repair is not possible (extends 7.3a).
-- [ ] 7.20 Finish-and-idle behaviours (S) — random landing points near nodes
-  (avoid stacking with other gatherers), "stop gently" (finish the current
-  step then stop), go home / to the aetheryte when done, sound or
-  text-to-speech on completion or error, exit the game when done, a debug
-  mode that stops on unreadable results, and a first-run setup wizard
-  (gearsets, flying, books, reputations).
+- [x] 7.20 Finish-and-idle behaviours (S) — done 2026-09-15: precise legs
+  land on a random spot within 8y of the node (`TravelDriver.RandomLandingSpot`);
+  "Stop after step" on the run panel finishes the current step or gather
+  task, then stops with the run saved as resumable (`ProductionRunner.StopGently`);
+  Settings → Alerts: in-game sound effect (`<se.N>`) and Windows speech on
+  completion/attention notifications, "Exit the game when the run and queue
+  complete" (`RunFinisher`: /shutdown + confirm, 5 s grace, cancelled by any
+  new activity or Stop everything); a first-run setup checklist window
+  (`/cielcraft setup`, shown once on login until dismissed) listing gearsets
+  per job, vnavmesh, flight zones, master books and tribal reputations.
+  Not added on purpose: "go to the aetheryte when done" — the runner already
+  returns to the zone aetheryte after gathering and crafts there; and a
+  "debug mode that stops on unreadable results" — stopping is already the
+  only behaviour (an action that does not resolve pauses the automator, a
+  craft whose inventory gain cannot be verified pauses the batch).
 - [ ] 7.21 Window layout (S) — sidebar navigation like Lisbeth's: Orders /
   Mode, Status (Progress, Crafting Steps, Schedule), Tools (Equipment),
   Settings (Character, General, Crafting, Gathering, ...); the diagnostic
@@ -283,17 +299,17 @@ tag first (the validated build from 2026-09-15) so 2.0 work happens on a
 known base.
 
 ### M0 — Foundations (≈ 2 weeks) — do first, everything else builds on it
-1. 5.1 State machines into Core + the review follow-ups: one TravelDriver
+1. (done, remainder tracked as 5.4) 5.1 State machines into Core + the review follow-ups: one TravelDriver
    (runner + gathering share mount/fly/land), shared Throttled/Retry helper,
    common status/transition base. The orders model, scheduler and sourcing
    all add phases; adding them to five hand-rolled machines is where bugs
    would come from.
-2. 7.16 Character capability model (S–M): flight per zone, books,
+2. (done) 7.16 Character capability model (S–M): flight per zone, books,
    reputations, GP traits. The planner must know these before orders and
    sourcing start trusting it.
-3. 7.10 Trade-request blacklist + 7.20 finish-and-idle behaviours (S + S):
+3. (done) 7.10 Trade-request blacklist + 7.20 finish-and-idle behaviours (S + S):
    safety and looking-human items; cheap, and they protect every later run.
-4. 7.7 Solution cache (S): free speed on repeated recipes; touches only the
+4. (done) 7.7 Solution cache (S): free speed on repeated recipes; touches only the
    solver service.
 
 ### M1 — Daily use (≈ 4 weeks) — the things asked for while testing
@@ -335,11 +351,10 @@ shortens a daily run, then whatever widens what a run can source.
 
 ## Review follow-ups (structural, deferred)
 
-From the full-code review: extract the duplicated mount/fly travel logic
-(ProductionRunner + GatheringController) into one TravelDriver; consolidate the
-five per-class Throttled/RetryInterval copies into a shared helper; a common
-status/transition base for the five state machines; move interference detection
-below ProductionRunner so standalone batches/gathers are covered too.
+From the full-code review. Done under 5.1 (2026-09-15): one TravelDriver for
+the runner and the controller, the shared Throttle, and the AutomationMachine
+base. Still open: move interference detection (manual movement = user took
+over) below ProductionRunner so standalone batches/gathers are covered too.
 
 ## Testing
 

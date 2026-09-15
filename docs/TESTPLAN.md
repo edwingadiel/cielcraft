@@ -197,6 +197,41 @@ Expect: nothing is answered; the run continues; both show up in the report's
 "Social" section with sender and time. A tell from a party member must not be
 listed.
 
+## I. Finish-and-idle behaviours (roadmap 7.20)
+
+**I1. Stop after step** — Run a two-step production (an intermediate plus the
+final item, or a gather plus a craft). While step 1 runs, click **Stop after
+step** (it reads `Finishing step…`).
+Expect: step 1 completes, the run ends with `Stopped gently after step 1/2;
+Resume continues from here.`, and the main window offers the saved
+production's **Resume**. Resume must continue with step 2 only. Clicking the
+button a second time before the step ends cancels the gentle stop.
+
+**I2. Sound and speech** — Settings → Alerts: pick a sound effect, tick
+*Read alerts aloud*, click **Test**.
+Expect: the chosen `<se.N>` plays in game and Windows reads "CielCraft test
+alert." Then run Batch ×1: the completion line in chat is accompanied by the
+sound and the spoken summary; a paused/failed run triggers them too; plain
+progress lines do not.
+
+**I3. Setup checklist** — `/cielcraft setup`.
+Expect: one line per crafting/gathering job with level and whether a gearset
+is saved (red when a levelled job has none), vnavmesh status, flight zone
+count, master book count and tribe count. **Refresh** re-reads; **Done —
+don't show again** stops it opening on login.
+
+**I4. Exit when done** ★ (ends the game session) — Settings → Alerts, tick
+*Exit the game when the run and queue complete*; run Batch ×1 of something
+quick.
+Expect: about 5 s after the completion message the game sends `/shutdown`
+and confirms the prompt; the game closes. With a failed or gently stopped
+run nothing exits. Watch: the log has `[Finish] Exiting the game in 5s` then
+`[Finish] Production and queue complete; exiting the game.`
+
+**I5. Random landing** (with 7.1 / D-tests) — Fly to three nodes in a row.
+Expect: each landing is a few yards to a different side of the node, never
+on top of it, and the walk-up still opens the node.
+
 ---
 
 ## What to paste

@@ -79,4 +79,16 @@ public class InfrastructureTests
         clock.Advance(TimeSpan.FromMinutes(5));
         Assert.Equal(start.AddMinutes(5), clock.UtcNow);
     }
+    [Fact]
+    public void ListNotifierKeepsTheKindWithTheMessage()
+    {
+        var notifier = new ListNotifier();
+        notifier.Print("progress");
+        notifier.Notify(NotificationKind.Completed, "done");
+        notifier.Notify(NotificationKind.Attention, "stuck");
+
+        Assert.Equal(
+            [(NotificationKind.Info, "progress"), (NotificationKind.Completed, "done"), (NotificationKind.Attention, "stuck")],
+            notifier.Messages);
+    }
 }

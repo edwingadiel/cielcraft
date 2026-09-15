@@ -215,6 +215,14 @@ public class MainWindow : Window, IDisposable
             onResume: runner.Resume,
             onStop: runner.Stop);
 
+        // Gentle stop (roadmap 7.20): finish the step, leave the run resumable.
+        ImGui.SameLine();
+        if (UiTheme.TintedButton(runner.StopAfterStep ? "Finishing step…" : "Stop after step", UiTheme.Warning))
+            runner.StopGently();
+        UiTheme.Tooltip(runner.StopAfterStep
+            ? "Stops once the current step or gather task completes. Click again to cancel."
+            : "Finish the current step or gather task, then stop; Resume continues from there.");
+
         // Keep the queue visible (and holdable) while it is driving the runner.
         if (plugin.ProductionQueue.Running || plugin.Configuration.QueueItems.Count > 0)
             DrawQueue();

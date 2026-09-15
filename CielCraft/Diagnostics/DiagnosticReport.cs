@@ -97,6 +97,7 @@ public static class DiagnosticReport
 
         Section(sb, "Production runner");
         Lines(sb, plugin.ProductionRunner.Describe);
+        Lines(sb, plugin.Finisher.Describe);
 
         Section(sb, "Production queue");
         Lines(sb, plugin.ProductionQueue.Describe);

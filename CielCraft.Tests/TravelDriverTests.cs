@@ -148,4 +148,40 @@ public class TravelDriverTests
         Assert.Equal(TravelState.Failed, driver.State);
         Assert.False(nav.IsMoving);
     }
+    [Fact]
+    public void PreciseFlightLandsOnARandomSpotWithinLandingRange()
+    {
+        var nav = new FakeNavigation();
+        var bridge = new FakeTravelBridge { IsMounted = true };
+        var clock = new FakeClock();
+        var driver = new TravelDriver(nav, bridge, clock, new ListLog(), "[Test]", new Random(7));
+        var node = new Vector3(200, 0, 0);
+        driver.Start(node, 2f, fly: true, preciseArrival: true, TimeSpan.FromSeconds(60), "node");
+
+        driver.Tick();
+        Assert.Single(nav.Moves);
+        var landing = nav.Moves[0].Destination with { Y = 0 };
+        var offset = Vector3.Distance(landing, node);
+        Assert.InRange(offset, 0.1f, TravelDriver.LandingRange);
+
+        // Different rolls, different spots.
+        var other = new TravelDriver(nav, bridge, clock, new ListLog(), "[Test]", new Random(8));
+        other.Start(node, 2f, fly: true, preciseArrival: true, TimeSpan.FromSeconds(60), "node");
+        Assert.NotEqual(driver.RandomLandingSpot(), other.RandomLandingSpot());
+    }
+
+    [Fact]
+    public void FailureReasonIsExposedForTheOwnerMessage()
+    {
+        var nav = new FakeNavigation();
+        var bridge = new FakeTravelBridge();
+        var clock = new FakeClock();
+        var driver = new TravelDriver(nav, bridge, clock, new ListLog(), "[Test]");
+        driver.Start(new Vector3(50, 0, 0), 2f, fly: false, preciseArrival: false, TimeSpan.FromSeconds(10), "spot");
+
+        clock.Advance(11);
+        driver.Tick();
+        Assert.Equal(TravelState.Failed, driver.State);
+        Assert.Equal("could not reach spot within 10s", driver.FailureReason);
+    }
 }

@@ -54,11 +54,14 @@ public sealed class Plugin : IDalamudPlugin
     public MaintenanceService Maintenance { get; init; }
     public ProductionQueue ProductionQueue { get; init; }
     public Social.SocialGuard SocialGuard { get; init; }
+    /// <summary>Exit-when-done behaviour (roadmap 7.20).</summary>
+    public RunFinisher Finisher { get; init; }
 
     public readonly WindowSystem WindowSystem = new("CielCraft");
     private ConfigWindow ConfigWindow { get; init; }
     private MainWindow MainWindow { get; init; }
     private DebugWindow DebugWindow { get; init; }
+    private SetupWindow SetupWindow { get; init; }
 
     /// <summary>Crafting stays usable without vnavmesh; only gathering automation needs it (spec §31).</summary>
     internal static bool IsVNavmeshAvailable =>
@@ -98,6 +101,7 @@ public sealed class Plugin : IDalamudPlugin
         ProductionQueue = new ProductionQueue(
             GameBridge, ProductionRunner, RecipeProvider, Configuration, Notifier, Log, () => Capabilities.Current);
         SocialGuard = new Social.SocialGuard(this, GameBridge, Configuration);
+        Finisher = new RunFinisher(ProductionRunner, ProductionQueue, Configuration, GameBridge, Log, SystemClock.Instance);
 
         // One Framework.Update subscription for the automation layers, ticked in
         // the order they used to subscribe in (monitor before executor before
@@ -111,18 +115,21 @@ public sealed class Plugin : IDalamudPlugin
         Driver.Add(GatheringLoop.Tick);
         Driver.Add(ProductionRunner.Tick);
         Driver.Add(ProductionQueue.Tick);
+        Driver.Add(Finisher.Tick);
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);
         DebugWindow = new DebugWindow(this);
+        SetupWindow = new SetupWindow(this);
 
         WindowSystem.AddWindow(ConfigWindow);
         WindowSystem.AddWindow(MainWindow);
         WindowSystem.AddWindow(DebugWindow);
+        WindowSystem.AddWindow(SetupWindow);
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open the CielCraft window. \"/cielcraft config\" settings, \"/cielcraft debug\" debug window, \"/cielcraft report\" copy a diagnostic report, \"/cielcraft pause\" / \"/cielcraft resume\", \"/cielcraft stop\" emergency stop.",
+            HelpMessage = "Open the CielCraft window. \"/cielcraft config\" settings, \"/cielcraft debug\" debug window, \"/cielcraft setup\" setup checklist, \"/cielcraft report\" copy a diagnostic report, \"/cielcraft pause\" / \"/cielcraft resume\", \"/cielcraft stop\" emergency stop.",
         });
 
         PluginInterface.UiBuilder.Draw += DrawUi;
@@ -149,6 +156,7 @@ public sealed class Plugin : IDalamudPlugin
         ConfigWindow.Dispose();
         MainWindow.Dispose();
         DebugWindow.Dispose();
+        SetupWindow.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
         Driver.Dispose();
@@ -163,6 +171,9 @@ public sealed class Plugin : IDalamudPlugin
                 break;
             case "debug":
                 ToggleDebugUi();
+                break;
+            case "setup":
+                SetupWindow.Toggle();
                 break;
             case "stop":
                 StopEverything();
@@ -227,6 +238,7 @@ public sealed class Plugin : IDalamudPlugin
     public void StopEverything()
     {
         Log.Information("[Plugin] Emergency stop requested.");
+        Finisher.Cancel();
         SocialGuard.Core.CancelSettle();
         ProductionQueue.StopQueue();
         Maintenance.Abort();
@@ -304,6 +316,9 @@ public sealed class Plugin : IDalamudPlugin
     private void OnLogin()
     {
         Capabilities.Refresh();
+        // First run on this install: show the checklist once (roadmap 7.20).
+        if (!Configuration.SetupCompleted)
+            SetupWindow.IsOpen = true;
         if (Configuration.OpenMainWindowOnLogin)
             MainWindow.IsOpen = true;
     }
@@ -315,4 +330,6 @@ public sealed class Plugin : IDalamudPlugin
     public void ToggleMainUi() => MainWindow.Toggle();
 
     public void ToggleDebugUi() => DebugWindow.Toggle();
+
+    public void ToggleSetupUi() => SetupWindow.Toggle();
 }
