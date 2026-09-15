@@ -453,16 +453,11 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         if (gameBridge.IsCrafting)
             return;
 
-        // A node window (left over from an earlier run, or opened by hand)
-        // pins the character; travel cannot start until it is closed and the
-        // gathering condition has cleared.
-        if (gameBridge.GetGatheringState() != null || gameBridge.IsGathering)
-        {
-            retry.Try(gameBridge.CloseGatheringWindow);
-            return;
-        }
-
-        // A sourced material (M3): the source's run owns travel and dialogs.
+        // A sourced material (M3): the source's run owns travel and dialogs —
+        // and the gathering condition, when the source is fishing: a rod left
+        // out by a paused run (then a reload, 2026-09-15) raises Gathering
+        // for as long as the character stands there, and the node-window
+        // check below would wait on it until the prepare timeout.
         if (task.Source != null && task.Offer != null)
         {
             sourceRun = task.Source.Start(task.Offer with { Amount = task.Remaining });
@@ -470,6 +465,15 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
                 $"[Production] Source task {gatherDone + 1}/{gatherQueue.Count}: {task.Offer.Description} " +
                 $"({recipeProvider.GetItemName(task.ItemId)} ×{task.Remaining} via {task.Source.Name}).");
             Transition(ProductionState.RunningSource, $"{task.Offer.Description} ({gatherDone + 1}/{gatherQueue.Count}).");
+            return;
+        }
+
+        // A node window (left over from an earlier run, or opened by hand)
+        // pins the character; travel cannot start until it is closed and the
+        // gathering condition has cleared.
+        if (gameBridge.GetGatheringState() != null || gameBridge.IsGathering)
+        {
+            retry.Try(gameBridge.CloseGatheringWindow);
             return;
         }
 
