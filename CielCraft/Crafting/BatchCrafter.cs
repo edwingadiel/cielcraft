@@ -28,6 +28,10 @@ public enum BatchState
 public sealed class BatchCrafter : IDisposable
 {
     private static readonly TimeSpan StartTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan QuickDialogTimeout = TimeSpan.FromSeconds(4);
+
+    /// <summary>Recipes the game refused to quick-synthesize this session (never crafted by this character).</summary>
+    private readonly HashSet<uint> quickSynthRefused = [];
 
     private readonly IGameBridge gameBridge;
     private readonly CraftStateMonitor craftMonitor;
@@ -155,7 +159,8 @@ public sealed class BatchCrafter : IDisposable
         waitStartedAt = DateTime.UtcNow;
         verifyUntil = DateTime.MinValue;
 
-        quickMode = quickSynth && !gameBridge.IsCrafting && gameBridge.IsQuickSynthAvailable;
+        quickMode = quickSynth && !gameBridge.IsCrafting && gameBridge.IsQuickSynthAvailable
+                    && !quickSynthRefused.Contains(gameBridge.SelectedRecipeId);
         if (quickMode)
         {
             var recipe = recipeProvider.GetRecipeById(gameBridge.SelectedRecipeId);
@@ -329,6 +334,29 @@ public sealed class BatchCrafter : IDisposable
         {
             if (gameBridge.OpenQuickSynthesisDialog())
                 quickDialogRequested = true;
+            return;
+        }
+
+        // The game refuses quick synthesis for a recipe this character has
+        // never crafted ("not available until after successfully crafting an
+        // item") and the dialog never opens. Fall back to a normal synthesis
+        // for this step and remember the recipe for the session.
+        if (!gameBridge.IsAddonVisible("SynthesisSimpleDialog"))
+        {
+            if (DateTime.UtcNow - waitStartedAt > QuickDialogTimeout)
+            {
+                recipeId = gameBridge.SelectedRecipeId;
+                quickSynthRefused.Add(recipeId);
+                Plugin.Log.Information(
+                    $"[Production] Quick synthesis dialog did not open for recipe {recipeId} " +
+                    "(recipe never crafted?); switching this batch to normal synthesis.");
+                quickMode = false;
+                quickDialogRequested = false;
+                synthesisFired = false;
+                waitStartedAt = DateTime.UtcNow;
+                Transition(BatchState.StartingCraft, ProgressText());
+            }
+
             return;
         }
 
