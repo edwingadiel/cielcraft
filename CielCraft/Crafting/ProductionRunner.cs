@@ -844,15 +844,18 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
                 break;
 
             case Gathering.GatheringLoopState.Failed:
-                // A timed window that closed with the amount short is not a
-                // failure: keep what was gathered and take the next window (7.15).
-                if (currentVisit != null && !WindowOpen(gatherQueue[gatherIndex]))
+                // A timed visit that ends short — the window closed, or the
+                // loop gave up inside it (an unreachable node, 2026-09-15) —
+                // is not a failure: keep what was gathered and take the next
+                // window (7.15); MissWindow caps the retries.
+                if (currentVisit != null)
                 {
                     var task = gatherQueue[gatherIndex];
                     var gathered = Math.Max(0, gatheringLoop.Gathered);
                     Log.Information(
-                        $"[Schedule] {recipeProvider.GetItemName(task.ItemId)}'s {currentVisit.EtLabel} window closed with " +
-                        $"{gathered}/{task.Remaining} gathered ({gatheringLoop.StatusText}); re-scheduling the rest.");
+                        $"[Schedule] {recipeProvider.GetItemName(task.ItemId)}'s {currentVisit.EtLabel} window " +
+                        (WindowOpen(task) ? "visit failed" : "closed") +
+                        $" with {gathered}/{task.Remaining} gathered ({gatheringLoop.StatusText}); re-scheduling the rest.");
                     gatherQueue[gatherIndex] = task with { Remaining = Math.Max(0, task.Remaining - gathered) };
                     gatherDoneAt = DateTime.MinValue;
                     areaDestination = null;

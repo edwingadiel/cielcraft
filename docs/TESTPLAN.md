@@ -499,6 +499,97 @@ materia extraction window did not respond; materia extraction is off for
 this session.` and the batch continues without pausing. A full bag logs a
 warning once and skips extraction.
 
+## R. Gathering rotation engine (roadmap 7.14)
+
+**R1. Catalogue** — Load the plugin. Expect `[Gather] Action catalogue: 36
+gathering actions resolved from the Action sheet.` (a `WRN … not found`
+list means the game renamed an action; report the names). Settings ›
+Gathering shows the four rotation tables (Normal, Unspoiled, Crystal,
+Collectable), each "wants N GP per node".
+
+**R2. Normal node** — MIN/BTN with ≥ 500 GP; a gather order for more than
+one node's worth (Iron Ore ×10). On the first node expect `[Gather] Node
+facts: point <id>, boon NN%, bonuses …, statuses …; class Normal; row
+texts […]` — the boon must match the window's Gatherer's Boon column —
+then `[Gather] Yield II (rule 2: when gp >= 500, …) — action 241, GP NNN.`
+and the swings; with integrity down and items still needed, `Restore
+Integrity (rule …)`. GP must drop within 5 s of the action; otherwise `WRN
+… did not resolve; skipping buffs for this node.` Validated 2026-09-15 (Iron
+Ore: boon 60% read correctly, Yield II fired, 12–13 ore from one node).
+
+**R3 ★. Unspoiled node** — A timed order (see S). The class logs
+`Unspoiled` even when the runner passed Normal; expect Yield II → Gift II →
+Gift I → Tidings in that order as GP allows, and a bonus condition line
+(`bonuses Perception ≥ N → …`) when the point has one.
+
+**R4 ★. Crystal node** — Gather order for a shard/crystal ×30. Class
+`Crystal`; expect The Giving Land (unless on its 3-min recast: "not usable
+here; skipping"), The Twelve's Bounty, Yield II.
+
+**R5 ★. Collectable node** — A collectable gather order (N3), tier High.
+Expect Collector's Focus, then Scrutiny → Meticulous pairs, Collect at the
+goal; with < 200 GP, Scour.
+
+**R6 ★. Cordials** — Hold NQ and HQ Cordials with GP below the class's want
+(< 500 on a normal node). Between nodes expect `[Gather] Drinking Cordial HQ
+(+350 GP, recast 240s); GP 120/900, the next node wants 500.`; nothing while
+the recast runs, when GP plus the walk's regen already covers the want, or
+while a node window is up.
+
+**R7. Overrides** — Settings › Gathering: paste the built-in Normal text,
+add `when gp >= 100: Luck` at the top, Save. The next node logs `Using the
+Normal rotation override (6 rules)` and `Luck (rule 2 …)`. A bad line shows
+a red per-line error and disables Save; an override broken by hand in the
+config logs `Ignoring the Normal rotation override (…)` once and uses the
+built-in table.
+
+**R8. Buffs off** — "Gathering yield/integrity actions" off: no GP is spent;
+a Eureka Moment still triggers Wise to the World.
+
+## S. Timed-node scheduler (roadmap 7.15)
+
+**S1. Schedule preview** — Orders: a Gather order for an unspoiled item
+(Adamantite Ore ×1, Azys Lla 12:00–14:00 ET), Preview. Status › Schedule
+lists it: kind Unspoiled, next window in ET with the zone, the countdown,
+nodes and yield per visit, windows needed, GP wanted, and the plan order
+below. Validated 2026-09-15 (preview and the run in flight).
+
+**S2 ★. Run with a wait** — Settings › Gathering: "Wait at home for node
+windows" on, 8 min; Settings › Home: Estate Hall (or Stay for the in-place
+variant). Run the order with an untimed material ×20 in the same group
+while the window is > 10 min away.
+Expect `[Schedule] <Untimed> first; <Item>'s hh:mm–hh:mm ET window opens in
+Xm`, the untimed gather, then `[Schedule] Go home for the Xm wait …` /
+`Teleporting to the estate hall to wait for …` / status `Waiting at home
+for <Item>'s … window in <Zone>: opens in …; leaving in …` (Status ›
+Schedule shows the same line). 2 min before the window: `[Schedule] <Item>:
+… window opens in 2m; leaving now (wait over)`, teleport, travel, `At the
+node area; … window opens in Ns`, then `[Production] Gather task …: <Item>
+×N in the … window, ≈K expected from M node(s)` and the node loop as the
+node pops (no "no usable gathering node appeared within 45s").
+
+**S3. Short gap** — An item whose window opens in 3–6 min: `[Schedule] Wait
+here …` and no teleport.
+
+**S4. Window already open** — Run while the window is open: the runner
+teleports and gathers at once. Ran 2026-09-15 (Adamantite Ore ×1 with 5.5
+min left in the window).
+
+**S5 ★. Window closes short** — Order more than one window yields (×60).
+When the window closes: `[Schedule] <Item>'s … window closed with a/b
+gathered (…); re-scheduling the rest.` then a new wait; no Failed state.
+Gentle stop while waiting → `Stopped gently while waiting for a window`;
+Resume continues.
+
+**S6. Cluster refusal** — Order a craft needing a Fire Cluster with none in
+the bag: the run refuses to start and names the ephemeral source (`… comes
+from the aetherial reduction of <collectable> (ephemeral node in <zone>,
+hh:mm–hh:mm ET); reduction is not automated yet`).
+
+**S7. Nothing timed** — A plain untimed + craft run behaves as before
+(untimed gathers, home teleport, crafts); Status › Breakdown ticks still
+follow the steps. Validated 2026-09-15 (Iron Ore ×10 + Iron Rivets).
+
 ---
 
 ## What to paste

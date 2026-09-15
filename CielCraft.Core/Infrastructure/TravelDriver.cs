@@ -90,6 +90,9 @@ public sealed class TravelDriver
     /// foot within <paramref name="arriveWithin"/> (a node); otherwise the leg
     /// ends when within range by any means (an area).
     /// </summary>
+    /// <summary>A landing spot this much higher or lower than the target is another level of the terrain.</summary>
+    public const float MaxLandingDrop = 6f;
+
     public void Start(Vector3 target, float arriveWithinRange, bool fly, bool preciseArrival, TimeSpan legTimeout, string description)
     {
         FailureReason = "";
@@ -181,8 +184,20 @@ public sealed class TravelDriver
             flyAttempted = fly;
             if (fly && precise)
             {
-                var landing = navigation.FindPointOnFloor(RandomLandingSpot(), LandingRange) ?? destination;
-                navigation.MoveCloseTo(landing, 3f, fly: true);
+                // The floor query answers with the first floor in the column:
+                // under a node on a ledge that is the ground far below it
+                // (Azys Lla, 2026-09-15: a landing at Y 0 for a node well
+                // above, then a walk-up that could never climb). Such a spot
+                // is no landing spot; fly to the target itself instead.
+                var spot = RandomLandingSpot();
+                var landing = navigation.FindPointOnFloor(spot, LandingRange);
+                if (landing is { } found && Math.Abs(found.Y - destination.Y) > MaxLandingDrop)
+                {
+                    log.Information($"{logPrefix} Landing spot near {what} is {Math.Abs(found.Y - destination.Y):F0}y below/above it; flying to it directly.");
+                    landing = null;
+                }
+
+                navigation.MoveCloseTo(landing ?? destination, 3f, fly: true);
             }
             else if (fly)
             {

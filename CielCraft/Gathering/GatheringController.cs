@@ -102,6 +102,9 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
     /// <summary>Object id of the node this run targeted; 0 before the first run.</summary>
     public ulong LastNodeId { get; private set; }
 
+    /// <summary>The last failure was the approach (path, mount, timeout), not the node itself; the loop retries such a node once.</summary>
+    public bool LastFailureWasTravel { get; private set; }
+
     /// <summary>Collectables taken from the node of this run (roadmap 7.1); the loop sums them across nodes.</summary>
     public int CollectablesTaken => collectablesTaken;
 
@@ -157,6 +160,7 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
         }
 
         LastNodeId = node.ObjectId;
+        LastFailureWasTravel = false;
         requestedItemId = itemId;
         nodeKind = kind;
         neededCount = needed;
@@ -443,6 +447,7 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
                 EnterPhase(GatheringState.Interacting, $"Arrived at {node.Name}; interacting.");
                 break;
             case TravelState.Failed:
+                LastFailureWasTravel = true;
                 Fail(travel.FailureReason);
                 break;
             default:

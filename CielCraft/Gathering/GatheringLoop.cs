@@ -33,6 +33,7 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
     private readonly Func<CharacterCapabilities> capabilities;
     private readonly IReadOnlyList<CordialInfo> cordials;
     private readonly HashSet<ulong> blacklistedNodes = [];
+    private readonly HashSet<ulong> approachRetried = []; // nodes given a second approach after a travel failure
 
     private static readonly TimeSpan NoNodeTimeout = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan NavmeshTimeout = TimeSpan.FromMinutes(5);
@@ -130,6 +131,7 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
         noNodeSince = DateTime.MaxValue;
         navmeshWaitSince = DateTime.MaxValue;
         blacklistedNodes.Clear();
+        approachRetried.Clear();
 
         Transition(GatheringLoopState.Running, $"Gathering item {itemId} ×{quantity}{TierText()}.");
         return true;
@@ -253,12 +255,19 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
                 controllerActive = false;
                 collectablesTaken += controller.CollectablesTaken; // a node can fail after handing over collectables
                 consecutiveFailures++;
-                if (controller.LastNodeId != 0)
+
+                // An approach that failed says nothing about the node (a
+                // timed node is often the only one there): try it once more
+                // before the blacklist.
+                var retryApproach = controller.LastFailureWasTravel && controller.LastNodeId != 0
+                                    && approachRetried.Add(controller.LastNodeId);
+                if (controller.LastNodeId != 0 && !retryApproach)
                     blacklistedNodes.Add(controller.LastNodeId);
 
                 Log.Warning(
                     $"[Gather] Node run failed ({controller.StatusText}); " +
-                    $"blacklisting node, failure {consecutiveFailures}/{MaxConsecutiveFailures}.");
+                    (retryApproach ? "approaching it once more" : "blacklisting node") +
+                    $", failure {consecutiveFailures}/{MaxConsecutiveFailures}.");
 
                 if (consecutiveFailures >= MaxConsecutiveFailures)
                 {
