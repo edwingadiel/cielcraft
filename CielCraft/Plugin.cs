@@ -103,7 +103,8 @@ public sealed class Plugin : IDalamudPlugin
             Capabilities, Log, SystemClock.Instance, Notifier);
         SocialGuard = new Social.SocialGuard(this, GameBridge, Configuration);
         OrderRunner = new OrderRunner(
-            ProductionRunner, RecipeProvider, GameBridge, Configuration, () => Capabilities.Current, Notifier, Log, SystemClock.Instance);
+            ProductionRunner, RecipeProvider, GameBridge, Configuration, () => Capabilities.Current, Notifier, Log, SystemClock.Instance,
+            SolverService); // planning solves (7.22) land in the same disk cache the batch reads
         Finisher = new RunFinisher(ProductionRunner, OrderRunner, Configuration, GameBridge, Log, SystemClock.Instance);
 
         // One Framework.Update subscription for the automation layers, ticked in

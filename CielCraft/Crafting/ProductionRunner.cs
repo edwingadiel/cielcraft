@@ -922,12 +922,15 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
                     "solving for the configured target quality.");
         }
 
-        if (batchCrafter.Start(step.Crafts, quick, requireHq, targetQuality))
+        // HQ intermediates (7.22): the planner marked how many of this step's
+        // crafts must land HQ to seed the final craft's quality.
+        if (batchCrafter.Start(step.Crafts, quick, requireHq, targetQuality, step.HqCrafts))
         {
             Log.Information(
                 $"[Production] Step {stepIndex + 1}/{TotalSteps}: " +
                 $"{recipeProvider.GetItemName(step.ItemId)} ×{step.TotalProduced} ({step.Crafts} crafts" +
                 (quick ? ", quick synthesis" : "") + (requireHq ? ", HQ required" : "") +
+                (step.HqCrafts > 0 ? $", {step.HqCrafts} HQ first" : "") +
                 (collectable ? $", {step.CollectableTier} collectable" + (targetQuality > 0 ? $" ≥ {targetQuality / 10} collectability" : "") : "") + ").");
             Transition(ProductionState.RunningBatch, StepText("Crafting"));
         }
@@ -1067,6 +1070,8 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
             $"[Production] Replanning ({reason}): still needed " +
             string.Join(", ", remaining.Select(t => $"{recipeProvider.GetItemName(t.ItemId)} ×{t.Quantity}")) + ".");
         var newPlan = DependencyResolver.Resolve(remaining, recipeProvider, gameBridge.GetItemCount, capabilities.Current);
+        // A re-resolve drops HqCrafts (7.22); the session cache restores the answers without a solve.
+        newPlan = HqIntermediatePlanner.Current?.ApplyCached(newPlan, inFlight: true) ?? newPlan;
 
         if (!TryBuildGatherQueue(newPlan))
         {
@@ -1236,6 +1241,7 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         }
 
         var resumedPlan = DependencyResolver.Resolve(remaining, recipeProvider, gameBridge.GetItemCount, capabilities.Current);
+        resumedPlan = HqIntermediatePlanner.Current?.ApplyCached(resumedPlan, inFlight: true) ?? resumedPlan; // 7.22
         if (resumedPlan.CraftSteps.Count == 0 && resumedPlan.RawMaterials.Count == 0)
         {
             DiscardSaved();

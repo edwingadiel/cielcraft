@@ -87,6 +87,10 @@ internal sealed class SettingsPanel
             v => { configuration.PreferHqMaterials = v; Save(); },
             "Use HQ ingredients from the bag where they raise the starting quality.");
 
+        UiTheme.Toggle("HQ intermediates when needed", configuration.HqIntermediates,
+            v => { configuration.HqIntermediates = v; Save(); },
+            "Before a run, check whether each final recipe reaches its quality target from NQ materials; if not, craft just enough intermediates HQ to seed the starting quality (7.22).");
+
         UiTheme.SectionHeader("Hands-on (7.18)");
 
         UiTheme.Toggle("Assist mode", configuration.AssistMode,
