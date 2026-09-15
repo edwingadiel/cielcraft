@@ -184,6 +184,57 @@ against inventory, pause with a reason.
   consumed where. Same view live during a run with progress ticks per node,
   and as text in the report and via a "/cielcraft plan" command.
 
+### Borrowed from Lisbeth (reviewed 2026-09-15)
+
+- [ ] 7.13 Orders model (M) — replace the single target + queue with orders:
+  per-order amount mode (Absolute / **Restock** = top the bag up to N),
+  production mode (Any / Force HQ / Collectable / Quick Synth), "materials
+  only" (skip the final craft), side orders, and order *groups* that run in
+  sequence while orders inside a group are planned together (shared
+  sub-crafts, one gather trip per material). Import/export as JSON and
+  import from a Teamcraft list. Perpetual mode: restart the orders when done.
+- [ ] 7.14 Gathering rotation engine (M) — today buffs are hard-coded (one
+  yield buff, Solid Reason when it pays). Replace with conditional rotation
+  tables per node class (normal / unspoiled yield / crystal / collectable):
+  GP thresholds, Gatherer's Boon, the unspoiled bonus conditions (bonus
+  yield / attempts / boon), Eureka Moment → Wise to the World, Twelve's
+  Bounty / Giving Land for crystals; user overrides in the same format.
+  Cordial types (HQ, watered, hi-cordial) and cooldown-at-node awareness.
+- [ ] 7.15 Timed-node scheduler (M) — a Schedule view: upcoming unspoiled /
+  legendary windows for every planned item, slots computed from GP
+  regeneration, cordials and rotation cost, travel started early enough to
+  be at the node when it pops; between windows do untimed work or wait at
+  the home spot (ties into 7.6). Aetherial reduction of ephemerals for
+  crystal clusters, with per-element crystal spot preferences.
+- [ ] 7.16 Character capability model (S–M) — flying unlocked per zone,
+  master-book recipes, tribe reputation ranks, GP-regen traits, read from
+  the game where possible; source availability and the planner honour them
+  (no fly-only nodes without flight, no locked recipes). Refresh on login.
+- [ ] 7.17 Sourcing beyond gather/craft (L) — vendor purchase with a max gil
+  cap (extends 7.3b), scrip / tomestone / Grand Company exchanges, a
+  collectables planner that works out which turn-ins earn the scrips an
+  order needs (cheapest or fastest), retainer inventory + ventures +
+  storage rules, desynthesis and trash cleanup of unused byproducts.
+- [ ] 7.18 Assist mode, craft test, lock-step (S–M) — Assist: auto-run any
+  synthesis the user starts by hand. Craft Test: solve for chosen stats and
+  recipe and show the rotation with expected progress/quality/HQ%% and solve
+  time (extends 7.8). Lock-step: pause before every action for expensive
+  crafts (fits the pause command).
+- [ ] 7.19 Equipment set builder (M) — "make a full gear set for job X at
+  level Y" as generated orders, with tradeable-only / rarity / tomestone /
+  scrip / GC-seal switches; in-game optimizer auto-equip; mender fallback
+  when self-repair is not possible (extends 7.3a).
+- [ ] 7.20 Finish-and-idle behaviours (S) — random landing points near nodes
+  (avoid stacking with other gatherers), "stop gently" (finish the current
+  step then stop), go home / to the aetheryte when done, sound or
+  text-to-speech on completion or error, exit the game when done, a debug
+  mode that stops on unreadable results, and a first-run setup wizard
+  (gearsets, flying, books, reputations).
+- [ ] 7.21 Window layout (S) — sidebar navigation like Lisbeth's: Orders /
+  Mode, Status (Progress, Crafting Steps, Schedule), Tools (Equipment),
+  Settings (Character, General, Crafting, Gathering, ...); the diagnostic
+  report and log as a Status page.
+
 Cross-cutting for 2.0: the planner grows a "source" per missing material
 (gather / fish / buy / hunt / stored-in-retainer), chosen by preference and
 availability; the runner gets one phase per source. That is the point where
