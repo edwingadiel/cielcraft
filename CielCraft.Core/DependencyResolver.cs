@@ -22,8 +22,17 @@ public interface IRecipeProvider
     string GetItemName(uint itemId);
 }
 
-/// <summary>One aggregated craft step; total output is Crafts * ResultAmount.</summary>
-public sealed record PlannedCraft(uint RecipeId, uint ItemId, int Crafts, int ResultAmount)
+/// <summary>
+/// One aggregated craft step; total output is Crafts * ResultAmount. Mode is
+/// the order's production mode for a target step (roadmap 7.13) and Any for
+/// intermediates, which the runner quick-synthesizes per the settings.
+/// </summary>
+public sealed record PlannedCraft(
+    uint RecipeId,
+    uint ItemId,
+    int Crafts,
+    int ResultAmount,
+    ProductionMode Mode = ProductionMode.Any)
 {
     public int TotalProduced => Crafts * ResultAmount;
 }
@@ -33,13 +42,25 @@ public sealed record MissingMaterial(uint ItemId, int Amount);
 /// <summary>
 /// The resolved production graph, flattened to executable order: CraftSteps is
 /// dependency-ordered (every step's ingredients are produced by earlier steps
-/// or covered by inventory/raw materials), the target step last.
+/// or covered by inventory/raw materials), target steps last. A plan can
+/// carry several targets (an order group planned together, roadmap 7.13).
 /// </summary>
 public sealed record ProductionPlan(
-    uint TargetItemId,
-    int TargetQuantity,
+    IReadOnlyList<PlanTarget> Targets,
     IReadOnlyList<PlannedCraft> CraftSteps,
-    IReadOnlyList<MissingMaterial> RawMaterials);
+    IReadOnlyList<MissingMaterial> RawMaterials)
+{
+    /// <summary>Single-target plan.</summary>
+    public ProductionPlan(uint targetItemId, int targetQuantity, IReadOnlyList<PlannedCraft> craftSteps, IReadOnlyList<MissingMaterial> rawMaterials)
+        : this([new PlanTarget(targetItemId, targetQuantity)], craftSteps, rawMaterials)
+    {
+    }
+
+    /// <summary>The first target; what single-target callers report on.</summary>
+    public uint TargetItemId => Targets.Count > 0 ? Targets[0].ItemId : 0;
+
+    public int TargetQuantity => Targets.Count > 0 ? Targets[0].Quantity : 0;
+}
 
 /// <summary>
 /// Recursive dependency expansion (spec §20/§21). Craftable ingredients expand
@@ -59,14 +80,41 @@ public static class DependencyResolver
         int quantity,
         IRecipeProvider recipes,
         Func<uint, int> ownedOf,
+        CharacterCapabilities? capabilities = null) =>
+        Resolve([new PlanTarget(targetItemId, quantity)], recipes, ownedOf, capabilities);
+
+    /// <summary>
+    /// Several targets planned as one graph (roadmap 7.13): stock is consumed
+    /// once across all of them, shared intermediates merge into one step, and
+    /// a materials-only target expands its ingredients without its own craft.
+    /// Targets are expanded in order, so an earlier target's surplus feeds a
+    /// later one.
+    /// </summary>
+    public static ProductionPlan Resolve(
+        IReadOnlyList<PlanTarget> targets,
+        IRecipeProvider recipes,
+        Func<uint, int> ownedOf,
         CharacterCapabilities? capabilities = null)
     {
         var state = new State(recipes, ownedOf, capabilities);
-        state.Expand(targetItemId, quantity, useStock: false, depth: 0);
+        foreach (var target in targets)
+        {
+            if (target.MaterialsOnly)
+                state.ExpandIngredientsOnly(target.ItemId, target.Quantity);
+            else
+                state.Expand(target.ItemId, target.Quantity, useStock: false, depth: 0);
+        }
+
+        // A target's mode belongs to its own step; a step that is both a
+        // target and someone's intermediate keeps the target's mode.
+        foreach (var target in targets)
+        {
+            if (!target.MaterialsOnly && state.Crafts.TryGetValue(target.ItemId, out var step))
+                state.Crafts[target.ItemId] = step with { Mode = target.Mode };
+        }
 
         return new ProductionPlan(
-            targetItemId,
-            quantity,
+            targets,
             state.CraftOrder.Select(itemId => state.Crafts[itemId]).ToList(),
             state.Raw.Select(pair => new MissingMaterial(pair.Key, pair.Value)).ToList());
     }
@@ -79,6 +127,18 @@ public static class DependencyResolver
 
         private readonly Dictionary<uint, int> stock = new();
         private readonly HashSet<uint> expanding = [];
+
+        /// <summary>Materials-only target: what its crafts would consume, without the crafts themselves.</summary>
+        public void ExpandIngredientsOnly(uint itemId, int needed)
+        {
+            var recipe = recipes.FindRecipeForItem(itemId);
+            if (recipe == null || needed <= 0)
+                return;
+
+            var crafts = (needed + recipe.ResultAmount - 1) / recipe.ResultAmount;
+            foreach (var (ingredientId, amount) in recipe.Ingredients)
+                Expand(ingredientId, crafts * amount, useStock: true, depth: 1);
+        }
 
         public void Expand(uint itemId, int needed, bool useStock, int depth)
         {

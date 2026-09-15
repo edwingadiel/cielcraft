@@ -53,6 +53,8 @@ public sealed class Plugin : IDalamudPlugin
     public Gathering.GatheringLoop GatheringLoop { get; init; }
     public MaintenanceService Maintenance { get; init; }
     public ProductionQueue ProductionQueue { get; init; }
+    /// <summary>Order book runner (roadmap 7.13); replaces ProductionQueue.</summary>
+    public OrderRunner OrderRunner { get; init; }
     public Social.SocialGuard SocialGuard { get; init; }
     /// <summary>Exit-when-done behaviour (roadmap 7.20).</summary>
     public RunFinisher Finisher { get; init; }
@@ -101,7 +103,9 @@ public sealed class Plugin : IDalamudPlugin
         ProductionQueue = new ProductionQueue(
             GameBridge, ProductionRunner, RecipeProvider, Configuration, Notifier, Log, () => Capabilities.Current);
         SocialGuard = new Social.SocialGuard(this, GameBridge, Configuration);
-        Finisher = new RunFinisher(ProductionRunner, ProductionQueue, Configuration, GameBridge, Log, SystemClock.Instance);
+        OrderRunner = new OrderRunner(
+            ProductionRunner, RecipeProvider, GameBridge, Configuration, () => Capabilities.Current, Notifier, Log, SystemClock.Instance);
+                Finisher = new RunFinisher(ProductionRunner, ProductionQueue, Configuration, GameBridge, Log, SystemClock.Instance);
 
         // One Framework.Update subscription for the automation layers, ticked in
         // the order they used to subscribe in (monitor before executor before
@@ -115,6 +119,7 @@ public sealed class Plugin : IDalamudPlugin
         Driver.Add(GatheringLoop.Tick);
         Driver.Add(ProductionRunner.Tick);
         Driver.Add(ProductionQueue.Tick);
+        Driver.Add(OrderRunner.Tick);
         Driver.Add(Finisher.Tick);
 
         ConfigWindow = new ConfigWindow(this);
