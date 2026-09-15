@@ -45,6 +45,7 @@ public class MainWindow : Window, IDisposable
         public const string SettingsHome = "Settings/Home";
         public const string SettingsAlerts = "Settings/Alerts";
         public const string SettingsSocial = "Settings/Social";
+        public const string SettingsSourcing = "Settings/Sourcing";
     }
 
     private sealed record PageDef(string Id, string Section, string Label);
@@ -72,6 +73,7 @@ public class MainWindow : Window, IDisposable
         new(Pages.SettingsHome, "Settings", "Home"),
         new(Pages.SettingsAlerts, "Settings", "Alerts"),
         new(Pages.SettingsSocial, "Settings", "Social"),
+        new(Pages.SettingsSourcing, "Settings", "Sourcing"),
     ];
 
     private static readonly string[] Sections = ["Orders", "Status", "Tools", "Settings"];
@@ -332,6 +334,9 @@ public class MainWindow : Window, IDisposable
                 break;
             case Pages.SettingsSocial:
                 settings.DrawSocial();
+                break;
+            case Pages.SettingsSourcing:
+                settings.DrawSourcing();
                 break;
         }
     }

@@ -257,6 +257,68 @@ internal sealed class SettingsPanel
     // ------------------------------------------------------------- social
 
     /// <summary>Roadmap 7.10: what to do when another player pokes a running character.</summary>
+    /// <summary>Settings › Sourcing: vendors, exchanges, retainers, cleanup, fishing (M3).</summary>
+    public void DrawSourcing()
+    {
+        UiTheme.SectionHeader("Gil (7.3b)");
+        var floor = (int)Math.Min(int.MaxValue, configuration.GilFloor);
+        ImGui.SetNextItemWidth(160);
+        if (ImGui.InputInt("Gil floor", ref floor, 1000, 10000))
+        {
+            configuration.GilFloor = Math.Max(0, floor);
+            Save();
+        }
+
+        UiTheme.Hint("Vendors and exchanges never spend below this balance.");
+
+        var cap = (int)Math.Min(int.MaxValue, configuration.GilSpendCapPerRun);
+        ImGui.SetNextItemWidth(160);
+        if (ImGui.InputInt("Gil per run", ref cap, 1000, 10000))
+        {
+            configuration.GilSpendCapPerRun = Math.Max(0, cap);
+            Save();
+        }
+
+        UiTheme.Hint("The most one run may spend at vendors; resets when a run starts.");
+
+        UiTheme.Toggle("Buy gatherable materials when a vendor sells them", configuration.BuyWhenGatherable,
+            v => { configuration.BuyWhenGatherable = v; Save(); },
+            "Prefer the shop trip over the node for cheap materials; gil rules above still apply.");
+
+        UiTheme.SectionHeader("Repairs (7.3a)");
+        UiTheme.Toggle("Walk to a mender when there is no Dark Matter", configuration.MenderRepair,
+            v => { configuration.MenderRepair = v; Save(); },
+            "Self-repair stays first; the nearest placed mender is used when the bag has no Dark Matter.");
+
+        UiTheme.SectionHeader("Scrips (7.17)");
+        var preference = (int)configuration.ScripSourcePreference;
+        ImGui.SetNextItemWidth(160);
+        if (ImGui.Combo("Turn-ins", ref preference, "Cheapest\0Fastest\0"))
+        {
+            configuration.ScripSourcePreference = (ScripSourcePreference)preference;
+            Save();
+        }
+
+        UiTheme.Hint("How the collectables planner picks turn-ins when an order needs scrips: fewest materials, or fewest trips.");
+
+        UiTheme.SectionHeader("Retainers and cleanup (7.17)");
+        UiTheme.Toggle("Retainer ventures", configuration.RetainerVentures,
+            v => { configuration.RetainerVentures = v; Save(); },
+            "Collect a returning venture that brings a missing material.");
+        UiTheme.Toggle("Desynthesize unused byproducts", configuration.DesynthUnusedByproducts,
+            v => { configuration.DesynthUnusedByproducts = v; Save(); },
+            "After a run, desynthesize items a storage rule marks Desynth; nothing without a rule is touched.");
+        UiTheme.Toggle("Discard trash", configuration.TrashCleanup,
+            v => { configuration.TrashCleanup = v; Save(); },
+            "After a run, discard items a storage rule marks Discard; nothing without a rule is touched.");
+        UiTheme.Hint("Storage rules live on Tools › Inventory.");
+
+        UiTheme.SectionHeader("Fishing (7.4)");
+        UiTheme.Toggle("Prefer AutoHook for bite timing", configuration.FishingPreferAutoHook,
+            v => { configuration.FishingPreferAutoHook = v; Save(); },
+            "When the AutoHook plugin is installed, let it hook; otherwise the built-in loop hooks by tug.");
+    }
+
     public void DrawSocial()
     {
         UiTheme.Toggle("Decline trade requests during a run", configuration.SocialDeclineTrades,
