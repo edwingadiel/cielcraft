@@ -125,6 +125,8 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
     private DateTime lastHousekeepingAt = DateTime.MinValue;
     private DateTime lastCordialAt = DateTime.MinValue;
     private int waterProbe;                             // ring points tried around the marker when no water is in range
+    private bool edgeRemembered;                        // this run already saved where the water was in range
+    private readonly Action? persist;                   // saves the settings after a water's edge is remembered
     private FishingPhase lastPhase = FishingPhase.None;
     private (FishAction Action, uint ActionId, FishingPhase PhaseBefore, DateTime At)? pending;
     private string lastDecision = "-";
@@ -140,9 +142,11 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         IAutoHookControl? autoHook = null,
         Func<CharacterCapabilities>? capabilities = null,
         Func<uint, string>? zoneName = null,
-        IReadOnlyList<CordialInfo>? cordials = null)
+        IReadOnlyList<CordialInfo>? cordials = null,
+        Action? persist = null)
         : base(log, clock, "[Fishing]", FishingRunState.Idle, "Idle.")
     {
+        this.persist = persist;
         this.bridge = bridge;
         this.navigation = navigation;
         this.configuration = configuration;
@@ -222,6 +226,7 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         casts = 0;
         waterProbe = 0;
         rodAwayTries = 0;
+        edgeRemembered = false;
         castsWithoutTarget = 0;
         caughtAtLastCheck = 0;
         autoHookEngaged = false;
@@ -293,7 +298,7 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         return false;
     }
 
-    private const int RodAwayTries = 4;
+    private const int RodAwayTries = 8; // a reel-in animation refuses Quit for a few seconds
     private int rodAwayTries;
 
     public void Resume()
@@ -343,12 +348,13 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         travel.Stop();
         navigation.Stop();
         DisengageAutoHook();
+        rodAwayTries = 0; // PutRodAway after a Stop gets the full budget
         if (bridge.IsFishing || bridge.IsGathering) // the stance alone raises Gathering
             bridge.ExecuteCraftAction(catalog.Id(FishAction.Quit));
 
         pending = null;
         if (State is not (FishingRunState.Idle or FishingRunState.Completed or FishingRunState.Failed))
-            Transition(FishingRunState.Idle, $"Stopped by user at {Caught}/{targetAmount}.");
+            Transition(FishingRunState.Idle, $"Stopped at {Caught}/{targetAmount}.");
     }
 
     protected override void OnTick()
@@ -494,11 +500,34 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         // mesh never gets a path (Central Shroud, 2026-09-15), so ask vnavmesh
         // for the floor under it first; the raw point stays the fallback.
         var destination = navigation.FindPointOnFloor(plan!.Spot.Position, 25f) ?? plan.Spot.Position;
+
+        // A visit that found the water already knows the bank (7.4): go there.
+        if (configuration.FishingWaterEdges.TryGetValue(plan.Spot.SpotId, out var edge))
+        {
+            var known = new Vector3(edge.X, edge.Y, edge.Z);
+            destination = navigation.FindPointOnFloor(known, 6f) ?? known;
+            travel.Start(destination, 2f, fly, preciseArrival: false, TravelTimeout, plan.Spot.Name);
+            EnterPhase(FishingRunState.Traveling, statusText);
+            return;
+        }
+
         travel.Start(destination, ArriveWithin, fly, preciseArrival: false, TravelTimeout, plan.Spot.Name);
         EnterPhase(FishingRunState.Traveling, statusText);
     }
 
     private const int WaterProbeCount = 16; // two rings of eight points, 12 y and 24 y out
+
+    /// <summary>The game says the water is in range here: keep the spot for the next visit when the ring had to look for it.</summary>
+    private void RememberWaterEdge()
+    {
+        if (edgeRemembered || waterProbe == 0 || plan == null || bridge.PlayerPosition is not { } here)
+            return;
+
+        edgeRemembered = true;
+        configuration.FishingWaterEdges[plan.Spot.SpotId] = new FishingWaterEdge { X = here.X, Y = here.Y, Z = here.Z };
+        persist?.Invoke();
+        Log.Information($"[Fishing] Water in range {Vector3.Distance(here, plan.Spot.Position):F0}y from {plan.Spot.Name}'s marker; remembered for next time.");
+    }
 
     /// <summary>Walk to the next point of the ring around the marker; the arrival re-checks the game's CanFish.</summary>
     private void StartWaterProbe()
@@ -881,6 +910,7 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         }
 
         castBlockedSince = DateTime.MaxValue;
+        RememberWaterEdge();
         retry.Try(() =>
         {
             if (Fire(FishAction.Cast, phase))

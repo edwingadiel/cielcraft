@@ -145,7 +145,7 @@ public sealed class Plugin : IDalamudPlugin
         FishingController = new Fishing.FishingController(
             GameBridge, Navigation, Configuration, FishingDatabase, Log, SystemClock.Instance,
             FishingSheetReader.CreateActionCatalog(Log), new Fishing.AutoHookIpc(), () => Capabilities.Current,
-            GatheringDatabase.GetTerritoryName, gatheringCatalog.Cordials);
+            GatheringDatabase.GetTerritoryName, gatheringCatalog.Cordials, persist: Configuration.Save);
         FishingSource = new Sourcing.FishingSource(
             GameBridge, FishingDatabase, FishingController, Log, SystemClock.Instance,
             baitVendor: VendorSource, zoneName: GatheringDatabase.GetTerritoryName);

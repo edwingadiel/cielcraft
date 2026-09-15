@@ -155,6 +155,14 @@ public class AutomationSettings
     /// </summary>
     public System.Collections.Generic.Dictionary<uint, FishingBaitChoice> FishingBait { get; set; } = new();
 
+    /// <summary>
+    /// Where the water was actually in casting range, per FishingSpot row
+    /// (roadmap 7.4). The sheet's marker sits near the hole, not on its bank;
+    /// the point the probe ring found is remembered so the next visit walks
+    /// straight there instead of probing again (about 25 s a visit, 2026-09-15).
+    /// </summary>
+    public System.Collections.Generic.Dictionary<uint, FishingWaterEdge> FishingWaterEdges { get; set; } = new();
+
     // ---- M4 package A: remembered hunt spots (roadmap 7.5) ----
 
     /// <summary>
@@ -165,6 +173,17 @@ public class AutomationSettings
     /// which turns a zone sweep into a teleport and a short ride.
     /// </summary>
     public System.Collections.Generic.List<HuntSpot> HuntSpots { get; set; } = [];
+}
+
+/// <summary>A remembered casting position for a fishing hole (roadmap 7.4); floats so the serializer round-trips it.</summary>
+[System.Serializable]
+public sealed class FishingWaterEdge
+{
+    public float X { get; set; }
+
+    public float Y { get; set; }
+
+    public float Z { get; set; }
 }
 
 /// <summary>

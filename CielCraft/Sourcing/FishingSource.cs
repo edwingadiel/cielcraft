@@ -300,12 +300,29 @@ public sealed class FishingRun : ISourceRun
         }
     }
 
+    private bool stowing; // Stop was asked for; the rod may still be out
+
     private void Finish()
     {
         // Only this run's own controller: the source hands the same instance to
         // every run, and stopping it blind would stow another run's rod.
         if (controllerStarted)
-            controller.Stop();
+        {
+            if (!stowing)
+            {
+                controller.Stop();
+                stowing = true;
+            }
+
+            // The Quit that Stop fires is refused while the last catch is
+            // still being reeled in (2026-09-15), and the runner's return
+            // teleport is refused for as long as the rod is out: keep asking.
+            if (!controller.PutRodAway())
+            {
+                StatusText = "Putting the rod away.";
+                return;
+            }
+        }
 
         State = SourceRunState.Completed;
         StatusText = $"Fished {Obtained}/{offer.Amount} {plan?.FishName ?? "fish"}.";

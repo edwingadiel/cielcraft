@@ -504,6 +504,39 @@ public class FishingTests
     }
 
     [Fact]
+    public void TheRingPointThatFoundWaterIsRememberedAndUsedByTheNextVisit()
+    {
+        var harness = Build();
+        harness.Bridge.CanFish = false;
+        Assert.True(harness.Controller.Start(BlackEel, 1));
+        Assert.True(harness.PumpUntil(() => harness.Controller.State == FishingRunState.Fishing));
+
+        // Twenty seconds with no water in range: the first ring point (12 y at 0°) is tried.
+        Assert.True(harness.PumpUntil(() => harness.Controller.State == FishingRunState.Traveling, maxTicks: 40));
+        Assert.Contains(harness.Log.Lines, l => l.Contains("trying 12y at 0°"));
+
+        // The walk ends there and the game now says the water is in range:
+        // the cast fires and the point is kept for the next visit.
+        harness.Bridge.Position = new Vector3(112, 0, 100);
+        harness.Bridge.CanFish = true;
+        harness.Bridge.PoleReady();
+        Assert.True(harness.PumpUntil(() => harness.Bridge.Calls.Contains("Action(289)")));
+        var edge = Assert.Contains(11u, (IReadOnlyDictionary<uint, FishingWaterEdge>)harness.Settings.FishingWaterEdges);
+        Assert.Equal(112f, edge.X);
+        Assert.Contains(harness.Log.Lines, l => l.Contains("remembered for next time"));
+
+        // The next visit starts at the marker and walks to the remembered
+        // point: the marker's own 12 y circle would have counted as arrived.
+        harness.Controller.Stop();
+        harness.Bridge.Position = new Vector3(100, 0, 100);
+        Assert.True(harness.Controller.Start(BlackEel, 1));
+        Assert.True(harness.PumpUntil(() => harness.Controller.State == FishingRunState.Traveling));
+        Assert.False(harness.PumpUntil(() => harness.Controller.State != FishingRunState.Traveling, maxTicks: 5));
+        harness.Bridge.Position = new Vector3(112, 0, 100);
+        Assert.True(harness.PumpUntil(() => harness.Controller.State == FishingRunState.Fishing));
+    }
+
+    [Fact]
     public void ACastIsFiredOnceAndOnlyRepeatedAfterTheStateMovesOn()
     {
         var harness = Build();
