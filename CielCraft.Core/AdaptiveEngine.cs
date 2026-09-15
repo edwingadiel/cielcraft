@@ -132,6 +132,16 @@ public static class AdaptiveEngine
             if (wasteNot > 0)
                 cost /= 2;
             StepDurability(ref durability, ref wasteNot, ref manipulation, cost, state.MaxDurability);
+
+            // Buffs and mends the plan itself applies take effect from the next step.
+            switch (action)
+            {
+                case 4574: manipulation = 8; break;                                   // Manipulation
+                case 4631: wasteNot = 4; break;                                       // Waste Not
+                case 4639: wasteNot = 8; break;                                       // Waste Not II
+                case 100003: durability = Math.Min(durability + 30, state.MaxDurability); break; // Master's Mend
+                case 100467: durability = state.MaxDurability; break;                 // Immaculate Mend
+            }
         }
 
         return true;

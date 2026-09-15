@@ -93,7 +93,7 @@ public sealed class Plugin : IDalamudPlugin
 
         CommandManager.AddHandler(CommandName, new CommandInfo(OnCommand)
         {
-            HelpMessage = "Open the CielCraft window. \"/cielcraft config\" settings, \"/cielcraft debug\" debug window, \"/cielcraft report\" copy a diagnostic report, \"/cielcraft stop\" emergency stop.",
+            HelpMessage = "Open the CielCraft window. \"/cielcraft config\" settings, \"/cielcraft debug\" debug window, \"/cielcraft report\" copy a diagnostic report, \"/cielcraft pause\" / \"/cielcraft resume\", \"/cielcraft stop\" emergency stop.",
         });
 
         PluginInterface.UiBuilder.Draw += DrawUi;
@@ -138,6 +138,12 @@ public sealed class Plugin : IDalamudPlugin
             case "stop":
                 StopEverything();
                 break;
+            case "pause":
+                PauseTopLayer();
+                break;
+            case "resume":
+                ResumeTopLayer();
+                break;
             case "report":
                 SaveAndCopyReport();
                 break;
@@ -145,6 +151,28 @@ public sealed class Plugin : IDalamudPlugin
                 ToggleMainUi();
                 break;
         }
+    }
+
+    /// <summary>Pauses whichever automation layer is driving right now (runner, else batch, else gather loop).</summary>
+    public void PauseTopLayer()
+    {
+        if (ProductionRunner.State is not (ProductionState.Idle or ProductionState.Completed or ProductionState.Failed or ProductionState.Paused))
+            ProductionRunner.Pause("paused by command");
+        else if (BatchCrafter.State is BatchState.Solving or BatchState.StartingCraft or BatchState.Crafting or BatchState.QuickStarting or BatchState.QuickRunning)
+            BatchCrafter.Pause("paused by command");
+        else if (GatheringLoop.State == Gathering.GatheringLoopState.Running)
+            GatheringLoop.Pause("paused by command");
+    }
+
+    /// <summary>Resumes whichever layer is paused (runner, else batch, else gather loop).</summary>
+    public void ResumeTopLayer()
+    {
+        if (ProductionRunner.State == ProductionState.Paused)
+            ProductionRunner.Resume();
+        else if (BatchCrafter.State == BatchState.Paused)
+            BatchCrafter.Resume();
+        else if (GatheringLoop.State == Gathering.GatheringLoopState.Paused)
+            GatheringLoop.Resume();
     }
 
     /// <summary>Emergency stop (spec §48): halts every automation layer at once.</summary>

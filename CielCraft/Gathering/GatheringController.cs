@@ -35,8 +35,11 @@ public sealed class GatheringController : IDisposable
     // walk right up to it. MoveCloseTo aims for InteractRange - 0.5.
     internal const float InteractRange = 2.0f;
 
-    // Flights end this close to the node; the rest is walked after dismounting.
-    private const float LandingRange = 12f;
+    // Flights aim for a landable floor point within this radius of the node;
+    // once the flight leg ends anywhere within DismountRange the character
+    // gets off and walks the rest.
+    private const float LandingRange = 8f;
+    private const float DismountRange = 30f;
 
     private readonly IGameBridge gameBridge;
     private readonly INavigationProvider navigation;
@@ -356,8 +359,9 @@ public sealed class GatheringController : IDisposable
 
         // A flight cannot settle on the exact node coordinate (the mount hovers
         // and vnavmesh keeps nudging). Fly to a landable spot nearby, get off,
-        // and walk the last stretch on foot with the tight tolerance.
-        if (gameBridge.IsMounted && distance <= LandingRange)
+        // and walk the last stretch on foot with the tight tolerance. The
+        // flight leg is over (not moving) and we are within walking range.
+        if (gameBridge.IsMounted && distance <= DismountRange)
         {
             Throttled(gameBridge.TryDismount);
             StatusText = $"Landing near {node.Name} ({distance:F0}y away).";
@@ -382,7 +386,7 @@ public sealed class GatheringController : IDisposable
             if (fly)
             {
                 var landing = navigation.FindPointOnFloor(node.Position, LandingRange) ?? node.Position;
-                navigation.MoveCloseTo(landing, LandingRange - 4f, fly: true);
+                navigation.MoveCloseTo(landing, 3f, fly: true);
             }
             else
             {

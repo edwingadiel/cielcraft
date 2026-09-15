@@ -226,4 +226,26 @@ public class AdaptiveEngineTests
         Assert.NotNull(decision);
         Assert.Equal(Observe, decision.ActionId);
     }
+
+    [Fact]
+    public void ManipulationLaterInThePlanCountsTowardDurabilityWhenObserving()
+    {
+        // Live: 30 durability, Waste Not II just applied (8 steps). The plan's own
+        // Manipulation (step 2 of the remainder) is what keeps the touches affordable.
+        var snapshot = Snapshot(progress: 0, quality: 1290, durability: 30, cp: 545, condition: CraftCondition.Poor) with
+        {
+            Buffs = [new CraftBuff(CraftBuffIds.WasteNot2, 0, 8)],
+        };
+
+        var decision = AdaptiveEngine.Decide(
+            snapshot,
+            [PreparatoryTouch, Manipulation, PreparatoryTouch, PreparatoryTouch, Veneration, DelicateSynthesis, GreatStrides, ByregotsBlessing, Groundwork],
+            BaseProgress, Level);
+
+        Assert.NotNull(decision);
+        Assert.Equal(Observe, decision.ActionId);
+    }
+
+    private const uint Manipulation = 4574;
+    private const uint DelicateSynthesis = 100323;
 }
