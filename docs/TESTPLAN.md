@@ -749,6 +749,53 @@ is installed …; it decides the bite timing this run.` The tug is not
 readable from the client structs, so without AutoHook every bite is a
 plain Hook.
 
+## Y. Combat drops (roadmap 7.5)
+
+Hunting is opt-in (Settings › Sourcing › Hunt monsters for drops) and stays
+dormant without a combat plugin; nothing in the plugin changes behaviour
+otherwise. No combat plugin was installed on the test machine, so every
+IPC call and every combat bridge member is unverified.
+
+**Y1. No combat plugin** — Tools › Hunting reads "● no combat plugin";
+the log says `[Combat] No combat plugin is answering; hunting stays off.`
+and the Sourcing page shows only the hunting toggle until it is on.
+
+**Y2 ★. Driver probe** — Install Rotation Solver Reborn (puni.sh
+repository), reload, log in on a combat job with a gearset, Hunting page
+› "Probe again". Expect `[Combat] Combat driver: Rotation Solver Reborn.`
+and the Describe lines `installed and loaded`, `AutorotationActive(): no`,
+`engage mode 3 (Manual)`. With BossMod Reborn instead: `Combat driver:
+BossMod Reborn.` and `Presets.GetActive(): none`; with both installed RSR
+wins.
+
+**Y3 ★. Engage / disengage** — Target an overworld mob at or below your
+level, press the panel's Engage (or start a hunt): RSR flips to Manual,
+the character attacks the target only, `[Combat] Rotation Solver Reborn
+engaged (#1).`; watch `/xllog` for `IpcTypeMismatchError` (the enum is
+passed as an int — the one call most likely to trip). Disengage → RSR Off,
+`… disengaged.` BMR: "VBM Default" becomes the active preset without BMR
+moving the character; if SetActive is refused, pass the preset's real
+name to the driver.
+
+**Y4 ★. A hunt** — Hunting on, a Craft order whose raw material is a mob
+drop with no other source (a skin or hide), Preview: the breakdown shows
+the hunt label; Run.
+Expect `[Production] Source task …: Hunt <item> ×N from <mob> (<zone>,
+Lv L)` → the combat gearset → teleport / travel to the remembered spot or
+the zone sweep → `[Hunt] Target <mob> (Lv L, N y)` → `engaged` → the kill
+→ `[Hunt] <item> +1 (k/N)` → `disengaged`, next target, … →
+`[Production] … obtained N`. Retreat below the HP threshold disengages and
+backs off; a death answers the Return prompt and resumes once from the
+aetheryte; mobs another player is fighting are skipped when the setting
+says so.
+
+**Y5. Remember a spot** — Target a mob, Hunting › "Remember this spot for
+<mob>": `[Combat] Remembered a hunting spot for <name> (BNpcName <id>) in
+territory <id>.`; the next hunt for its drop starts there.
+
+**Y6. Job levels** — `/cielcraft report` › Capabilities lists the combat
+jobs and "Best combat job with a gearset".
+
 ---
 
 ## What to paste
@@ -763,6 +810,8 @@ plugin itself threw, the log will contain an `Unhandled exception in tick`
 entry with the stack trace.
 
 ## Validation log
+
+**2026-09-15, M4.** Combat drops merged and wired (bundled drop table copied to the build output, driver selector, hunt source last in the source order, Hunting page and settings). Not run: no combat plugin is installed on the test machine, so the source offers nothing; section Y lists the probe, engage and hunt checks in order.
 
 **2026-09-15, M3 smoke.** Vendor purchases ran end to end twice (Boiled Egg order: Chicken Egg and Mineral Water bought from Engerrand in Limsa Lominsa Lower Decks — teleport, travel, interact, Shop buy at the read row, bag verified, gil down by the listed price) — U1, U2 pass. Three fixes on the way: the vendor run now ticks the NPC interactor (it stood still forever), a Telepo cast issued right after the shop closed was swallowed (the runner re-issues it), and a batch now pauses on a full bag between crafts instead of failing (the second Boiled Egg craft hit "Insufficient inventory space"). Also fixed earlier the same day: the first craft step after a gearset change (crafting log opened without ingredients; re-open toggled it closed). The NPC / shop / exchange indexes are warmed at load (685 ms) after a 600 ms hitch inside a Preview. Not run: T (mender — needs no Dark Matter in the bag), V (exchanges), W (retainers), X (fishing); every addon callback there is marked unverified in the agents' notes and the log names the step that stalls.
 

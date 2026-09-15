@@ -140,17 +140,21 @@ against inventory, pause with a reason.
   when installed. The tug is not exposed by the client structs, so without
   AutoHook every bite is a plain Hook; spearfishing, Ocean Fishing and the
   Diadem are refused / not handled. Not yet run in game (test plan X).
-- [ ] 7.5 Combat drops (XL) — skins, hides, etc. Three separate problems:
-  (1) data: no game sheet maps items to monsters, so a bundled drop table
-  built from an external dataset (Garland Tools / gamerescape) with a
-  refresh script, like the gathering database today; (2) combat: rotation
-  and targeting from a combat plugin over IPC — BossMod Reborn (AI mode +
-  autorotation) and Rotation Solver Reborn are the candidates; confirm
-  which exposes a stable IPC before designing around it; (3) the hunting
-  loop: travel to the spawn area, pick a target of the right name/level,
-  let the combat plugin fight, loot verification by inventory delta,
-  retreat/heal rules, death handling, "someone else is here" etiquette.
-  Combat-job gearsets and level gating decide feasibility per item.
+- [x] 7.5 Combat drops (XL) — done 2026-09-15 (docs/design/m4.md), dormant until
+  a combat plugin is installed: (1) data — `tools/refresh-drops.ps1` builds
+  the bundled `Data/drops.json` from Garland Tools (152 craft-ingredient
+  drops, 815 monster rows, 69 zones; mostly ARR-era coverage) and the combat
+  database ranks remembered spots → reachable zones → level; (2) combat —
+  Rotation Solver Reborn (Manual mode on Engage) or BossMod Reborn (the
+  "VBM Default" preset) over IPC with runtime availability, CielCraft never
+  casts a combat action; (3) the hunt run — combat gearset, teleport, a
+  remembered spot or a navmesh-snapped zone sweep, target ranking with the
+  level ceiling and "someone else's mob" etiquette, engage / disengage per
+  kill, drops by inventory delta, HP retreat, one death recovery, timeouts.
+  Opt-in (`HuntingEnabled`), Tools › Hunting page, last in the source order.
+  Nothing has run in game: no combat plugin on the test machine (test plan
+  Y); the IPC enum-as-int call and the map-bounds sweep are the first things
+  to check.
 
 - [x] 7.6 Teleport to the estate / home point for crafting (S) — done 2026-09-15:
   Settings › Home picks Stay / Estate Hall / Apartment / Inn Room; the runner
@@ -360,7 +364,7 @@ known base.
 20. (done) 7.4 Fishing (L): its own controller; depends on 17 for spots/NPCs.
 
 ### M4 — Stretch
-21. 7.5 Combat drops (XL): only after a combat plugin with stable IPC is
+21. (done, untested — no combat plugin installed) 7.5 Combat drops (XL): only after a combat plugin with stable IPC is
     confirmed; nothing else waits on it.
 
 Rule of thumb for the order: safety and foundations first, then whatever
