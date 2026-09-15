@@ -34,6 +34,8 @@ public sealed class Plugin : IDalamudPlugin
 
     private const string CommandName = "/cielcraft";
 
+    public Infrastructure.FrameworkDriver Driver { get; init; }
+    public Infrastructure.ChatNotifier Notifier { get; init; }
     public Configuration Configuration { get; init; }
     public IGameBridge GameBridge { get; init; }
     public DalamudRecipeProvider RecipeProvider { get; init; }
@@ -62,6 +64,8 @@ public sealed class Plugin : IDalamudPlugin
 
     public Plugin()
     {
+        Driver = new Infrastructure.FrameworkDriver(Framework);
+        Notifier = new Infrastructure.ChatNotifier(ChatGui);
         Log = new Diagnostics.DiagnosticLog(PluginLog);
         // Dalamud loads plugin assemblies from memory, so the native solver can't find itself
         // via Assembly.Location; point it at the on-disk plugin folder instead.
@@ -70,21 +74,36 @@ public sealed class Plugin : IDalamudPlugin
         GameBridge = new DalamudGameBridge();
         RecipeProvider = new DalamudRecipeProvider(
             () => GameBridge.CurrentClassJobId, jobId => GameBridge.HasGearsetForJob(jobId));
-        CraftMonitor = new CraftStateMonitor(GameBridge);
-        ActionExecutor = new ActionExecutor(GameBridge, CraftMonitor);
-        SolverService = new SolverService(new CielCraft.Raphael.RaphaelSolver(), LoadSolutionCache());
-        CraftAutomator = new CraftAutomator(GameBridge, CraftMonitor, ActionExecutor, Configuration);
-        Maintenance = new MaintenanceService(GameBridge, Configuration);
+        var actionResolver = new DalamudActionResolver();
+        CraftMonitor = new CraftStateMonitor(GameBridge, Log, SystemClock.Instance);
+        ActionExecutor = new ActionExecutor(GameBridge, CraftMonitor, Log, SystemClock.Instance);
+        SolverService = new SolverService(new CielCraft.Raphael.RaphaelSolver(), LoadSolutionCache(), Log);
+        CraftAutomator = new CraftAutomator(
+            GameBridge, CraftMonitor, ActionExecutor, Configuration, actionResolver, Log, SystemClock.Instance);
+        Maintenance = new MaintenanceService(GameBridge, Configuration, Log, SystemClock.Instance);
         BatchCrafter = new BatchCrafter(
-            GameBridge, CraftMonitor, CraftAutomator, SolverService, RecipeProvider, Configuration, Maintenance);
+            GameBridge, CraftMonitor, CraftAutomator, SolverService, RecipeProvider, Configuration, Maintenance,
+            actionResolver, Log, SystemClock.Instance);
         Navigation = new Navigation.VNavmeshProvider();
         GatheringController = new Gathering.GatheringController(GameBridge, Navigation, Configuration);
         GatheringLoop = new Gathering.GatheringLoop(
-            GameBridge, GatheringController, Navigation, Configuration, Maintenance);
+            GameBridge, GatheringController, Navigation, Configuration, Maintenance, Log, SystemClock.Instance);
         ProductionRunner = new ProductionRunner(
             GameBridge, BatchCrafter, RecipeProvider, GatheringLoop, GatheringDatabase, Navigation, Configuration);
-        ProductionQueue = new ProductionQueue(GameBridge, ProductionRunner, RecipeProvider, Configuration);
+        ProductionQueue = new ProductionQueue(GameBridge, ProductionRunner, RecipeProvider, Configuration, Notifier, Log);
         SocialGuard = new Social.SocialGuard(this, GameBridge, Configuration);
+
+        // One Framework.Update subscription for the automation layers, ticked in
+        // the order they used to subscribe in (monitor before executor before
+        // automator before batch before loop before queue).
+        Driver.Add(CraftMonitor.Tick);
+        Driver.Add(ActionExecutor.Tick);
+        Driver.Add(CraftAutomator.Tick);
+        Driver.Add(BatchCrafter.Tick);
+        // Driver.Add(GatheringController.Tick); — still self-subscribed; registered here once converted.
+        Driver.Add(GatheringLoop.Tick);
+        // Driver.Add(ProductionRunner.Tick); — still self-subscribed; registered here once converted.
+        Driver.Add(ProductionQueue.Tick);
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);
@@ -113,20 +132,16 @@ public sealed class Plugin : IDalamudPlugin
         WindowSystem.RemoveAllWindows();
 
         SocialGuard.Dispose();
-        ProductionQueue.Dispose();
-        GatheringLoop.Dispose();
         GatheringController.Dispose();
         ProductionRunner.Dispose();
-        BatchCrafter.Dispose();
         CraftAutomator.Dispose();
-        ActionExecutor.Dispose();
-        CraftMonitor.Dispose();
 
         ConfigWindow.Dispose();
         MainWindow.Dispose();
         DebugWindow.Dispose();
 
         CommandManager.RemoveHandler(CommandName);
+        Driver.Dispose();
     }
 
     private void OnCommand(string command, string args)

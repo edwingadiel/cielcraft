@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
+using CielCraft.Core;
 using CielCraft.Game;
-using Dalamud.Plugin.Services;
 
 namespace CielCraft.Gathering;
 
@@ -21,14 +21,14 @@ public enum GatheringLoopState
 /// (wrong contents, unreachable, despawned) are blacklisted for this run; too
 /// many consecutive failures stop the loop.
 /// </summary>
-public sealed class GatheringLoop : IDisposable
+public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
 {
     private const int MaxConsecutiveFailures = 5;
 
     private readonly IGameBridge gameBridge;
     private readonly GatheringController controller;
     private readonly Core.INavigationProvider navigation;
-    private readonly Configuration configuration;
+    private readonly AutomationSettings configuration;
     private readonly Game.MaintenanceService maintenance;
     private readonly HashSet<ulong> blacklistedNodes = [];
 
@@ -48,8 +48,6 @@ public sealed class GatheringLoop : IDisposable
     private DateTime lastCordialAt = DateTime.MinValue;
     private DateTime lastHousekeepingAt = DateTime.MinValue;
 
-    public GatheringLoopState State { get; private set; } = GatheringLoopState.Idle;
-    public string StatusText { get; private set; } = "Idle.";
     public int Gathered => itemId == 0 ? 0 : Math.Max(0, gameBridge.GetItemCount(itemId) - baselineCount);
     public int TargetQuantity => targetQuantity;
 
@@ -57,21 +55,17 @@ public sealed class GatheringLoop : IDisposable
         IGameBridge gameBridge,
         GatheringController controller,
         Core.INavigationProvider navigation,
-        Configuration configuration,
-        Game.MaintenanceService maintenance)
+        AutomationSettings configuration,
+        Game.MaintenanceService maintenance,
+        ILog log,
+        IClock clock)
+        : base(log, clock, "[Gather]", GatheringLoopState.Idle, "Idle.")
     {
         this.maintenance = maintenance;
         this.gameBridge = gameBridge;
         this.controller = controller;
         this.navigation = navigation;
         this.configuration = configuration;
-
-        Plugin.Framework.Update += OnUpdate;
-    }
-
-    public void Dispose()
-    {
-        Plugin.Framework.Update -= OnUpdate;
     }
 
     public bool Start(uint gatherItemId, int quantity, System.Numerics.Vector3? nodeAreaCenter = null)
@@ -131,19 +125,7 @@ public sealed class GatheringLoop : IDisposable
             Transition(GatheringLoopState.Idle, $"Stopped by user at {Gathered}/{targetQuantity}.");
     }
 
-    private void OnUpdate(IFramework framework)
-    {
-        try
-        {
-            Tick(framework);
-        }
-        catch (Exception e)
-        {
-            Plugin.Log.TickError(nameof(GatheringLoop), e);
-        }
-    }
-
-    private void Tick(IFramework framework)
+    protected override void OnTick()
     {
         if (State != GatheringLoopState.Running)
             return;
@@ -151,9 +133,9 @@ public sealed class GatheringLoop : IDisposable
         // Completion, inventory-space and cordial checks all poll native
         // inventory sweeps; once a second is plenty (node runs start at most
         // every two seconds anyway).
-        if (DateTime.UtcNow - lastHousekeepingAt > TimeSpan.FromSeconds(1))
+        if (Clock.UtcNow - lastHousekeepingAt > TimeSpan.FromSeconds(1))
         {
-            lastHousekeepingAt = DateTime.UtcNow;
+            lastHousekeepingAt = Clock.UtcNow;
             var gathered = Gathered;
             if (gathered >= targetQuantity)
             {
@@ -228,7 +210,7 @@ public sealed class GatheringLoop : IDisposable
                 if (controller.LastNodeId != 0)
                     blacklistedNodes.Add(controller.LastNodeId);
 
-                Plugin.Log.Warning(
+                Log.Warning(
                     $"[Gather] Node run failed ({controller.StatusText}); " +
                     $"blacklisting node, failure {consecutiveFailures}/{MaxConsecutiveFailures}.");
 
@@ -243,10 +225,10 @@ public sealed class GatheringLoop : IDisposable
 
         // Start the next node run. Node groups respawn on a delay after being
         // exhausted, so an empty object table is retried before giving up.
-        if (DateTime.UtcNow - lastStartAttempt < StartRetryInterval)
+        if (Clock.UtcNow - lastStartAttempt < StartRetryInterval)
             return;
 
-        lastStartAttempt = DateTime.UtcNow;
+        lastStartAttempt = Clock.UtcNow;
 
         // Still at the previous node (window up, or the gathering condition
         // not yet cleared after closing it): the character is pinned until it
@@ -265,12 +247,12 @@ public sealed class GatheringLoop : IDisposable
         {
             if (navmeshWaitSince == DateTime.MaxValue)
             {
-                navmeshWaitSince = DateTime.UtcNow;
-                Plugin.Log.Information("[Gather] Waiting for the navmesh to build before approaching a node.");
+                navmeshWaitSince = Clock.UtcNow;
+                Log.Information("[Gather] Waiting for the navmesh to build before approaching a node.");
             }
 
             noNodeSince = DateTime.MaxValue;
-            if (DateTime.UtcNow - navmeshWaitSince > NavmeshTimeout)
+            if (Clock.UtcNow - navmeshWaitSince > NavmeshTimeout)
                 Transition(
                     GatheringLoopState.Failed,
                     $"Failed: the navmesh did not become ready within {NavmeshTimeout.TotalMinutes:F0} minutes.");
@@ -289,7 +271,7 @@ public sealed class GatheringLoop : IDisposable
         else
         {
             if (noNodeSince == DateTime.MaxValue)
-                noNodeSince = DateTime.UtcNow;
+                noNodeSince = Clock.UtcNow;
 
             // Drift back toward the node-area center while waiting: fresh
             // spawns may be outside object-table range (roadmap 2.4).
@@ -301,7 +283,7 @@ public sealed class GatheringLoop : IDisposable
                 navigation.MoveCloseTo(center, 15f, fly: false);
             }
 
-            if (DateTime.UtcNow - noNodeSince > NoNodeTimeout)
+            if (Clock.UtcNow - noNodeSince > NoNodeTimeout)
                 Transition(
                     GatheringLoopState.Failed,
                     $"Failed: no usable gathering node appeared within {NoNodeTimeout.TotalSeconds:F0}s ({controller.StatusText}).");
@@ -313,7 +295,7 @@ public sealed class GatheringLoop : IDisposable
     /// <summary>Drinks a cordial between nodes when a full one fits into the GP pool (roadmap 2.2).</summary>
     private void TryCordial()
     {
-        if (!configuration.UseCordials || DateTime.UtcNow - lastCordialAt < TimeSpan.FromSeconds(5))
+        if (!configuration.UseCordials || Clock.UtcNow - lastCordialAt < TimeSpan.FromSeconds(5))
             return;
 
         var player = gameBridge.GetPlayerState();
@@ -327,14 +309,14 @@ public sealed class GatheringLoop : IDisposable
             if (gameBridge.GetItemCount(cordial) > 0
                 && (gameBridge.UseItem(cordial + 1_000_000) || gameBridge.UseItem(cordial)))
             {
-                lastCordialAt = DateTime.UtcNow;
-                Plugin.Log.Information($"[Gather] Drinking cordial (item {cordial}); GP {player.CurrentGp}/{player.MaxGp}.");
+                lastCordialAt = Clock.UtcNow;
+                Log.Information($"[Gather] Drinking cordial (item {cordial}); GP {player.CurrentGp}/{player.MaxGp}.");
                 return;
             }
         }
 
         // None usable (cooldown or none held): back off before checking again.
-        lastCordialAt = DateTime.UtcNow;
+        lastCordialAt = Clock.UtcNow;
     }
 
     private string ProgressText() => $"Gathered {Gathered}/{targetQuantity} of item {itemId}.";
@@ -344,15 +326,8 @@ public sealed class GatheringLoop : IDisposable
         gameBridge.FindNearestGatheringNode(blacklistedNodes, areaCenter) is { } nearest
         && nearest.Distance <= GatheringController.InteractRange;
 
-    private void Transition(GatheringLoopState state, string statusText)
-    {
-        State = state;
-        StatusText = statusText;
-        Plugin.Log.Information($"[Gather] {statusText}");
-    }
-
     /// <summary>Internal state for the diagnostic report.</summary>
-    public IEnumerable<string> Describe()
+    public override IEnumerable<string> Describe()
     {
         yield return $"State {State} — {StatusText}";
         yield return $"Item {itemId} ×{targetQuantity}: gathered {Gathered} (baseline {baselineCount}); consecutive failures {consecutiveFailures}; controllerActive {controllerActive}; blacklisted nodes {blacklistedNodes.Count}";

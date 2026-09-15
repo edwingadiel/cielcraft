@@ -1,6 +1,6 @@
 using System.Collections.Generic;
 
-namespace CielCraft.Raphael;
+namespace CielCraft.Core;
 
 /// <summary>
 /// Display names for the action ids Raphael emits (CRP-flavored for craft

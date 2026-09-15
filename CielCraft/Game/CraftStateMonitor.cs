@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using CielCraft.Core;
-using Dalamud.Plugin.Services;
 
 namespace CielCraft.Game;
 
@@ -10,11 +9,13 @@ namespace CielCraft.Game;
 /// transitions (spec §11 groundwork). The transition log is the debugging
 /// backbone for validating Milestone 1 and drives the future state machine.
 /// </summary>
-public sealed class CraftStateMonitor : IDisposable
+public sealed class CraftStateMonitor
 {
     private const int MaxEvents = 100;
 
     private readonly IGameBridge gameBridge;
+    private readonly ILog log;
+    private readonly IClock clock;
     private readonly List<string> events = new();
 
     private CraftSnapshot? previous;
@@ -24,30 +25,27 @@ public sealed class CraftStateMonitor : IDisposable
 
     public IReadOnlyList<string> RecentEvents => events;
 
-    public CraftStateMonitor(IGameBridge gameBridge)
+    public CraftStateMonitor(IGameBridge gameBridge, ILog log, IClock clock)
     {
         this.gameBridge = gameBridge;
-        Plugin.Framework.Update += OnUpdate;
+        this.log = log;
+        this.clock = clock;
     }
 
-    public void Dispose()
-    {
-        Plugin.Framework.Update -= OnUpdate;
-    }
-
-    private void OnUpdate(IFramework framework)
+    /// <summary>Drive one frame. Exceptions are logged (rate-limited) and swallowed so one bad frame never kills the run.</summary>
+    public void Tick()
     {
         try
         {
-            Tick(framework);
+            Observe();
         }
         catch (Exception e)
         {
-            Plugin.Log.TickError(nameof(CraftStateMonitor), e);
+            log.TickError(nameof(CraftStateMonitor), e);
         }
     }
 
-    private void Tick(IFramework framework)
+    private void Observe()
     {
         var isCrafting = gameBridge.IsCrafting;
 
@@ -78,9 +76,9 @@ public sealed class CraftStateMonitor : IDisposable
 
     private void Record(string message)
     {
-        Plugin.Log.Information($"[Craft] {message}");
+        log.Information($"[Craft] {message}");
 
-        events.Add($"{DateTime.Now:HH:mm:ss} {message}");
+        events.Add($"{clock.UtcNow.ToLocalTime():HH:mm:ss} {message}");
         if (events.Count > MaxEvents)
             events.RemoveAt(0);
     }

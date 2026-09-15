@@ -22,6 +22,7 @@ public enum SolverStatus
 public sealed class SolverService
 {
     private readonly ICraftSolver solver;
+    private readonly ILog log;
     private readonly object gate = new();
 
     private DateTime startedAt;
@@ -35,9 +36,10 @@ public sealed class SolverService
     public CraftSolution? Solution { get; private set; }
     public string StatusText { get; private set; } = "No solve requested yet.";
 
-    public SolverService(ICraftSolver solver, SolutionCache cache)
+    public SolverService(ICraftSolver solver, SolutionCache cache, ILog log)
     {
         this.solver = solver;
+        this.log = log;
         Cache = cache;
     }
 
@@ -59,7 +61,7 @@ public sealed class SolverService
         lastSetup = setup;
         lastObjective = null;
         lastEffects = effects;
-        Plugin.Log.Information(
+        log.Information(
             $"[Raphael] Mid-craft re-solve: step {live.Step}, progress {live.Progress}/{live.MaxProgress}, " +
             $"quality {live.Quality}/{targetQuality}, durability {live.Durability}, CP {live.CurrentCp}; " +
             $"effects {effects}.");
@@ -78,7 +80,7 @@ public sealed class SolverService
         catch (Exception e)
         {
             result = CraftSolution.Failed(e.Message);
-            Plugin.Log.Error(e, "[Raphael] Solve threw.");
+            log.Error($"[Raphael] Solve threw. :: {e.GetType().Name}: {e.Message}\n{e.StackTrace}");
         }
 
         var elapsed = DateTime.UtcNow - startedAt;
@@ -91,16 +93,16 @@ public sealed class SolverService
                 : $"Failed after {elapsed.TotalSeconds:F1}s: {result.Error}.";
         }
 
-        Plugin.Log.Information($"[Raphael] {StatusText}");
+        log.Information($"[Raphael] {StatusText}");
         if (result.Success)
         {
-            Plugin.Log.Information($"[Raphael] Rotation: {Names(result.ActionIds)} (base progress {result.BaseProgress}, base quality {result.BaseQuality}).");
+            log.Information($"[Raphael] Rotation: {Names(result.ActionIds)} (base progress {result.BaseProgress}, base quality {result.BaseQuality}).");
             store?.Invoke(result);
         }
     }
 
     private static string Names(IEnumerable<uint> actionIds) =>
-        string.Join(", ", actionIds.Select(CielCraft.Raphael.RaphaelActionNames.NameOf));
+        string.Join(", ", actionIds.Select(RaphaelActionNames.NameOf));
 
     public bool BeginSolve(CraftSetup setup, CraftObjective objective)
     {
@@ -119,7 +121,7 @@ public sealed class SolverService
         lastSetup = setup;
         lastObjective = objective;
         lastEffects = null;
-        Plugin.Log.Information(
+        log.Information(
             $"[Raphael] Solve requested: rlvl {setup.RecipeLevel}, " +
             $"progress {setup.MaxProgress}, quality {setup.MaxQuality}, durability {setup.MaxDurability}, " +
             $"stats {setup.Craftsmanship}/{setup.Control}/{setup.Cp} @ Lv{setup.Level}, " +
@@ -134,7 +136,7 @@ public sealed class SolverService
                 StatusText = $"Cached: {cached.ActionIds.Count} actions.";
             }
 
-            Plugin.Log.Information($"[Raphael] Cached rotation: {Names(cached.ActionIds)} (base progress {cached.BaseProgress}, base quality {cached.BaseQuality}).");
+            log.Information($"[Raphael] Cached rotation: {Names(cached.ActionIds)} (base progress {cached.BaseProgress}, base quality {cached.BaseQuality}).");
             return true;
         }
 
@@ -152,7 +154,7 @@ public sealed class SolverService
     {
         Cache.Clear();
         SaveCache();
-        Plugin.Log.Information("[Raphael] Solution cache cleared.");
+        log.Information("[Raphael] Solution cache cleared.");
     }
 
     /// <summary>A cache that cannot be written only costs a re-solve next session.</summary>
@@ -164,7 +166,7 @@ public sealed class SolverService
         }
         catch (Exception e)
         {
-            Plugin.Log.Warning($"[Raphael] Could not save the solution cache: {e.Message}");
+            log.Warning($"[Raphael] Could not save the solution cache: {e.Message}");
         }
     }
 
