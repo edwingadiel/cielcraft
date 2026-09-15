@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Numerics;
 using CielCraft.Core;
 using CielCraft.Game;
 
@@ -123,6 +124,7 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
     private DateTime blindSince = DateTime.MaxValue;   // rod out but no fishing state to read
     private DateTime lastHousekeepingAt = DateTime.MinValue;
     private DateTime lastCordialAt = DateTime.MinValue;
+    private int waterProbe;                             // ring points tried around the marker when no water is in range
     private FishingPhase lastPhase = FishingPhase.None;
     private (FishAction Action, uint ActionId, FishingPhase PhaseBefore, DateTime At)? pending;
     private string lastDecision = "-";
@@ -218,6 +220,7 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         targetAmount = amount;
         baselineCount = bridge.GetItemCount(itemId);
         casts = 0;
+        waterProbe = 0;
         castsWithoutTarget = 0;
         caughtAtLastCheck = 0;
         autoHookEngaged = false;
@@ -456,6 +459,23 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         var destination = navigation.FindPointOnFloor(plan!.Spot.Position, 25f) ?? plan.Spot.Position;
         travel.Start(destination, ArriveWithin, fly, preciseArrival: false, TravelTimeout, plan.Spot.Name);
         EnterPhase(FishingRunState.Traveling, statusText);
+    }
+
+    private const int WaterProbeCount = 16; // two rings of eight points, 12 y and 24 y out
+
+    /// <summary>Walk to the next point of the ring around the marker; the arrival re-checks the game's CanFish.</summary>
+    private void StartWaterProbe()
+    {
+        var index = waterProbe++;
+        var radius = index < 8 ? 12f : 24f;
+        var angle = index % 8 * (MathF.PI / 4f);
+        var center = plan!.Spot.Position;
+        var raw = center + new Vector3(MathF.Cos(angle) * radius, 0f, MathF.Sin(angle) * radius);
+        var point = navigation.FindPointOnFloor(raw, 6f) ?? raw;
+        castBlockedSince = DateTime.MaxValue;
+        Log.Information($"[Fishing] No water in casting range here; trying {radius:F0}y at {angle * 180f / MathF.PI:F0}° from the marker ({waterProbe}/{WaterProbeCount}).");
+        travel.Start(point, 2f, fly: false, preciseArrival: false, TravelTimeout, "the water's edge");
+        EnterPhase(FishingRunState.Traveling, "Looking for the water's edge.");
     }
 
     private void TickTraveling()
@@ -771,6 +791,15 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
             }
             else if (Clock.UtcNow - castBlockedSince > CastBlockedTimeout)
             {
+                // The sheet's marker sits near the hole, not on its bank (The
+                // Vein, 2026-09-15): try a ring of points around it before
+                // asking the user to walk.
+                if (waterProbe < WaterProbeCount)
+                {
+                    StartWaterProbe();
+                    return;
+                }
+
                 Pause($"there is no water in casting range at {plan.Spot.Name} — walk to the water's edge and resume");
                 return;
             }
