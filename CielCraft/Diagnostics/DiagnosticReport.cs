@@ -103,6 +103,11 @@ public static class DiagnosticReport
         Section(sb, "Vendor source (7.3b)");
         Lines(sb, plugin.VendorSource.Describe);
 
+        Section(sb, "Retainers and cleanup (7.17)");
+        Lines(sb, plugin.RetainerDatabase.Describe);
+        Lines(sb, plugin.RetainerSource.Describe);
+        Lines(sb, plugin.InventoryKeeper.Describe);
+
         Section(sb, "Spiritbond mode");
         Lines(sb, plugin.Spiritbond.Describe);
 

@@ -35,8 +35,10 @@ public sealed class RunFinisher
         Configuration configuration,
         IGameBridge gameBridge,
         ILog log,
-        IClock clock)
+        IClock clock,
+        Sourcing.InventoryKeeper? keeper = null)
     {
+        this.keeper = keeper;
         this.runner = runner;
         this.orders = orders;
         this.configuration = configuration;
@@ -73,11 +75,20 @@ public sealed class RunFinisher
         }
     }
 
+    private readonly Sourcing.InventoryKeeper? keeper;
+
     private void OnTick()
     {
         var state = runner.State;
         var changed = state != lastState;
         lastState = state;
+
+        // Storage rules / desynth / trash after every completed run (7.17),
+        // whether or not the book has more work; a busy cleanup delays the exit.
+        if (changed && state == ProductionState.Completed)
+            keeper?.RunAfter(null);
+        if (keeper is { IsBusy: true })
+            return;
 
         if (confirmingSince != DateTime.MinValue)
         {

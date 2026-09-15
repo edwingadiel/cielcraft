@@ -58,6 +58,11 @@ public sealed class Plugin : IDalamudPlugin
     public Npc.NpcInteractor NpcInteractor { get; init; }
     /// <summary>Gil vendors as a material source (roadmap 7.3b).</summary>
     public Sourcing.VendorSource VendorSource { get; init; }
+    /// <summary>Retainers as a material source (roadmap 7.17).</summary>
+    public Sourcing.RetainerSource RetainerSource { get; init; }
+    public RetainerDatabase RetainerDatabase { get; init; }
+    /// <summary>Storage rules, desynthesis and trash cleanup after a run (roadmap 7.17).</summary>
+    public Sourcing.InventoryKeeper InventoryKeeper { get; init; }
     /// <summary>Order book runner (roadmap 7.13); replaces the production queue.</summary>
     public OrderRunner OrderRunner { get; init; }
     public Social.SocialGuard SocialGuard { get; init; }
@@ -109,7 +114,13 @@ public sealed class Plugin : IDalamudPlugin
         VendorSource = new Sourcing.VendorSource(
             new ShopDatabase(GameBridge, NpcDatabase), NpcDatabase, NpcInteractor, GameBridge, Configuration,
             Log, SystemClock.Instance, RecipeProvider.GetItemName);
-        var sources = new IMaterialSource[] { VendorSource };
+        RetainerDatabase = new RetainerDatabase(GameBridge);
+        RetainerSource = new Sourcing.RetainerSource(
+            GameBridge, RetainerDatabase, Configuration, Log, SystemClock.Instance, NpcInteractor, RecipeProvider.GetItemName);
+        InventoryKeeper = new Sourcing.InventoryKeeper(
+            GameBridge, RetainerDatabase, Configuration, Log, SystemClock.Instance, NpcInteractor, RecipeProvider.GetItemName);
+        // Retainers last: a node, a vendor or an exchange beats a bell trip.
+        var sources = new IMaterialSource[] { VendorSource, RetainerSource };
         Windows.PlanTreePanel.UseSources(sources);
         // Gathering action ids resolved by name from the Action sheet (7.14); one catalogue for the controller, the loop and the settings page.
         var gatheringCatalog = new Gathering.GatheringActionCatalog(Log);
@@ -126,7 +137,7 @@ public sealed class Plugin : IDalamudPlugin
         OrderRunner = new OrderRunner(
             ProductionRunner, RecipeProvider, GameBridge, Configuration, () => Capabilities.Current, Notifier, Log, SystemClock.Instance,
             SolverService); // planning solves (7.22) land in the same disk cache the batch reads
-        Finisher = new RunFinisher(ProductionRunner, OrderRunner, Configuration, GameBridge, Log, SystemClock.Instance);
+        Finisher = new RunFinisher(ProductionRunner, OrderRunner, Configuration, GameBridge, Log, SystemClock.Instance, InventoryKeeper);
 
         // One Framework.Update subscription for the automation layers, ticked in
         // the order they used to subscribe in (monitor before executor before
@@ -141,6 +152,7 @@ public sealed class Plugin : IDalamudPlugin
         Driver.Add(ProductionRunner.Tick);
         Driver.Add(OrderRunner.Tick);
         Driver.Add(Finisher.Tick);
+        Driver.Add(InventoryKeeper.Tick); // no-op while idle (7.17)
 
         MainWindow = new MainWindow(this);
         WindowSystem.AddWindow(MainWindow);

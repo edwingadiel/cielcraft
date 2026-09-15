@@ -254,6 +254,16 @@ public sealed class NpcInteractor : AutomationMachine<NpcInteractionState>, INpc
         if (target == null)
             return;
 
+        // A target without a data id is a spot to reach, not an NPC to talk
+        // to (a summoning bell, 7.17): the caller interacts, the script waits.
+        if (target.DataId == 0)
+        {
+            EnterPhase(NpcInteractionState.InDialog, $"At {target.Name}; the caller takes it from here.");
+            stepStartedAt = Clock.UtcNow;
+            windowSeenAt = DateTime.MinValue;
+            return;
+        }
+
         // The dialog may already be up: some NPCs open their window straight
         // from the interaction, without a menu.
         if (AnyDialogOpen())

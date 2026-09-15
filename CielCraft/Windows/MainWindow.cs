@@ -36,6 +36,7 @@ public class MainWindow : Window, IDisposable
         public const string ToolsCharacter = "Tools/Character";
         public const string ToolsCraftTest = "Tools/CraftTest";
         public const string ToolsSpiritbond = "Tools/Spiritbond";
+        public const string ToolsInventory = "Tools/Inventory";
         public const string ToolsCache = "Tools/Cache";
         public const string SettingsGeneral = "Settings/General";
         public const string SettingsCrafting = "Settings/Crafting";
@@ -62,6 +63,7 @@ public class MainWindow : Window, IDisposable
         new(Pages.ToolsCharacter, "Tools", "Character"),
         new(Pages.ToolsCraftTest, "Tools", "Craft Test"),
         new(Pages.ToolsSpiritbond, "Tools", "Spiritbond"),
+        new(Pages.ToolsInventory, "Tools", "Inventory"),
         new(Pages.ToolsCache, "Tools", "Solution cache"),
         new(Pages.SettingsGeneral, "Settings", "General"),
         new(Pages.SettingsCrafting, "Settings", "Crafting"),
@@ -84,6 +86,7 @@ public class MainWindow : Window, IDisposable
     private readonly CraftTestPanel craftTest;
     private readonly SpiritbondPanel spiritbond;
     private readonly SchedulePanel schedule;
+    private readonly InventoryPanel inventory;
 
     /// <summary>The spiritbond-mode machine (roadmap 7.2), for the emergency stop and the report.</summary>
     public SpiritbondMode Spiritbond => spiritbond.Mode;
@@ -129,6 +132,7 @@ public class MainWindow : Window, IDisposable
         craftTest = new CraftTestPanel(plugin);
         spiritbond = new SpiritbondPanel(plugin);
         schedule = new SchedulePanel(plugin);
+        inventory = new InventoryPanel(plugin, plugin.RetainerDatabase, plugin.InventoryKeeper);
         setup = new SetupPanel(plugin, ShowPage);
         debug = new DebugPanel(plugin);
         settings = new SettingsPanel(plugin);
@@ -301,6 +305,9 @@ public class MainWindow : Window, IDisposable
                 break;
             case Pages.ToolsSpiritbond:
                 spiritbond.Draw();
+                break;
+            case Pages.ToolsInventory:
+                inventory.Draw();
                 break;
             case Pages.ToolsCache:
                 DrawCachePage();

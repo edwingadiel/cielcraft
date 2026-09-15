@@ -211,6 +211,26 @@ public class NpcInteractorTests
 
         private static NotImplementedException Unexpected() => new("the NPC layer must not touch this");
 
+        // ---- stubs for members other packages added (merge) ----
+        public bool AssignVenture(uint ventureTaskId) => throw Unexpected();
+        public void CloseRetainerList() => throw Unexpected();
+        public bool CollectVenture() => throw Unexpected();
+        public bool ConfirmDesynthesis() => throw Unexpected();
+        public int DepositToRetainer(uint itemId, int count) => throw Unexpected();
+        public bool Desynthesize(uint itemId) => throw Unexpected();
+        public bool DiscardItem(uint itemId) => throw Unexpected();
+        public void DismissRetainer() => throw Unexpected();
+        public SummoningBellSnapshot? FindSummoningBell() => throw Unexpected();
+        public int GetRetainerItemCount(int retainerIndex, uint itemId) => throw Unexpected();
+        public IReadOnlyList<RetainerSnapshot> GetRetainers() => throw Unexpected();
+        public bool IsNearSummoningBell => throw Unexpected();
+        public bool IsRetainerInventoryOpen => throw Unexpected();
+        public bool IsRetainerSummoned => throw Unexpected();
+        public bool OpenRetainerList() => throw Unexpected();
+        public bool SelectRetainer(int retainerIndex) => throw Unexpected();
+        public bool SelectRetainerMenuOption(string textContains) => throw Unexpected();
+        public int WithdrawFromRetainer(uint itemId, int count) => throw Unexpected();
+
         // ---- Shops (7.3b) ----
         public long Gil => throw Unexpected();
         public bool BuyFromShop(uint itemId, int count) => throw Unexpected();
