@@ -27,6 +27,13 @@
     <Compile Include="../CielCraft/Sourcing/VendorSource.cs" Link="Seams/VendorSource.cs" />
     <!-- The NPC interactor (roadmap 7.3) is Dalamud-free too; its database is not. -->
     <Compile Include="../CielCraft/Npc/NpcInteractor.cs" Link="Seams/NpcInteractor.cs" />
+    <!--
+      The exchange source (roadmap 7.17) talks only to Core types, the bridge
+      interface and the NPC interfaces, so its offer maths and run flow are
+      testable without Dalamud; the sheet reading lives in ExchangeDatabase,
+      which is not compiled in here.
+    -->
+    <Compile Include="../CielCraft/Sourcing/ExchangeSource.cs" Link="Seams/ExchangeSource.cs" />
   </ItemGroup>
   <ItemGroup>
     <!-- Host-platform native solver, if built locally (cargo release build in native/cielcraft-raphael). -->

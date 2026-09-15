@@ -60,6 +60,9 @@ public sealed class Plugin : IDalamudPlugin
     public Sourcing.VendorSource VendorSource { get; init; }
     /// <summary>Retainers as a material source (roadmap 7.17).</summary>
     public Sourcing.RetainerSource RetainerSource { get; init; }
+    /// <summary>Scrip / tomestone / Grand Company exchanges as a material source (roadmap 7.17).</summary>
+    public Sourcing.ExchangeSource ExchangeSource { get; init; }
+    public ExchangeDatabase ExchangeDatabase { get; init; }
     public RetainerDatabase RetainerDatabase { get; init; }
     /// <summary>Storage rules, desynthesis and trash cleanup after a run (roadmap 7.17).</summary>
     public Sourcing.InventoryKeeper InventoryKeeper { get; init; }
@@ -119,8 +122,13 @@ public sealed class Plugin : IDalamudPlugin
             GameBridge, RetainerDatabase, Configuration, Log, SystemClock.Instance, NpcInteractor, RecipeProvider.GetItemName);
         InventoryKeeper = new Sourcing.InventoryKeeper(
             GameBridge, RetainerDatabase, Configuration, Log, SystemClock.Instance, NpcInteractor, RecipeProvider.GetItemName);
-        // Retainers last: a node, a vendor or an exchange beats a bell trip.
-        var sources = new IMaterialSource[] { VendorSource, RetainerSource };
+        ExchangeDatabase = new ExchangeDatabase(
+            Log, NpcDatabase, () => GameBridge.CurrentTerritoryId, GatheringDatabase.GetGatheringJob);
+        ExchangeSource = new Sourcing.ExchangeSource(
+            ExchangeDatabase, GameBridge, NpcInteractor, NpcDatabase, () => Configuration, () => Capabilities.Current,
+            Log, SystemClock.Instance, tickNpc: true); // the driver does not tick the interactor; each run does
+        // Gil before scrips, retainers last: a node, a vendor or an exchange beats a bell trip.
+        var sources = new IMaterialSource[] { VendorSource, ExchangeSource, RetainerSource };
         Windows.PlanTreePanel.UseSources(sources);
         // Gathering action ids resolved by name from the Action sheet (7.14); one catalogue for the controller, the loop and the settings page.
         var gatheringCatalog = new Gathering.GatheringActionCatalog(Log);

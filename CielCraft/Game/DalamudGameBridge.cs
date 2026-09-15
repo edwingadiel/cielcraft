@@ -1876,4 +1876,199 @@ public sealed class DalamudGameBridge : IGameBridge
             (uint)values.Length, atkValues, close);
         return true;
     }
+
+    // ---- Exchanges (7.17) ----
+
+    /// <summary>
+    /// The three Grand Company seal items in GrandCompany row order
+    /// (1 Maelstrom → Storm Seal 20, 2 Twin Adder → Serpent Seal 21,
+    /// 3 Immortal Flames → Flame Seal 22; read off the Item sheet).
+    /// </summary>
+    private const uint FirstGrandCompanySealItemId = 20;
+
+    /// <summary>The currency-exchange windows an NPC can raise, in the order they are looked for.</summary>
+    private static readonly string[] ExchangeAddons = ["ShopExchangeCurrency", "InclusionShop", "GrandCompanyExchange"];
+
+    public unsafe long GetCurrencyCount(uint currencyItemId)
+    {
+        var inventory = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+        if (inventory == null)
+            return 0;
+
+        // Grand Company seals are not items in a container: the purse only
+        // holds the company the character actually belongs to.
+        if (currencyItemId is >= FirstGrandCompanySealItemId and <= FirstGrandCompanySealItemId + 2)
+        {
+            var company = GrandCompanyId;
+            return company != 0 && currencyItemId == FirstGrandCompanySealItemId + company - 1
+                ? inventory->GetCompanySeals((byte)company)
+                : 0;
+        }
+
+        // Scrips and tomestones live in the Currency container; tokens and
+        // tribal currencies are ordinary bag items.
+        var currency = inventory->GetItemCountInContainer(
+            currencyItemId, FFXIVClientStructs.FFXIV.Client.Game.InventoryType.Currency, false, 0);
+        return currency > 0 ? currency : GetItemCount(currencyItemId);
+    }
+
+    public unsafe uint GrandCompanyId
+    {
+        get
+        {
+            var playerState = FFXIVClientStructs.FFXIV.Client.Game.UI.PlayerState.Instance();
+            return playerState == null ? 0u : playerState->GrandCompany;
+        }
+    }
+
+    public unsafe int GrandCompanyRank
+    {
+        get
+        {
+            var playerState = FFXIVClientStructs.FFXIV.Client.Game.UI.PlayerState.Instance();
+            return playerState == null ? 0 : playerState->GetGrandCompanyRank();
+        }
+    }
+
+    /// <summary>
+    /// Buy command of the currency-exchange windows. The values are the ones
+    /// ECommons / SomethingNeedDoing macros fire at these addons
+    /// (<c>/callback ShopExchangeCurrency true 0 &lt;row&gt; &lt;count&gt;</c>);
+    /// unverified in game — the caller checks the bag afterwards.
+    /// </summary>
+    private const int ExchangeBuyCommand = 0;
+
+    /// <summary>InclusionShop's own buy command (the scrip exchange's item list); unverified in game.</summary>
+    private const int InclusionShopBuyCommand = 14;
+
+    public unsafe bool ExchangeBuy(uint shopId, uint itemId, int count)
+    {
+        var addonName = ExchangeAddons.FirstOrDefault(IsAddonVisible);
+        if (addonName == null)
+            return false;
+
+        var ptr = Plugin.GameGui.GetAddonByName(addonName);
+        if (ptr.IsNull || !ptr.IsVisible)
+            return false;
+
+        var row = FindShopRow(addonName, itemId);
+        if (row < 0)
+        {
+            Plugin.Log.Warning(
+                $"[Exchange] {addonName} does not list item {itemId} (shop {shopId}); window strings: " +
+                string.Join(" | ", ReadAddonStrings(addonName)));
+            return false;
+        }
+
+        var addon = (FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)ptr.Address;
+        var values = stackalloc FFXIVClientStructs.FFXIV.Component.GUI.AtkValue[3];
+        values[0].Type = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int;
+        values[0].Int = addonName == "InclusionShop" ? InclusionShopBuyCommand : ExchangeBuyCommand;
+        values[1].Type = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int;
+        values[1].Int = row;
+        values[2].Type = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int;
+        values[2].Int = System.Math.Clamp(count, 1, 99);
+        addon->FireCallback(3, values, true);
+        return true;
+    }
+
+    public void CloseExchangeShop()
+    {
+        foreach (var addonName in ExchangeAddons)
+        {
+            // -1 is the window's own close command, as everywhere else here.
+            if (IsAddonVisible(addonName))
+                FireAddonCallbackInt(addonName, -1);
+        }
+    }
+
+    public unsafe int GetCollectableCount(uint itemId, int minCollectability)
+    {
+        var inventory = FFXIVClientStructs.FFXIV.Client.Game.InventoryManager.Instance();
+        return inventory == null
+            ? 0
+            : inventory->GetInventoryItemCount(itemId, false, false, false, (short)System.Math.Max(0, minCollectability));
+    }
+
+    /// <summary>CollectablesShop row-select command; unverified in game (community callback).</summary>
+    private const int CollectablesShopSelectCommand = 2;
+
+    /// <summary>CollectablesShop hand-over command ("Trade"); unverified in game (community callback).</summary>
+    private const int CollectablesShopTradeCommand = 0;
+
+    public unsafe bool TurnInCollectable(uint itemId)
+    {
+        const string addonName = "CollectablesShop";
+        var ptr = Plugin.GameGui.GetAddonByName(addonName);
+        if (ptr.IsNull || !ptr.IsVisible)
+            return false;
+
+        var row = FindShopRow(addonName, itemId);
+        if (row < 0)
+        {
+            Plugin.Log.Warning(
+                $"[Exchange] {addonName} does not list item {itemId}; window strings: " +
+                string.Join(" | ", ReadAddonStrings(addonName)));
+            return false;
+        }
+
+        var addon = (FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)ptr.Address;
+        var values = stackalloc FFXIVClientStructs.FFXIV.Component.GUI.AtkValue[2];
+        values[0].Type = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int;
+        values[0].Int = CollectablesShopSelectCommand;
+        values[1].Type = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int;
+        values[1].Int = row;
+        addon->FireCallback(2, values, true);
+        return true;
+    }
+
+    public unsafe bool HandInCollectable()
+    {
+        const string addonName = "CollectablesShop";
+        var ptr = Plugin.GameGui.GetAddonByName(addonName);
+        if (ptr.IsNull || !ptr.IsVisible)
+            return false;
+
+        var addon = (FFXIVClientStructs.FFXIV.Component.GUI.AtkUnitBase*)ptr.Address;
+        var values = stackalloc FFXIVClientStructs.FFXIV.Component.GUI.AtkValue[2];
+        values[0].Type = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int;
+        values[0].Int = CollectablesShopTradeCommand;
+        values[1].Type = FFXIVClientStructs.FFXIV.Component.GUI.AtkValueType.Int;
+        values[1].Int = 0;
+        addon->FireCallback(2, values, true);
+        return true;
+    }
+
+    public void CloseCollectablesShop()
+    {
+        if (IsAddonVisible("CollectablesShop"))
+            FireAddonCallbackInt("CollectablesShop", -1);
+    }
+
+    /// <summary>
+    /// Row of an item in a shop-like window: the position of its name among
+    /// the window's string values. The exchange windows lay their list out as
+    /// one string block per row, so the ordinal is the row — unverified in
+    /// game, which is why every caller re-checks the bag afterwards and the
+    /// failure path logs the whole string list.
+    /// </summary>
+    private int FindShopRow(string addonName, uint itemId)
+    {
+        var items = Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.Item>();
+        if (!items.TryGetRow(itemId, out var item))
+            return -1;
+
+        var name = item.Name.ExtractText();
+        if (name.Length == 0)
+            return -1;
+
+        var strings = ReadAddonStrings(addonName);
+        for (var i = 0; i < strings.Count; i++)
+        {
+            if (string.Equals(strings[i], name, System.StringComparison.OrdinalIgnoreCase))
+                return i;
+        }
+
+        return -1;
+    }
 }

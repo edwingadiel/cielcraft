@@ -212,6 +212,17 @@ public class NpcInteractorTests
         private static NotImplementedException Unexpected() => new("the NPC layer must not touch this");
 
         // ---- stubs for members other packages added (merge) ----
+        public void CloseCollectablesShop() => throw Unexpected();
+        public void CloseExchangeShop() => throw Unexpected();
+        public bool ExchangeBuy(uint shopId, uint itemId, int count) => throw Unexpected();
+        public int GetCollectableCount(uint itemId, int minCollectability) => throw Unexpected();
+        public long GetCurrencyCount(uint currencyItemId) => throw Unexpected();
+        public uint GrandCompanyId => throw Unexpected();
+        public int GrandCompanyRank => throw Unexpected();
+        public bool HandInCollectable() => throw Unexpected();
+        public bool TurnInCollectable(uint itemId) => throw Unexpected();
+
+        // ---- stubs for members other packages added (merge) ----
         public bool AssignVenture(uint ventureTaskId) => throw Unexpected();
         public void CloseRetainerList() => throw Unexpected();
         public bool CollectVenture() => throw Unexpected();
