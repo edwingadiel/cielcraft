@@ -85,3 +85,9 @@ public interface IMaterialSource
     /// <summary>Starts supplying; the returned run is ticked by the caller.</summary>
     ISourceRun Start(SourceOffer offer);
 }
+
+/// <summary>A source with a per-run spend budget (gil, scrips); the production runner resets it when a run starts.</summary>
+public interface IRunBudget
+{
+    void ResetRunBudget();
+}

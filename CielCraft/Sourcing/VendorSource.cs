@@ -80,7 +80,7 @@ public static class VendorOrdering
 /// starts walks there through the NPC interactor, opens the Shop window,
 /// buys in batches and verifies by inventory delta.
 /// </summary>
-public sealed class VendorSource : IMaterialSource
+public sealed class VendorSource : IMaterialSource, IRunBudget
 {
     /// <summary>The Shop window's own quantity field tops out at 99 per purchase.</summary>
     public const int MaxPerPurchase = 99;

@@ -237,6 +237,13 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
             return false;
         }
 
+        // Per-run spend caps (7.3b / 7.17) start fresh with the run.
+        foreach (var source in sources)
+        {
+            if (source is IRunBudget budget)
+                budget.ResetRunBudget();
+        }
+
         // Fresh capabilities for the pre-flight checks below (roadmap 7.16):
         // a book learned since login must not be refused.
         capabilities.Refresh();
@@ -1320,13 +1327,18 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
         foreach (var material in productionPlan.RawMaterials)
         {
             var job = gatheringDatabase.GetGatheringJob(material.ItemId);
-            if (job == null)
+
+            // Not a node item — or one the user would rather buy than gather
+            // (7.3b BuyWhenGatherable): a registered source (vendor, exchange,
+            // fishing, retainer — M3) may supply it; the first offer wins.
+            if (job == null || configuration.BuyWhenGatherable)
             {
-                // Not a node item: a registered source (vendor, exchange,
-                // fishing, retainer — M3) may supply it; the first offer wins.
                 var offered = false;
                 foreach (var supplier in sources)
                 {
+                    if (job != null && supplier.Kind != MaterialSourceKind.Buy)
+                        continue; // only a vendor beats a node the character can work
+
                     if (supplier.Offer(material.ItemId, material.Amount) is { } offer)
                     {
                         tasks.Add(new GatherTask(material.ItemId, material.Amount, 0, 0, default, [], null, NodeKind.Normal, offer, supplier));
@@ -1337,6 +1349,10 @@ public sealed class ProductionRunner : AutomationMachine<ProductionState>
 
                 if (offered)
                     continue;
+            }
+
+            if (job == null)
+            {
 
                 // A cluster (or a crystal with no normal node) comes from the
                 // aetherial reduction of an ephemeral collectable (7.15). The
