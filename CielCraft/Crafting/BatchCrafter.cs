@@ -85,6 +85,7 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
     private DateTime verifyUntil = DateTime.MinValue; // pending inventory verification of a finished craft
     private DateTime lastSynthesisPress = DateTime.MinValue;
     private DateTime lastFillAttempt = DateTime.MinValue;
+    private bool fillPressedForThisPress; // the fill button went down this craft; Synthesize follows on the next frame
     private DateTime craftStartedAt = DateTime.MinValue;   // pacing: first action waits for the start animation
     private DateTime lastCraftEndedAt = DateTime.MinValue; // pacing: next Synthesize waits for the end animation
     private static readonly TimeSpan SynthesisRetryInterval = TimeSpan.FromSeconds(3);
@@ -736,9 +737,18 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
                 }
 
                 recipeId = gameBridge.SelectedRecipeId;
-                if (PreferHqFill)
-                    gameBridge.FillIngredients(preferHq: true);
+                // Re-register the materials with the log's own fill button on one
+                // frame and press Synthesize on the next: a fill and a press in
+                // the same frame were swallowed after a completed craft (Boiled
+                // Egg 2/2, 2026-09-15), and so were presses without a fill.
+                if (!fillPressedForThisPress)
+                {
+                    fillPressedForThisPress = true;
+                    gameBridge.FillIngredients(PreferHqFill);
+                    return;
+                }
 
+                fillPressedForThisPress = false;
                 if (gameBridge.StartSynthesis())
                 {
                     synthesisFired = true;
@@ -793,6 +803,14 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
         // Press again every few seconds until the craft begins or we time out.
         if (Clock.UtcNow - lastSynthesisPress > SynthesisRetryInterval && gameBridge.IsReadyToStartCraft)
         {
+            if (!fillPressedForThisPress)
+            {
+                fillPressedForThisPress = true; // fill this frame, press the next (see above)
+                gameBridge.FillIngredients(PreferHqFill);
+                return;
+            }
+
+            fillPressedForThisPress = false;
             lastSynthesisPress = Clock.UtcNow;
             if (gameBridge.StartSynthesis())
                 Log.Information($"[Production] Synthesis has not started yet; pressing Synthesize again.");
