@@ -58,10 +58,15 @@ internal static unsafe class CraftStateReader
         var buffs = new List<CraftBuff>();
         foreach (var status in player.StatusList)
         {
-            // Crafting statuses carry their remaining step count in the
-            // duration field (the number shown on the buff icon).
+            // Crafting statuses have no timer: the number on the icon (remaining
+            // steps for Waste Not / Manipulation / Innovation..., stacks for Inner
+            // Quiet) is the status parameter. RemainingTime read 0 in game and left
+            // the Poor-step Observe rule and the mid-craft re-solve effects blind.
             if (status.StatusId != 0 && Array.IndexOf(CraftBuffIds.All, status.StatusId) >= 0)
-                buffs.Add(new CraftBuff(status.StatusId, status.Param, (int)MathF.Round(status.RemainingTime)));
+            {
+                var steps = status.RemainingTime > 0.5f ? (int)MathF.Round(status.RemainingTime) : status.Param;
+                buffs.Add(new CraftBuff(status.StatusId, status.Param, steps));
+            }
         }
 
         return buffs;
