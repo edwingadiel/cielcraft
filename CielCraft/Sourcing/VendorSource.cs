@@ -211,14 +211,31 @@ public sealed class VendorSource : IMaterialSource, IRunBudget
     }
 
     /// <summary>The trip reached the placement and found no such NPC: remember it so the next plan takes another vendor or another source.</summary>
-    public void MarkAbsent(ShopVendor vendor)
+    public void MarkAbsent(ShopVendor vendor, uint itemId)
     {
-        if (settings.AbsentVendorNpcs.Contains(vendor.NpcId))
+        // Seasonal merchants come in several placements under one name (the
+        // "festive fisher" has one per event site): retire the name at once.
+        var retired = 0;
+        foreach (var same in shops.FindVendors(itemId))
+        {
+            if (same.NpcName == vendor.NpcName && !settings.AbsentVendorNpcs.Contains(same.NpcId))
+            {
+                settings.AbsentVendorNpcs.Add(same.NpcId);
+                retired++;
+            }
+        }
+
+        if (!settings.AbsentVendorNpcs.Contains(vendor.NpcId))
+        {
+            settings.AbsentVendorNpcs.Add(vendor.NpcId);
+            retired++;
+        }
+
+        if (retired == 0)
             return;
 
-        settings.AbsentVendorNpcs.Add(vendor.NpcId);
         persist?.Invoke();
-        log.Warning($"[Vendor] {vendor.NpcName} ({vendor.ZoneName}) is not in the world; not offered again (Settings › Sourcing lists absent vendors).");
+        log.Warning($"[Vendor] {vendor.NpcName} ({vendor.ZoneName}) is not in the world; {retired} placement(s) of that name are not offered again (Settings › Sourcing can retry them).");
     }
 
     /// <summary>Booked when a run starts and corrected to the real spend when it ends.</summary>
@@ -443,6 +460,16 @@ public sealed class VendorRun : AutomationMachine<VendorRunState>, ISourceRun
                 return;
 
             case NpcInteractionState.Failed:
+                // The placement is right but nobody stands there: a seasonal
+                // merchant. Remember it and let the next plan pick another
+                // vendor or another source (no point retrying the other script).
+                if (interactor.FailureReason.Contains("is not in the object table", StringComparison.Ordinal))
+                {
+                    source.MarkAbsent(vendor!, offer.ItemId);
+                    Fail($"{vendor!.NpcName} is not in the world (a seasonal vendor?); it will not be offered again — run again for another source");
+                    return;
+                }
+
                 // The menu heuristic (does interacting raise a "Purchase"
                 // option or the Shop window itself?) is read off the sheets;
                 // when it was wrong, the other script is tried once.
@@ -454,16 +481,6 @@ public sealed class VendorRun : AutomationMachine<VendorRunState>, ISourceRun
                                 (menuScript ? "with the \"Purchase\" menu option." : "as a shop that opens directly."));
                     interactor.Stop();
                     StartInteraction(target);
-                    return;
-                }
-
-                // The placement is right but nobody stands there: a seasonal
-                // merchant. Remember it and let the next plan pick another
-                // vendor or another source.
-                if (interactor.FailureReason.Contains("is not in the object table", StringComparison.Ordinal))
-                {
-                    source.MarkAbsent(vendor!);
-                    Fail($"{vendor!.NpcName} is not in the world (a seasonal vendor?); it will not be offered again — run again for another source");
                     return;
                 }
 
