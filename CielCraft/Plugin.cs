@@ -179,6 +179,7 @@ public sealed class Plugin : IDalamudPlugin
         if (ClientState.IsLoggedIn)
             Capabilities.Refresh();
 
+        WarmSheetIndexes();
         Log.Information("[Plugin] CielCraft loaded.");
     }
 
@@ -287,6 +288,27 @@ public sealed class Plugin : IDalamudPlugin
     }
 
     /// <summary>Emergency stop (spec §48): halts every automation layer at once.</summary>
+    /// <summary>
+    /// The NPC, shop and exchange indexes read most of a few large sheets on
+    /// first use (a 600 ms hitch inside a Preview on 2026-09-15): pay it here,
+    /// during the load, instead of inside a frame later.
+    /// </summary>
+    private void WarmSheetIndexes()
+    {
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            NpcDatabase.Locate(0);
+            VendorSource.Offer(0, 1);
+            ExchangeDatabase.FindExchanges(0);
+            Log.Information($"[Plugin] Sheet indexes warmed in {watch.ElapsedMilliseconds} ms.");
+        }
+        catch (Exception e)
+        {
+            Log.Warning($"[Plugin] Warming the sheet indexes failed: {e.GetType().Name}: {e.Message}");
+        }
+    }
+
     public void StopEverything()
     {
         Log.Information("[Plugin] Emergency stop requested.");

@@ -414,6 +414,8 @@ public sealed class VendorRun : AutomationMachine<VendorRunState>, ISourceRun
 
     private void TickGoingToVendor()
     {
+        // Whoever starts an interaction ticks it (m3.md); the driver does not.
+        interactor.Tick();
         switch (interactor.State)
         {
             case NpcInteractionState.Completed:
