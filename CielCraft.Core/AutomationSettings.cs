@@ -111,6 +111,23 @@ public class AutomationSettings
     /// <summary>Let the AutoHook plugin handle bite timing over IPC when it is installed (roadmap 7.4).</summary>
     public bool FishingPreferAutoHook { get; set; } = true;
 
+    // ---- M4: combat drops (7.5) — opt-in, a combat plugin drives the fight ----
+
+    /// <summary>Hunt monsters for drops no other source supplies; off by default (roadmap 7.5).</summary>
+    public bool HuntingEnabled { get; set; }
+
+    /// <summary>ClassJob row id to fight on; 0 = the highest-level combat job with a gearset.</summary>
+    public uint CombatJobId { get; set; }
+
+    /// <summary>Below this HP percentage the hunt disengages and retreats (roadmap 7.5).</summary>
+    public int HuntRetreatHpPercent { get; set; } = 30;
+
+    /// <summary>Never fight a mob more than this many levels above the job (0 = same level or below).</summary>
+    public int HuntMaxLevelAbove { get; set; }
+
+    /// <summary>Leave mobs another player is fighting alone (roadmap 7.5 etiquette).</summary>
+    public bool HuntSkipMobsTargetedByOthers { get; set; } = true;
+
     // ---- P3b: retainers, desynthesis, trash cleanup (roadmap 7.17) ----
 
     /// <summary>
