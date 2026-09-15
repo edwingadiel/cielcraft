@@ -736,12 +736,26 @@ public sealed class BatchCrafter : IDisposable
         if (resultItemId != 0)
             return;
 
-        var result = gameBridge.CurrentCraftResult;
-        if (result == null)
-            return;
+        // The recipe we pressed Synthesize on is the authority. The craft
+        // event handler's result item is only read when no recipe is known
+        // (a batch attached to a craft already in progress): right after a
+        // synthesis starts it still holds the *previous* craft's item, which
+        // made a White Gold Ingot batch verify against Titanium Gold Nuggets.
+        var recipe = recipeId != 0 ? recipeProvider.GetRecipeById(recipeId) : null;
+        if (recipe != null)
+        {
+            resultItemId = recipe.ResultItemId;
+            resultAmount = recipe.ResultAmount;
+        }
+        else
+        {
+            var result = gameBridge.CurrentCraftResult;
+            if (result == null)
+                return;
 
-        resultItemId = result.Value.ItemId;
-        resultAmount = result.Value.Amount;
+            resultItemId = result.Value.ItemId;
+            resultAmount = result.Value.Amount;
+        }
         baselineItemCount = gameBridge.GetItemCount(resultItemId) - CompletedCrafts * Math.Max(resultAmount, 1);
         Plugin.Log.Information(
             $"[Production] Batch target item {resultItemId} x{resultAmount} per craft; " +
