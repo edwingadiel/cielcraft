@@ -243,6 +243,10 @@ public sealed class Plugin : IDalamudPlugin
             case "stop":
                 StopEverything();
                 break;
+            case "saddlebag":
+                // The saddlebag has no text command; main command 77 opens it (MainCommand sheet).
+                (GameBridge as DalamudGameBridge)?.ExecuteMainCommand(77);
+                break;
             case "run":
                 if (!OrderRunner.Start())
                     ChatGui.Print(OrderRunner.StatusText, "CielCraft");

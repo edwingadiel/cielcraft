@@ -1503,6 +1503,14 @@ public sealed class DalamudGameBridge : IGameBridge
 
     public void CloseShop() => FireAddonCallbackInt("Shop", -1);
 
+    /// <summary>Runs a main-menu command by MainCommand row id (77 = Chocobo Saddlebag), like clicking it in the menu.</summary>
+    public unsafe void ExecuteMainCommand(uint mainCommandId)
+    {
+        var ui = FFXIVClientStructs.FFXIV.Client.UI.UIModule.Instance();
+        if (ui != null)
+            ui->ExecuteMainCommand(mainCommandId);
+    }
+
     // ---- Retainers / desynth (7.17) ----
     //
     // Sheet and struct references were read from the installed ClientStructs
