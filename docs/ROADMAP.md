@@ -185,25 +185,22 @@ against inventory, pause with a reason.
   pause. Party/FC invites and tells from strangers are logged only. Report
   gets a "Social" section. In-game checks: test plan H1–H3.
 
-- [ ] 7.11 Per-activity food and potion (S–M) — today one FoodItemId/FoodIsHq
-  pair serves everything and there is no medicine support. Split into a
-  crafting set and a gathering set, each with food + potion (item, HQ
-  preference), chosen from the inventory with a searchable picker that shows
-  the buff. Maintenance re-applies whichever set matches the phase about to
-  start (before a craft step, before a gather task), tracks the two buffs
-  separately (Well Fed / Medicated), and never eats or drinks mid-node or
-  mid-craft. Pre-flight warns when a chosen consumable is not in the bag.
-
-- [ ] 7.12 Production breakdown (M) — Preview today is a flat list. Show the
-  resolved graph as a tree: target → sub-crafts → raw materials, each node
-  with crafts × yield, the job, and per-ingredient need / owned / missing;
-  roll-ups per gathering zone and job (how many nodes, which teleports), CP
-  and time estimates from recent solves, and which HQ materials will be
-  consumed where. Same view live during a run with progress ticks per node,
-  and as text in the report and via a "/cielcraft plan" command.
-
-### Borrowed from Lisbeth (reviewed 2026-09-15)
-
+- [x] 7.11 Per-activity food and potion (S–M) — done 2026-09-15: crafting and
+  gathering consumable sets (food + potion, HQ preference) in
+  `AutomationSettings`; `MaintenanceService` keeps up the set of the activity
+  the runner announces (`PrepareFor`) before each craft step or gather task,
+  tracking Well Fed and Medicated separately, never mid-node or mid-craft,
+  NQ/HQ fallback when only the other quality is owned, and a `BlockedReason`
+  naming a chosen item that is not in the bag. Settings › Consumables picks
+  from the inventory (buff summary from ItemFood). The single pre-7.11 food
+  migrates into both sets on load.
+- [x] 7.12 Production breakdown (M) — done 2026-09-15: `Core/Planning/PlanTree`
+  builds target → sub-craft → raw-material nodes (crafts × yield, job, need /
+  owned / missing) with roll-ups per gathering zone, per job and HQ
+  materials consumed; Status › Breakdown draws it with live ticks during a
+  run (✓ / ▶ n/m / ·), `/cielcraft plan` and the report's Plan section render
+  the same text. Not done: CP and time estimates from recent solves (no
+  solve history exists yet; folded into 7.8's rotation view later).
 - [x] 7.13 Orders model (M) — done 2026-09-15 (design: docs/design/orders.md).
   Order book of groups run in sequence; orders in a group are planned as one
   graph (`DependencyResolver.Resolve(targets)`: shared sub-crafts merged,
@@ -270,10 +267,13 @@ against inventory, pause with a reason.
   "debug mode that stops on unreadable results" — stopping is already the
   only behaviour (an action that does not resolve pauses the automator, a
   craft whose inventory gain cannot be verified pauses the batch).
-- [ ] 7.21 Window layout (S) — sidebar navigation like Lisbeth's: Orders /
-  Mode, Status (Progress, Crafting Steps, Schedule), Tools (Equipment),
-  Settings (Character, General, Crafting, Gathering, ...); the diagnostic
-  report and log as a Status page.
+- [x] 7.21 Window layout (S) — done 2026-09-15: one window with a sidebar —
+  Orders; Status (Progress, Crafting Steps, Breakdown, Schedule placeholder,
+  Report, Log, Debug); Tools (Character checklist, Craft Test, Solution
+  cache); Settings (General, Crafting, Gathering, Consumables, Home, Alerts,
+  Social). The config, debug and setup windows became pages; Dalamud's
+  settings cog opens Settings, `/cielcraft config`, `debug` and `setup`
+  select pages, the last page is remembered.
 
 - [ ] 7.22 HQ-aware intermediates (M) — today every non-final step is quick
   synthesized (NQ) and the final craft solves from zero quality. For recipes
@@ -322,13 +322,13 @@ known base.
 ### M1 — Daily use (≈ 4 weeks) — the things asked for while testing
 5. (done) 7.13 Orders model (M): amount modes (Restock), production modes, groups,
    materials-only, JSON + Teamcraft import. Replaces target + queue.
-6. 7.21 Window layout (S): sidebar; orders/status/settings pages. Do with 5
+6. (done) 7.21 Window layout (S): sidebar; orders/status/settings pages. Do with 5
    so the UI is built once around orders.
 7. 7.1 Standalone gather target (S) incl. collectables; run tests D1/D3/D4.
 8. 7.23 Collectable crafting as a target option (S) — a production mode on 5.
-9. 7.11 Per-activity food and potion (S–M).
+9. (done) 7.11 Per-activity food and potion (S–M).
 10. 7.6 Estate / home teleport for crafting (S).
-11. 7.12 Production breakdown tree (M).
+11. (done) 7.12 Production breakdown tree (M).
 12. 7.8 Rotation visibility + manual rotations, and 7.18 assist / craft test /
     lock-step (S–M + S–M): share the rotation view; build together.
 

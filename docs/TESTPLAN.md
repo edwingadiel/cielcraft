@@ -279,6 +279,56 @@ list (with Final items / Items / Crystals sections) and import.
 Expect: one new group with the final items as orders; unresolved names
 listed in red and skipped.
 
+## K. Window layout (roadmap 7.21)
+
+**K1. Pages** — `/cielcraft` opens the window on the last page; the Dalamud
+cog lands on Settings › General (a second press closes); `/cielcraft debug`,
+`setup`, `config` select Status › Debug, Tools › Character, Settings.
+Expect: the sidebar unfolds only the active section; resize to 640×480 and
+the Orders and Log pages still scroll inside the content area.
+
+**K2. First run** — Clear `SetupCompleted` in the config and log in.
+Expect: the window opens on Tools › Character; "Done — don't show again"
+moves to Orders and the button disappears afterwards.
+
+**K3. Live status** — Start a run. Expect: Orders shows one status line with
+a "Progress ›" link; Status › Progress has pause / resume / stop / stop
+after step and the materials table; Status › Report matches the clipboard
+copy section by section.
+
+## L. Production breakdown (roadmap 7.12)
+
+**L1. Tree** — Orders › Preview a group, then Status › Breakdown.
+Expect: targets expand to sub-crafts and raw leaves with counts; "Gathering
+by zone" and "Crafts by job" match the preview's gather-first list and step
+count; `/cielcraft plan` prints the same tree ("No plan." before any preview).
+
+**L2. Live ticks** — Run orders. Expect: raw leaves show ▶ during gathering,
+the current step ▶ n/m during a batch, completed steps ✓; the report's Plan
+section carries the marks.
+
+## M. Consumables (roadmap 7.11)
+
+**M1. Migration** — With a pre-7.11 food configured, reload. Expect: the log
+line about moving the food into both sets; Settings › Consumables shows it in
+both Food slots; the legacy picker is empty.
+
+**M2. Picker** — With HQ and NQ stacks of a meal and a crafting draught in
+the bag, search in Crafting › Food and Potion. Expect: both stacks listed
+with `(HQ ×n)` / `(NQ ×n)` and the buff summary; picking sets the item and
+HQ; the row shows owned counts and "buff inactive".
+
+**M3. Applied before a step** — Run a craft order with no buffs.
+Expect: "Eating …" then "Drinking a potion…" in the status, Well Fed and
+Medicated both up before the synthesis starts, remaining times counting down
+in the panel; nothing is used while a synthesis or node window is open.
+
+**M4. Gathering set and fallback** — Give the Gathering set a different food
+and run a gather order: it is eaten before the first node. Choose HQ for a
+food owned only as NQ: the log says the NQ one is used. Choose a food that
+is not in the bag: the run pauses with "crafting food <name> is not in the
+inventory"; clear the slot and resume.
+
 ---
 
 ## What to paste
