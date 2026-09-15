@@ -581,6 +581,15 @@ public sealed class HuntRun : AutomationMachine<HuntRunState>, ISourceRun
 
         if (sweepIndex >= sweep.Count)
         {
+            // Nothing left to walk to. Give respawns a moment before giving
+            // up — and give the zones with no map bounds, where the sweep is
+            // empty from the start, the same grace.
+            if (Clock.UtcNow - phaseStartedAt <= PhaseTimeout)
+            {
+                StatusText = $"Waiting for {drop!.MobName} to appear in {drop.ZoneName}...";
+                return;
+            }
+
             Fail($"no {drop!.MobName} found in {drop.ZoneName} after {sweep.Count} sweep points");
             return;
         }

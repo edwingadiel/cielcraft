@@ -721,7 +721,7 @@ public class HuntRunTests
     }
 
     [Fact]
-    public void SweepsTheZoneWhenNoSpotIsRememberedAndFailsWhenTheMonsterIsNowhere()
+    public void SweepsTheZoneWhenNoSpotIsRemembered()
     {
         var h = Build();
         h.Bridge.PlayerPosition = new Vector3(0, 0, 0);
@@ -747,6 +747,26 @@ public class HuntRunTests
         Assert.NotEqual(HuntRunState.Sweeping, run.State);
         TickUntil(run, h.Clock, () => run.State == HuntRunState.Fighting);
         Assert.Equal(HuntRunState.Fighting, run.State);
+    }
+
+    [Fact]
+    public void FailsWithTheZoneInTheReasonWhenTheMonsterIsNowhereInIt()
+    {
+        var h = Build();
+        h.Bridge.PlayerPosition = new Vector3(0, 0, 0);
+
+        var offer = h.Source.Offer(RaptorSkin, 1)!;
+        var run = (HuntRun)h.Source.Start(offer);
+        run.Tick();
+        run.Tick();
+        h.Clock.Advance(Pacing.AfterJobChange.TotalSeconds + 0.1);
+
+        TickUntil(run, h.Clock, () => run.State is HuntRunState.Failed or HuntRunState.Completed, maxTicks: 400);
+
+        Assert.Equal(HuntRunState.Failed, run.State);
+        Assert.Contains("South Shroud", run.StatusText);
+        Assert.Contains("Wild Boar", run.StatusText);
+        Assert.Equal(SourceRunState.Failed, ((ISourceRun)run).State);
     }
 
     [Fact]
