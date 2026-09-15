@@ -156,9 +156,9 @@ public sealed class OrderRunner
             log.Information("[Orders] Stopped.");
     }
 
-    /// <summary>Plan a group without starting it (Preview).</summary>
+    /// <summary>Plan a group without starting it (Preview). Gather orders (7.1) plan when the node data knows the item.</summary>
     public GroupPlan Preview(OrderGroup group) =>
-        OrderPlanner.PlanGroup(group, recipeProvider, gameBridge.GetItemCount, capabilities());
+        OrderPlanner.PlanGroup(group, recipeProvider, gameBridge.GetItemCount, capabilities(), runner.IsGatherable);
 
     /// <summary>Drive one frame. Exceptions are logged (rate-limited) and swallowed so one bad frame never kills the run.</summary>
     public void Tick()
@@ -334,8 +334,9 @@ public sealed class OrderRunner
                     : null;
                 var (quantity, skip) = outcome != null
                     ? (outcome.PlannedQuantity, outcome.SkipReason)
-                    : OrderPlanner.Evaluate(order, recipeProvider, gameBridge.GetItemCount);
-                yield return $"    {recipeProvider.GetItemName(order.ItemId)} (item {order.ItemId}) ×{order.Amount} {order.AmountMode}/{order.Mode}" +
+                    : OrderPlanner.Evaluate(order, recipeProvider, gameBridge.GetItemCount, runner.IsGatherable);
+                yield return $"    {recipeProvider.GetItemName(order.ItemId)} (item {order.ItemId}) ×{order.Amount} {order.Kind} {order.AmountMode}/{order.Mode}" +
+                             (order.Mode == ProductionMode.Collectable ? $" ({order.CollectableTier})" : "") +
                              (order.MaterialsOnly ? " materials-only" : "") +
                              (skip != null ? $" — skipped: {skip}" : $" — planned ×{quantity}");
             }

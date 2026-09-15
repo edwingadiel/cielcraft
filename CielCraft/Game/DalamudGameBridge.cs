@@ -425,6 +425,71 @@ public sealed class DalamudGameBridge : IGameBridge
         return false;
     }
 
+    // Aetheryte sheet rows of the housing entries in the teleport list: the
+    // "Estate Hall (Free Company)" rows are 56/57/58 (Mist, Lavender Beds,
+    // Goblet), 96 (Shirogane), 164 (Empyreum); "Estate Hall (Private)" rows
+    // are 59/60/61, 97, 165. Apartments and shared estates carry flags.
+    private static readonly uint[] PrivateEstateAetherytes = [59, 60, 61, 97, 165];
+    private static readonly uint[] FreeCompanyEstateAetherytes = [56, 57, 58, 96, 164];
+
+    // City aetherytes with an inn: New Gridania, Limsa Lower Decks, Ul'dah
+    // Steps of Nald, Foundation, Kugane, the Crystarium, Old Sharlayan, Tuliyollal.
+    private static readonly uint[] InnCityAetherytes = [2, 8, 9, 70, 111, 133, 182, 216];
+
+    public unsafe bool TeleportHome(CraftingLocation location, out uint territoryId)
+    {
+        territoryId = 0;
+        var entries = Plugin.AetheryteList.ToList();
+        Dalamud.Game.ClientState.Aetherytes.IAetheryteEntry? entry;
+        string label;
+        switch (location)
+        {
+            case CraftingLocation.EstateHall:
+                // Own house first, then the free company's, then a shared estate.
+                entry = entries.FirstOrDefault(e => PrivateEstateAetherytes.Contains(e.AetheryteId))
+                        ?? entries.FirstOrDefault(e => FreeCompanyEstateAetherytes.Contains(e.AetheryteId))
+                        ?? entries.FirstOrDefault(e => e.IsSharedHouse);
+                label = "estate hall";
+                break;
+
+            case CraftingLocation.Apartment:
+                entry = entries.FirstOrDefault(e => e.IsApartment);
+                label = "apartment";
+                break;
+
+            case CraftingLocation.InnRoom:
+                // Telepo cannot enter an inn; the cheapest inn city is the
+                // nearest one, and the character idles at its aetheryte.
+                entry = entries.Where(e => InnCityAetherytes.Contains(e.AetheryteId))
+                    .OrderBy(e => e.GilCost)
+                    .FirstOrDefault();
+                label = "inn city";
+                break;
+
+            default:
+                return false;
+        }
+
+        if (entry == null)
+        {
+            Plugin.Log.Information($"[Travel] No {label} aetheryte in the teleport list (roadmap 7.6).");
+            return false;
+        }
+
+        var telepo = FFXIVClientStructs.FFXIV.Client.Game.UI.Telepo.Instance();
+        if (telepo == null)
+            return false;
+
+        territoryId = entry.TerritoryId;
+        var where = entry.IsApartment ? "apartment"
+            : entry.IsSharedHouse ? $"shared estate (ward {entry.Ward}, plot {entry.Plot})"
+            : location == CraftingLocation.InnRoom ? "inn city aetheryte (the inn room itself is not entered)"
+            : "estate hall";
+        Plugin.Log.Information(
+            $"[Travel] Teleporting home: {where}, aetheryte {entry.AetheryteId}/{entry.SubIndex} (territory {territoryId}, {entry.GilCost} gil).");
+        return telepo->Teleport(entry.AetheryteId, entry.SubIndex);
+    }
+
     public bool IsMounted => Plugin.Condition[ConditionFlag.Mounted];
 
     public unsafe void TryMount()

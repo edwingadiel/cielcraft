@@ -29,14 +29,35 @@ internal sealed class OrdersPanel
         (ProductionMode.Any, "Any", "Solve for the configured target quality; NQ or HQ as it lands"),
         (ProductionMode.ForceHq, "Force HQ", "Solve at 100% with HQ materials and keep crafting until the HQ count rises by the amount"),
         (ProductionMode.QuickSynth, "Quick synth", "Quick synthesis for the final craft too (NQ, fast) when the game offers it"),
-        (ProductionMode.Collectable, "Collectable (2.0: 7.23)", "Collectable crafting arrives with roadmap 7.23; the planner skips these orders until then"),
+        (ProductionMode.Collectable, "Collectable", "Craft as a collectable: the solve targets the chosen tier's collectability (only for collectable recipes)"),
+    ];
+
+    /// <summary>A gather order has no craft, so only Any and Collectable mean anything (7.1).</summary>
+    private static readonly (ProductionMode Value, string Label, string Tip)[] GatherModes =
+    [
+        (ProductionMode.Any, "Any", "Gather the item as it comes"),
+        (ProductionMode.Collectable, "Collectable", "Gather as collectables: appraise to the chosen tier's collectability and count only those"),
+    ];
+
+    private static readonly (OrderKind Value, string Label, string Tip)[] Kinds =
+    [
+        (OrderKind.Craft, "Craft", "Craft the item (sub-crafts and missing materials are gathered first)"),
+        (OrderKind.Gather, "Gather", "Gather the item itself with MIN/BTN: teleport, travel, timed windows, the node loop; no crafting"),
+    ];
+
+    private static readonly (CollectableTier Value, string Label, string Tip)[] Tiers =
+    [
+        (CollectableTier.Low, "Low", "The lowest collectability tier"),
+        (CollectableTier.Mid, "Mid", "The middle collectability tier"),
+        (CollectableTier.High, "High", "The highest collectability tier"),
     ];
 
     private readonly Plugin plugin;
     private readonly IGameBridge gameBridge;
 
     private string searchText = "";
-    private IReadOnlyList<(uint RecipeId, uint ItemId, string Name)> searchResults = [];
+    private OrderKind searchKind = OrderKind.Craft;
+    private IReadOnlyList<(uint ItemId, string Name)> searchResults = [];
 
     private Guid? selectedGroupId;
     private Guid? renamingGroupId;
@@ -83,9 +104,20 @@ internal sealed class OrdersPanel
 
     private void DrawToolbar()
     {
+        // Kind of the search (7.1): craftable recipes or MIN/BTN gatherables.
+        ImGui.SetNextItemWidth(78);
+        var kind = searchKind;
+        if (EnumCombo("##searchKind", ref kind, Kinds, fullWidth: false) && kind != searchKind)
+        {
+            searchKind = kind;
+            searchResults = Search(searchText);
+        }
+
+        ImGui.SameLine();
         ImGui.SetNextItemWidth(ImGui.GetContentRegionAvail().X - 110);
-        if (ImGui.InputTextWithHint("##orderSearch", "Add craftable item…", ref searchText, 64))
-            searchResults = Provider.SearchCraftable(searchText);
+        var hint = searchKind == OrderKind.Gather ? "Add gatherable item…" : "Add craftable item…";
+        if (ImGui.InputTextWithHint("##orderSearch", hint, ref searchText, 64))
+            searchResults = Search(searchText);
         UiTheme.Tooltip("Adds to the highlighted group (click a group header to pick it)");
 
         ImGui.SameLine();
@@ -99,7 +131,7 @@ internal sealed class OrdersPanel
         if (selectedRecipe != null)
         {
             if (UiTheme.TintedButton("Add crafting-log selection", UiTheme.Accent))
-                AddOrder(selectedRecipe.ResultItemId);
+                AddOrder(selectedRecipe.ResultItemId, OrderKind.Craft);
             UiTheme.Tooltip($"Add {Provider.GetItemName(selectedRecipe.ResultItemId)} ×{Quantity}");
             ImGui.SameLine();
         }
@@ -129,9 +161,9 @@ internal sealed class OrdersPanel
         foreach (var result in searchResults)
         {
             UiTheme.GameIcon(Provider.GetItemIconId(result.ItemId), 18f);
-            if (ImGui.Selectable($"{result.Name}##r{result.RecipeId}"))
+            if (ImGui.Selectable($"{result.Name}##r{result.ItemId}"))
             {
-                AddOrder(result.ItemId);
+                AddOrder(result.ItemId, searchKind);
                 searchText = "";
                 searchResults = [];
                 break;
@@ -139,8 +171,14 @@ internal sealed class OrdersPanel
         }
     }
 
+    /// <summary>Craftable names from the recipe sheet, or gatherable names from the node data (7.1), per the search kind.</summary>
+    private IReadOnlyList<(uint ItemId, string Name)> Search(string query) =>
+        searchKind == OrderKind.Gather
+            ? plugin.GatheringDatabase.SearchGatherable(query)
+            : Provider.SearchCraftable(query).Select(r => (r.ItemId, r.Name)).ToList();
+
     /// <summary>Appends an order to the highlighted group, else the last one, creating the first group when the book is empty.</summary>
-    private void AddOrder(uint itemId)
+    private void AddOrder(uint itemId, OrderKind kind)
     {
         var group = Book.Groups.FirstOrDefault(g => g.Id == selectedGroupId) ?? Book.Groups.LastOrDefault();
         if (group == null)
@@ -149,10 +187,10 @@ internal sealed class OrdersPanel
             Book.Groups.Add(group);
         }
 
-        group.Orders.Add(new Order { ItemId = itemId, Amount = Quantity });
+        group.Orders.Add(new Order { ItemId = itemId, Amount = Quantity, Kind = kind });
         selectedGroupId = group.Id;
         Save();
-        notice = $"Added {Provider.GetItemName(itemId)} ×{Quantity} to '{group.Name}'.";
+        notice = $"Added {Provider.GetItemName(itemId)} ×{Quantity}{(kind == OrderKind.Gather ? " (gather)" : "")} to '{group.Name}'.";
         error = "";
     }
 
@@ -404,14 +442,20 @@ internal sealed class OrdersPanel
             return;
         }
 
-        if (!ImGui.BeginTable("##orders", 7,
+        // The tier column only appears when an order of the group needs it,
+        // so the usual book keeps its width at the window's default size.
+        var showTier = group.Orders.Any(o => o.Mode == ProductionMode.Collectable);
+        if (!ImGui.BeginTable("##orders", showTier ? 9 : 8,
                 ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerH | ImGuiTableFlags.PadOuterX))
             return;
 
         ImGui.TableSetupColumn("Item", ImGuiTableColumnFlags.WidthStretch);
-        ImGui.TableSetupColumn("Amount", ImGuiTableColumnFlags.WidthFixed, 60);
-        ImGui.TableSetupColumn("Mode", ImGuiTableColumnFlags.WidthFixed, 86);
-        ImGui.TableSetupColumn("Production", ImGuiTableColumnFlags.WidthFixed, 112);
+        ImGui.TableSetupColumn("Kind", ImGuiTableColumnFlags.WidthFixed, 64);
+        ImGui.TableSetupColumn("Amount", ImGuiTableColumnFlags.WidthFixed, 56);
+        ImGui.TableSetupColumn("Mode", ImGuiTableColumnFlags.WidthFixed, 82);
+        ImGui.TableSetupColumn("Production", ImGuiTableColumnFlags.WidthFixed, 100);
+        if (showTier)
+            ImGui.TableSetupColumn("Tier", ImGuiTableColumnFlags.WidthFixed, 56);
         ImGui.TableSetupColumn("Mats", ImGuiTableColumnFlags.WidthFixed, 34);
         ImGui.TableSetupColumn("On", ImGuiTableColumnFlags.WidthFixed, 26);
         ImGui.TableSetupColumn("##del", ImGuiTableColumnFlags.WidthFixed, 22);
@@ -430,6 +474,22 @@ internal sealed class OrdersPanel
                 ImGui.TextUnformatted(Provider.GetItemName(order.ItemId));
             else
                 ImGui.TextColored(UiTheme.Muted, Provider.GetItemName(order.ItemId));
+
+            // Kind (7.1): a gather order keeps only the modes that apply to gathering.
+            ImGui.TableNextColumn();
+            var kind = order.Kind;
+            if (EnumCombo("##kind", ref kind, Kinds))
+            {
+                order.Kind = kind;
+                if (kind == OrderKind.Gather)
+                {
+                    order.MaterialsOnly = false;
+                    if (order.Mode is not (ProductionMode.Any or ProductionMode.Collectable))
+                        order.Mode = ProductionMode.Any;
+                }
+
+                Save();
+            }
 
             ImGui.TableNextColumn();
             ImGui.SetNextItemWidth(-1);
@@ -452,21 +512,47 @@ internal sealed class OrdersPanel
 
             ImGui.TableNextColumn();
             var mode = order.Mode;
-            if (EnumCombo("##mode", ref mode, ProductionModes))
+            if (EnumCombo("##mode", ref mode, order.Kind == OrderKind.Gather ? GatherModes : ProductionModes))
             {
                 order.Mode = mode;
                 Save();
             }
 
-            ImGui.TableNextColumn();
-            var materialsOnly = order.MaterialsOnly;
-            if (ImGui.Checkbox("##materialsOnly", ref materialsOnly))
+            // Tier (7.23 / 7.1): only read when the mode is Collectable.
+            if (showTier)
             {
-                order.MaterialsOnly = materialsOnly;
-                Save();
+                ImGui.TableNextColumn();
+                if (order.Mode == ProductionMode.Collectable)
+                {
+                    var tier = order.CollectableTier;
+                    if (EnumCombo("##tier", ref tier, Tiers))
+                    {
+                        order.CollectableTier = tier;
+                        Save();
+                    }
+                }
+                else
+                {
+                    ImGui.AlignTextToFramePadding();
+                    ImGui.TextColored(UiTheme.Faint, "–");
+                    UiTheme.Tooltip("Collectability tier; applies when the production mode is Collectable");
+                }
             }
 
-            UiTheme.Tooltip("Materials only: gather and craft everything the item needs, skip its own final craft");
+            ImGui.TableNextColumn();
+            using (ImRaii.Disabled(order.Kind == OrderKind.Gather))
+            {
+                var materialsOnly = order.MaterialsOnly;
+                if (ImGui.Checkbox("##materialsOnly", ref materialsOnly))
+                {
+                    order.MaterialsOnly = materialsOnly;
+                    Save();
+                }
+            }
+
+            UiTheme.Tooltip(order.Kind == OrderKind.Gather
+                ? "A gather order has no craft to skip"
+                : "Materials only: gather and craft everything the item needs, skip its own final craft");
 
             ImGui.TableNextColumn();
             var enabled = order.Enabled;
@@ -494,8 +580,8 @@ internal sealed class OrdersPanel
         ImGui.EndTable();
     }
 
-    /// <summary>A full-width combo over a labelled enum; the tooltip explains the current choice.</summary>
-    private static bool EnumCombo<T>(string id, ref T value, (T Value, string Label, string Tip)[] items)
+    /// <summary>A combo over a labelled enum (full-width by default); the tooltip explains the current choice.</summary>
+    private static bool EnumCombo<T>(string id, ref T value, (T Value, string Label, string Tip)[] items, bool fullWidth = true)
         where T : struct, Enum
     {
         var changed = false;
@@ -503,7 +589,8 @@ internal sealed class OrdersPanel
         var index = Array.FindIndex(items, i => EqualityComparer<T>.Default.Equals(i.Value, current));
         var label = index >= 0 ? items[index].Label : current.ToString();
 
-        ImGui.SetNextItemWidth(-1);
+        if (fullWidth)
+            ImGui.SetNextItemWidth(-1);
         if (ImGui.BeginCombo(id, label))
         {
             foreach (var item in items)
@@ -575,9 +662,20 @@ internal sealed class OrdersPanel
             ImGui.TextUnformatted(Provider.GetItemName(outcome.Order.ItemId));
             ImGui.SameLine(0, 6);
             if (outcome.Planned)
+            {
+                var tag = (outcome.Order.Kind == OrderKind.Gather ? " · gather" : "")
+                          + (outcome.Order.Mode == ProductionMode.Collectable ? $" · {outcome.Order.CollectableTier} collectable" : "");
                 ImGui.TextColored(UiTheme.Success, $"×{outcome.PlannedQuantity}");
+                if (tag.Length > 0)
+                {
+                    ImGui.SameLine(0, 4);
+                    ImGui.TextColored(UiTheme.Muted, tag);
+                }
+            }
             else
+            {
                 ImGui.TextColored(IsBenignSkip(outcome.SkipReason) ? UiTheme.Muted : UiTheme.Danger, $"— {outcome.SkipReason}");
+            }
         }
 
         if (groupPlan.Plan == null || groupPlan.IsEmpty)
@@ -615,7 +713,7 @@ internal sealed class OrdersPanel
             {
                 ProductionMode.ForceHq => " · HQ",
                 ProductionMode.QuickSynth => " · quick",
-                ProductionMode.Collectable => " · collectable",
+                ProductionMode.Collectable => $" · {step.CollectableTier} collectable",
                 _ => "",
             };
             ImGui.TextColored(UiTheme.Muted, $"({step.Crafts} crafts{modeTag})");

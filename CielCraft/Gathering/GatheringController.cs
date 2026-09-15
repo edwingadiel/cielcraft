@@ -60,6 +60,7 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
     private (uint ActionId, uint GpBefore, int IntegrityBefore, DateTime At)? pendingBuff;
     private (int Collectability, int Integrity, DateTime At)? pendingCollectAction;
     private int collectablesTaken;
+    private CollectableTier? collectableTier;
 
     public GatheringController(
         IGameBridge gameBridge,
@@ -81,16 +82,22 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
     /// <summary>Object id of the node this run targeted; 0 before the first run.</summary>
     public ulong LastNodeId { get; private set; }
 
+    /// <summary>Collectables taken from the node of this run (roadmap 7.1); the loop sums them across nodes.</summary>
+    public int CollectablesTaken => collectablesTaken;
+
     /// <summary>
     /// Gathers the nearest node. itemId 0 = first gatherable slot; needed caps
     /// GP spending decisions; preferNear ranks candidate nodes by distance
     /// from that point (the recorded node area) instead of from the player.
+    /// A tier makes that tier's collectability the appraisal goal (7.1);
+    /// without one the highest defined threshold is.
     /// </summary>
     public bool Start(
         uint itemId,
         IReadOnlyCollection<ulong>? excludedNodes = null,
         int needed = int.MaxValue,
-        System.Numerics.Vector3? preferNear = null)
+        System.Numerics.Vector3? preferNear = null,
+        CollectableTier? tier = null)
     {
         if (State is GatheringState.MovingToNode or GatheringState.Interacting
             or GatheringState.GatheringNode or GatheringState.CollectableNode)
@@ -129,6 +136,7 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
         gainedAtSwing = -1;
         gainedCached = 0;
         collectablesTaken = 0;
+        collectableTier = tier;
         pendingCollectAction = null;
         yieldBuffUsed = false;
         buffsBroken = false;
@@ -222,10 +230,11 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
     }
 
     /// <summary>
-    /// Collectable node rotation (roadmap 4.3): Meticulous until the highest
-    /// reachable threshold, Collect when reached — or on the last attempt at
-    /// any threshold. Observed transitions: collectability change for
-    /// appraisals, integrity drop for Collect.
+    /// Collectable node rotation (roadmap 4.3): Meticulous until the goal
+    /// threshold, Collect when reached — or on the last attempt at any
+    /// threshold that still counts. The goal is the ordered tier (7.1) or,
+    /// without one, the highest defined threshold. Observed transitions:
+    /// collectability change for appraisals, integrity drop for Collect.
     /// </summary>
     private void TickCollectable()
     {
@@ -275,12 +284,23 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
             return;
         }
 
-        // Highest defined threshold is the goal; settle for any reached
-        // threshold on the final attempt rather than wasting it.
-        var goal = snap.HighThreshold > 0 ? snap.HighThreshold
+        // Without a tier the highest defined threshold is the goal and the
+        // final attempt settles for any reached threshold rather than wasting
+        // it. With a tier (7.1) only that tier counts toward the order, so
+        // the final attempt collects only when the tier is reached.
+        var highest = snap.HighThreshold > 0 ? snap.HighThreshold
             : snap.MidThreshold > 0 ? snap.MidThreshold
             : snap.LowThreshold;
-        var minimum = snap.LowThreshold > 0 ? snap.LowThreshold : goal;
+        var wanted = collectableTier switch
+        {
+            CollectableTier.Low => snap.LowThreshold,
+            CollectableTier.Mid => snap.MidThreshold,
+            CollectableTier.High => snap.HighThreshold,
+            _ => highest,
+        };
+        var goal = wanted > 0 ? wanted : highest;
+        var minimum = collectableTier != null ? goal
+            : snap.LowThreshold > 0 ? snap.LowThreshold : goal;
 
         var shouldCollect = snap.Collectability >= goal
                             || (snap.IntegrityRemaining <= 1 && snap.Collectability >= minimum);
@@ -626,7 +646,7 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
             ? "Node: none"
             : $"Node: {node.Name} #{node.ObjectId} at {node.Position.X:F1}, {node.Position.Y:F1}, {node.Position.Z:F1} ({node.Distance:F1}y at selection)";
         yield return $"Swings {gatherSwings}; awaitingSwing {awaitingSwing} (since {swingStartedAt:HH:mm:ss}Z); lastIntegrity {lastIntegrity}; baseline count {baselineCount}; gained {gainedCached} (at swing {gainedAtSwing}); yieldBuffUsed {yieldBuffUsed}; buffsBroken {buffsBroken}; pendingBuff {(pendingBuff is { } pending ? $"{pending.ActionId} (GP {pending.GpBefore}, integrity {pending.IntegrityBefore}, at {pending.At:HH:mm:ss}Z)" : "-")}";
-        yield return $"Phase since {phaseStartedAt:HH:mm:ss}Z; last attempt {retry.LastAttempt:HH:mm:ss}Z; collectables taken {collectablesTaken}";
+        yield return $"Phase since {phaseStartedAt:HH:mm:ss}Z; last attempt {retry.LastAttempt:HH:mm:ss}Z; collectables taken {collectablesTaken}; tier {collectableTier?.ToString() ?? "-"}";
         foreach (var line in travel.Describe())
             yield return line;
     }
