@@ -2071,4 +2071,153 @@ public sealed class DalamudGameBridge : IGameBridge
 
         return -1;
     }
+
+    // ---- Combat (7.5) ----
+
+    public IReadOnlyList<HuntTargetSnapshot> FindHuntTargets(
+        uint bnpcNameId,
+        IReadOnlyCollection<ulong>? excludedObjectIds = null,
+        System.Numerics.Vector3? origin = null)
+    {
+        var player = Plugin.ObjectTable.LocalPlayer;
+        if (player == null || bnpcNameId == 0)
+            return [];
+
+        var rankFrom = origin ?? player.Position;
+        var found = new List<(float Rank, HuntTargetSnapshot Snapshot)>();
+        foreach (var obj in Plugin.ObjectTable)
+        {
+            // BattleNpcSubKind has no "Enemy": Combatant is the kind the
+            // overworld monsters carry (verified against Dalamud's enum;
+            // BNpcPart, Pet, Buddy and the minions are the other kinds).
+            if (obj is not Dalamud.Game.ClientState.Objects.Types.IBattleNpc npc
+                || npc.BattleNpcKind != Dalamud.Game.ClientState.Objects.Enums.BattleNpcSubKind.Combatant)
+                continue;
+
+            if (npc.NameId != bnpcNameId)
+                continue;
+
+            if (excludedObjectIds != null && excludedObjectIds.Contains(npc.GameObjectId))
+                continue;
+
+            var rank = System.Numerics.Vector3.Distance(rankFrom, npc.Position);
+            var distance = System.Numerics.Vector3.Distance(player.Position, npc.Position);
+            var hp = npc.MaxHp == 0 ? 0f : npc.CurrentHp * 100f / npc.MaxHp;
+            found.Add((rank, new HuntTargetSnapshot(
+                npc.GameObjectId,
+                npc.Name.TextValue,
+                npc.Level,
+                npc.Position,
+                distance,
+                hp,
+                IsTargetedByAnotherPlayer(npc, player),
+                !npc.IsDead && npc.CurrentHp > 0)));
+        }
+
+        found.Sort((a, b) => a.Rank.CompareTo(b.Rank));
+        var result = new List<HuntTargetSnapshot>(found.Count);
+        foreach (var entry in found)
+            result.Add(entry.Snapshot);
+        return result;
+    }
+
+    /// <summary>
+    /// Hunt etiquette (roadmap 7.5): the mob is already somebody's. Whoever it
+    /// is targeting decides — another player character who is not a party or
+    /// free company mate, or something owned by one (a pet, a carbuncle).
+    /// </summary>
+    private bool IsTargetedByAnotherPlayer(
+        Dalamud.Game.ClientState.Objects.Types.IBattleNpc npc,
+        Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter player)
+    {
+        var targetId = npc.TargetObjectId;
+        if (targetId == 0 || targetId == player.GameObjectId)
+            return false;
+
+        var targeter = Plugin.ObjectTable.SearchById(targetId);
+        if (targeter == null)
+            return false;
+
+        if (targeter is Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter other)
+            return !IsPartyOrFreeCompanyMember(other.Name.TextValue);
+
+        // A pet or chocobo: its owner is the player who really holds the mob.
+        if (targeter.OwnerId == 0 || targeter.OwnerId == player.EntityId)
+            return false;
+
+        var owner = Plugin.ObjectTable.SearchByEntityId(targeter.OwnerId);
+        return owner is not Dalamud.Game.ClientState.Objects.SubKinds.IPlayerCharacter ownerPlayer
+            || !IsPartyOrFreeCompanyMember(ownerPlayer.Name.TextValue);
+    }
+
+    public bool TargetObject(ulong objectId)
+    {
+        var obj = Plugin.ObjectTable.SearchById(objectId);
+        if (obj == null || !obj.IsTargetable)
+            return false;
+
+        Plugin.TargetManager.Target = obj;
+        return true;
+    }
+
+    public ulong CurrentTargetId => Plugin.TargetManager.Target?.GameObjectId ?? 0;
+
+    public (uint BNpcNameId, string Name)? CurrentTargetMob =>
+        Plugin.TargetManager.Target is Dalamud.Game.ClientState.Objects.Types.IBattleNpc npc
+        && npc.BattleNpcKind == Dalamud.Game.ClientState.Objects.Enums.BattleNpcSubKind.Combatant
+            ? (npc.NameId, npc.Name.TextValue)
+            : null;
+
+    public float PlayerHpPercent
+    {
+        get
+        {
+            var player = Plugin.ObjectTable.LocalPlayer;
+            return player == null || player.MaxHp == 0 ? 0f : player.CurrentHp * 100f / player.MaxHp;
+        }
+    }
+
+    public bool IsInCombat => Plugin.Condition[ConditionFlag.InCombat];
+
+    // Unconscious (flag 2) is the one the client sets on a knockout; IsDead on
+    // the local player covers the frames before it is raised.
+    public bool IsDead =>
+        Plugin.Condition[ConditionFlag.Unconscious] || (Plugin.ObjectTable.LocalPlayer?.IsDead ?? false);
+
+    public bool AnswerReturnPrompt()
+    {
+        // The death window's own addon name is not in ClientStructs, so this
+        // does not guess it: any Yes/No prompt that is up gets a Yes (0, as
+        // everywhere else here), and otherwise the documented text command is
+        // issued — its own confirmation is a SelectYesno, answered on the next
+        // call. Callers throttle; nothing here rate-limits itself.
+        if (IsAddonVisible("SelectYesno"))
+            return FireAddonCallbackInt("SelectYesno", 0);
+
+        if (!IsDead)
+            return false;
+
+        ExecuteChatCommand("/return");
+        return true;
+    }
+
+    public int EnemiesTargetingMe()
+    {
+        var player = Plugin.ObjectTable.LocalPlayer;
+        if (player == null)
+            return 0;
+
+        var me = player.GameObjectId;
+        var count = 0;
+        foreach (var obj in Plugin.ObjectTable)
+        {
+            if (obj is Dalamud.Game.ClientState.Objects.Types.IBattleNpc npc
+                && npc.BattleNpcKind == Dalamud.Game.ClientState.Objects.Enums.BattleNpcSubKind.Combatant
+                && !npc.IsDead
+                && npc.TargetObjectId == me)
+                count++;
+        }
+
+        return count;
+    }
 }

@@ -34,6 +34,12 @@
       which is not compiled in here.
     -->
     <Compile Include="../CielCraft/Sourcing/ExchangeSource.cs" Link="Seams/ExchangeSource.cs" />
+    <!--
+      The combat drivers (roadmap 7.5) keep their IPC behind interfaces, so the
+      selection and the Engage/Disengage bookkeeping compile in here; the call
+      gates themselves live in Combat/CombatPluginIpc.cs, which does not.
+    -->
+    <Compile Include="../CielCraft/Combat/CombatDrivers.cs" Link="Seams/CombatDrivers.cs" />
   </ItemGroup>
   <ItemGroup>
     <!-- Host-platform native solver, if built locally (cargo release build in native/cielcraft-raphael). -->

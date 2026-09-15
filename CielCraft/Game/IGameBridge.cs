@@ -372,6 +372,52 @@ public interface IGameBridge : ITravelBridge
 
     /// <summary>Closes the CollectablesShop window if it is open.</summary>
     void CloseCollectablesShop();
+    // ---- Combat (7.5) ----
+
+    /// <summary>
+    /// Every loaded, hostile battle NPC of that BNpcName that is not in the
+    /// excluded set, nearest first. Ranked by distance from
+    /// <paramref name="origin"/> when one is given (so a known spot can be
+    /// preferred over whatever wandered past); each snapshot's Distance is
+    /// always the player's. Empty when nothing is in the object table.
+    /// </summary>
+    IReadOnlyList<HuntTargetSnapshot> FindHuntTargets(
+        uint bnpcNameId,
+        IReadOnlyCollection<ulong>? excludedObjectIds = null,
+        System.Numerics.Vector3? origin = null);
+
+    /// <summary>Makes the object the current target. False when it is gone or not targetable.</summary>
+    bool TargetObject(ulong objectId);
+
+    /// <summary>Object id of the current target; 0 when nothing is targeted.</summary>
+    ulong CurrentTargetId { get; }
+
+    /// <summary>
+    /// The BNpcName row id and display name of the current target when it is a
+    /// monster; null when nothing is targeted or the target is not one. The
+    /// panel's "remember this spot" and the hunt run's drop verification both
+    /// need the row id, which the object id alone does not give.
+    /// </summary>
+    (uint BNpcNameId, string Name)? CurrentTargetMob { get; }
+
+    /// <summary>The player's HP as a percentage, 0..100; 0 when not logged in.</summary>
+    float PlayerHpPercent { get; }
+
+    /// <summary>The character is in combat.</summary>
+    bool IsInCombat { get; }
+
+    /// <summary>The character is knocked out (dead or waiting for a raise).</summary>
+    bool IsDead { get; }
+
+    /// <summary>
+    /// Answers the post-death prompt: confirms an open SelectYesno, or asks to
+    /// return to the home point when the client says the character is revivable
+    /// and no prompt is up. False when there was nothing to answer.
+    /// </summary>
+    bool AnswerReturnPrompt();
+
+    /// <summary>How many battle NPCs currently have the player as their target.</summary>
+    int EnemiesTargetingMe();
 }
 
 /// <summary>One equipped piece's spiritbond (roadmap 7.2): the equipment slot, the item and 0..10000.</summary>
