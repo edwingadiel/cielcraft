@@ -590,6 +590,132 @@ hh:mm–hh:mm ET); reduction is not automated yet`).
 (untimed gathers, home teleport, crafts); Status › Breakdown ticks still
 follow the steps. Validated 2026-09-15 (Iron Ore ×10 + Iron Rivets).
 
+## T. NPC interaction and mender repair (roadmap 7.3, 7.3a)
+
+Not yet run in game by the coordinator (implemented 2026-09-15 without a
+live check). Every callback below is marked in the code as unverified; the
+first run tells.
+
+**T1 ★. Mender repair** — Move all Dark Matter out of the bag; Settings ›
+Sourcing "Walk to a mender" on; AutoRepair on with a threshold above the
+gear's condition. Start a run that ticks maintenance (a batch, or a gather
+loop) in a zone with a placed mender (The Crystarium: Axel).
+Expect: `[Maintenance] Gear at NN% and no Dark Matter in the bag; going to
+Axel in The Crystarium to repair.` → `[Npc] Moving to Axel …` → `[Npc]
+Arrived at Axel; interacting.` → `[Npc] Dialog option N "Repair Gear"
+matches "Repair"; firing it.` → `[Npc] Repairs at Axel …: ready.` →
+`[Maintenance] At Axel …; repairing all equipment.` → `Equipment repaired.`
+→ `Repaired at Axel …; the character is still there.` The run continues
+from the mender (the runner teleports to its crafting spot before the next
+step). Gil dropped by the repair cost.
+
+**T2. Mender in another zone** — Same from a field zone: `[Npc] Teleporting
+to <town> for repairs …`, a loading screen, the travel leg. Confirms the
+town preference of the nearest-mender ranking.
+
+**T3. Talk-first / no-menu menders** — A mender that greets first: the Talk
+box is clicked through (about one advance every 2 s). One that opens
+Repair directly: `[Npc] Repair is already open; skipping 1 dialog
+step(s).` If a step times out: `[Npc] Failed: no dialog menu offered an
+option matching "Repair".` — report the option texts from
+`ReadDialogOptions` in the diagnostic report.
+
+**T4. Interference and off switch** — Move with WASD while the interactor
+stands at the mender: `[Npc] Paused: manual movement detected.`; the
+production run must not also pause with its own "manual movement" (the
+guard honours the maintenance trip). Setting off with no Dark Matter: the
+run pauses with `… no Dark Matter in the inventory (mender repair is off)`.
+
+## U. Vendor purchases (roadmap 7.3b)
+
+**U1. Plan only** — Order Boiled Egg ×3 (CUL), Preview. Chicken Egg and
+Mineral Water are vendor-only; Status › Breakdown shows `[buy from
+O'rhoyod (Old Gridania), 5 gil each]` on each raw node and the roll-up
+"bought"; `/cielcraft plan` says the same. Standing in Ul'dah after
+Refresh the vendor switches to Fridurih (current-zone-first).
+
+**U2 ★. Full run** — Run the group. Expect `[Production] Source task 1/2:
+Buy 3× Chicken Egg from … (Chicken Egg ×3 via vendor).` → `[Vendor] Going
+to …` → `[Npc] …` → `[Vendor] At …; opening the shop.` → `[Vendor] Buying
+3× item 4772 at shop row N (5 gil each).` → `[Vendor] Bought 3× Chicken Egg
+(3/3).` → `… closing the shop.` → `[Production] Buy 3× … : obtained 3`.
+Then Mineral Water, then the craft. Gil down by exactly 15 + 12. If the
+purchase does nothing, the first thing to check is the ShopEventHandler
+buy call (unverified) — the report's Vendor section shows the rows read.
+
+**U3. Batching and rules** — A materials-only target with Mineral Water
+×150 → `Buying 99` then `51`. GilFloor above the balance → the plan falls
+back to "not gatherable"; GilSpendCapPerRun = 20 → only the first material
+is bought this run, the second after the next start (ResetRunBudget).
+"Buy gatherable materials" on → Iron Ore is bought instead of gathered.
+
+**U4. Pause / stop / menu vendors** — Pause mid-trip pauses the interactor;
+Resume continues; Stop with the Shop open closes it. A merchant-and-mender
+NPC: the run tries `SelectOption("Purchase")` and, when that times out,
+`… retrying as a shop that opens directly.` — note which text the menu
+actually shows.
+
+## V. Exchanges and the scrip planner (roadmap 7.17)
+
+**V1. Data sanity** — `/cielcraft report`: the Exchanges section reads
+about `Exchange lines: 14110 for 8951 items` and `Scrip turn-ins: ~1361
+across 4 currencies; 9 appraiser(s)`; the first query logs `[Exchange]
+Scrip currencies: 2 → Purple Crafters' Scrip, 4 → Purple Gatherers' Scrip,
+6 → Orange Crafters' Scrip, 7 → Orange Gatherers' Scrip`.
+
+**V2 ★. Scrip purchase** — Hold ≥ 400 Purple Crafters' Scrip; order a
+recipe whose raw material is a scrip item (Craftsman's Competence Materia
+IV, 25 scrips).
+Expect `[Production] Source task …: Exchange 1× … for 25 Purple Crafters'
+Scrip at scrip exchange (…)` → `[Exchange] Going to scrip exchange …` →
+`[Npc] …` → `[Exchange] scrip exchange: buying …` → `Bought 1× …; checking
+the bag...` → `… closing the shop.` → `Exchanged 25 … for 1× …`. Scrips
+down by 25. The likely failure is `[Exchange] InclusionShop does not list
+item NNNN (shop …); window strings: …` — that line carries what is needed
+to fix the row lookup and the callback (both unverified); the shop may
+also need a category selected first.
+
+**V3. GC seals** — With rank and ≥ 200 seals, a quartermaster item: same
+shape with `at storm quartermaster` and `GrandCompanyExchange`; below the
+rank the source makes no offer.
+
+**V4 ★. Turn-in chain** — 2–3 rarefied collectables at ≥ the High threshold
+in the bag, scrips below the price: `[Exchange] Earning Purple Crafters'
+Scrip for …` → `Going to collectable appraiser …` → `Handing over Rarefied
+… (High)…` → `120/250 … after 1 turn-in(s).` … → `Handed in 3 collectable(s)
+for 360 …` → the purchase.
+
+**V5. Failure paths** — No attuned aetheryte in the shop's zone → the run
+fails with the interactor's reason; a full bag → `the bag is full`;
+spending the scrips by hand mid-run → `… ran out after N purchase(s)`.
+
+## W. Retainers, desynthesis, trash cleanup (roadmap 7.17)
+
+**W1 ★. Withdraw** — 40 Iron Ore on a retainer, none in the bag; ring a
+bell once so the retainer cache is filled; from elsewhere queue a recipe
+needing 40 Iron Ore. Expect the `[Retainer] Withdraw Iron Ore ×40 from
+<name>: …` sequence (going to a bell / teleporting to a city / ringing /
+summoning / opening the bag / withdrawing / `Iron Ore ×40 withdrawn` /
+closing / dismissing) and `[Production] … obtained 40`. The character never
+clicks on the frame a window opens; the retainer list closes behind it.
+Retainer menu option texts, SelectRetainer and the withdraw move are
+unverified — the log names the step that stalls.
+
+**W2. Split stock** — 30 on each of two retainers, need 50 → no `[Retainer]`
+offer (a partial withdrawal would leave the craft short).
+
+**W3. Venture** — "Retainer ventures" on: a venture still running → no
+offer; one already back → `Collect Iron Ore ×15 from <name>'s venture …`
+→ `… venture brought Iron Ore ×15.`
+
+**W4 ★. Cleanup** — Tools › Inventory: a Deposit rule (keep 0) for a
+byproduct and a Desynth rule with "desynthesize unused byproducts" on; run
+a small production to completion. Expect `[Inventory] Cleanup after the
+run: Deposit Bronze Ingot ×12, Desynth Weathered Hatchet ×3.` … `Cleanup
+done: …`. An item without a rule must never move; a stalled step logs
+`Skipped <item>: <reason>` and the pass continues. The page shows every
+retainer with venture state and the preview matches what runs.
+
 ---
 
 ## What to paste
