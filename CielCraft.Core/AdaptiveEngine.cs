@@ -4,8 +4,13 @@ namespace CielCraft.Core;
 /// The action chosen for the current step. ConsumeFromPlan is how many planned
 /// actions this decision retires (1 = the planned action itself); a non-null
 /// DeviationReason marks an intentional departure from the Raphael plan.
+/// ActionId 0 is a request to stop and re-solve from the live state: the
+/// remaining plan can no longer complete the craft.
 /// </summary>
-public sealed record AdaptiveDecision(uint ActionId, int ConsumeFromPlan, string? DeviationReason);
+public sealed record AdaptiveDecision(uint ActionId, int ConsumeFromPlan, string? DeviationReason)
+{
+    public bool RequestsResolve => ActionId == 0;
+}
 
 /// <summary>
 /// Live-state adaptation over a Raphael plan (spec §15/§16). Evaluated before
@@ -13,6 +18,13 @@ public sealed record AdaptiveDecision(uint ActionId, int ConsumeFromPlan, string
 /// active for the next action (Veneration, Muscle Memory) and nothing
 /// speculative, so real gains are never lower than estimated:
 ///
+///  0. The remaining plan no longer fits the live craft (durability runs out
+///     before it ends, or — once quality is met — its synthesis actions cannot
+///     reach max progress): ask for a re-solve instead of walking into a
+///     failed synthesis. Happens after a manual action during a pause shifted
+///     every buff window.
+///  0b. Poor step with a quality action planned: Observe first when the rest
+///     of the plan still fits with one more step in it.
 ///  1. Quality target reached and one synthesis action can finish the craft
 ///     (including Good-only Intensive Synthesis) — finish now.
 ///  2. Quality target reached otherwise — skip quality-only actions and run
@@ -33,17 +45,25 @@ public static class AdaptiveEngine
     {
         var target = targetQuality > 0 ? Math.Min(targetQuality, state.MaxQuality) : state.MaxQuality;
         var qualityCapped = state.Quality >= target;
+        var remainingProgress = state.MaxProgress - state.Progress;
 
-        // Rule 0: Excellent is always followed by Poor, and Poor halves quality
-        // gains. When the planned action on a Poor step is a quality action,
-        // spend the step on Observe so it lands on a Normal step instead — but
-        // only when CP and durability can absorb the extra step, since every
-        // buff window shifts by one.
+        // Rule 0: durability must carry the whole remaining plan — checked only
+        // when the plan is what we are about to follow (a finisher that ends the
+        // craft right now makes the rest of the plan moot).
+        if (!qualityCapped && remainingPlan.Count > 0 && baseProgress > 0)
+        {
+            var sim = Simulate(state, remainingPlan, level, baseProgress, observeFirst: false);
+            if (!sim.Fits)
+                return Resolve($"the remaining plan runs out of durability before it ends ({state.Durability} left)");
+        }
+
+        // Rule 0b: Excellent is always followed by Poor, and Poor halves quality
+        // gains. Spend the Poor step on Observe when the rest still fits.
         if (state.Condition == CraftCondition.Poor
             && !qualityCapped
             && remainingPlan.Count > 0
             && CraftActionData.AffectsQuality(remainingPlan[0])
-            && CanAffordObserve(state, remainingPlan))
+            && CanAffordObserve(state, remainingPlan, level, baseProgress))
         {
             return new AdaptiveDecision(
                 CraftActionData.Observe,
@@ -53,8 +73,6 @@ public static class AdaptiveEngine
 
         if (!qualityCapped || baseProgress <= 0)
             return FollowPlan(remainingPlan);
-
-        var remainingProgress = state.MaxProgress - state.Progress;
 
         // Rule 1: one action to finish, cheapest sufficient finisher wins.
         var finisher = PickFinisher(state, level, baseProgress, requireSufficient: true, remainingProgress);
@@ -67,11 +85,17 @@ public static class AdaptiveEngine
                 $"({Gain(finisher, state, level, baseProgress)} progress covers the remaining {remainingProgress})");
         }
 
-        // Rule 2: drop quality-only actions from the plan.
+        // Rule 2: drop quality-only actions from the plan — but only if what is
+        // left can actually finish the craft.
         for (var i = 0; i < remainingPlan.Count; i++)
         {
             if (CraftActionData.IsQualityOnly(remainingPlan[i]))
                 continue;
+
+            var rest = remainingPlan.Skip(i).ToArray();
+            var sim = Simulate(state, rest, level, baseProgress, observeFirst: false);
+            if (sim.Progress < remainingProgress)
+                return Resolve($"quality target reached but the remaining plan yields ~{sim.Progress} of the {remainingProgress} progress still needed");
 
             return new AdaptiveDecision(
                 remainingPlan[i],
@@ -92,6 +116,8 @@ public static class AdaptiveEngine
         return FollowPlan(remainingPlan);
     }
 
+    private static AdaptiveDecision Resolve(string reason) => new(0, 0, reason);
+
     private static int Gain(CraftActionData.SynthesisAction action, CraftSnapshot state, byte level, int baseProgress) =>
         action.ProgressGain(
             baseProgress,
@@ -101,13 +127,10 @@ public static class AdaptiveEngine
             muscleMemory: state.HasBuff(CraftBuffIds.MuscleMemory));
 
     /// <summary>
-    /// The rest of the plan still fits after inserting an Observe step: CP for
-    /// everything including Observe, and durability walked action by action
-    /// with Waste Not halving costs and Manipulation restoring 5 per step for
-    /// as long as they last (Trained Perfection is ignored, which only makes
-    /// the check stricter).
+    /// CP for the rest of the plan plus Observe, and the plan still fitting
+    /// with one extra step in front of it (every buff window shifts by one).
     /// </summary>
-    private static bool CanAffordObserve(CraftSnapshot state, IReadOnlyList<uint> remainingPlan)
+    private static bool CanAffordObserve(CraftSnapshot state, IReadOnlyList<uint> remainingPlan, byte level, int baseProgress)
     {
         var cpNeeded = CraftActionData.CpCost(CraftActionData.Observe);
         foreach (var action in remainingPlan)
@@ -115,43 +138,89 @@ public static class AdaptiveEngine
         if (state.CurrentCp < cpNeeded)
             return false;
 
+        return Simulate(state, remainingPlan, level, baseProgress, observeFirst: true).Fits;
+    }
+
+    private readonly record struct PlanSim(bool Fits, int Progress);
+
+    /// <summary>
+    /// Walks the remaining plan against the live craft: durability action by
+    /// action (Waste Not halving, Manipulation +5 per step, Trained Perfection,
+    /// mends — from the live buffs and from what the plan itself applies) and
+    /// the progress its synthesis actions produce (Veneration and Muscle Memory
+    /// windows tracked the same way; Groundwork halved below its durability
+    /// cost). Fits is false when an action would be attempted at 0 durability.
+    /// </summary>
+    private static PlanSim Simulate(
+        CraftSnapshot state, IReadOnlyList<uint> plan, byte level, int baseProgress, bool observeFirst)
+    {
         var durability = state.Durability;
         var wasteNot = Math.Max(
             state.FindBuff(CraftBuffIds.WasteNot)?.RemainingSteps ?? 0,
             state.FindBuff(CraftBuffIds.WasteNot2)?.RemainingSteps ?? 0);
         var manipulation = state.FindBuff(CraftBuffIds.Manipulation)?.RemainingSteps ?? 0;
+        var veneration = state.FindBuff(CraftBuffIds.Veneration)?.RemainingSteps ?? 0;
+        var muscleMemory = state.FindBuff(CraftBuffIds.MuscleMemory)?.RemainingSteps ?? 0;
+        var trainedPerfection = state.HasBuff(CraftBuffIds.TrainedPerfection);
+        var progress = 0;
 
-        StepDurability(ref durability, ref wasteNot, ref manipulation, cost: 0, state.MaxDurability); // Observe
+        if (observeFirst)
+            Step(ref durability, ref wasteNot, ref manipulation, ref veneration, ref muscleMemory, cost: 0, state.MaxDurability);
 
-        foreach (var action in remainingPlan)
+        foreach (var action in plan)
         {
             if (durability <= 0)
-                return false;
+                return new PlanSim(false, progress);
 
             var cost = CraftActionData.DurabilityCost(action);
-            if (wasteNot > 0)
+            if (trainedPerfection && cost > 0)
+            {
+                cost = 0;
+                trainedPerfection = false;
+            }
+            else if (wasteNot > 0)
+            {
                 cost /= 2;
-            StepDurability(ref durability, ref wasteNot, ref manipulation, cost, state.MaxDurability);
+            }
+
+            var efficiency = SynthesisEfficiency(action, level, durability);
+            if (efficiency > 0)
+            {
+                var buffModifier = 10 + (muscleMemory > 0 ? 10 : 0) + (veneration > 0 ? 5 : 0);
+                progress += baseProgress * efficiency * buffModifier / 1000;
+                muscleMemory = 0; // consumed by the first synthesis
+            }
+
+            Step(ref durability, ref wasteNot, ref manipulation, ref veneration, ref muscleMemory, cost, state.MaxDurability);
 
             // Buffs and mends the plan itself applies take effect from the next step.
             switch (action)
             {
-                case 4574: manipulation = 8; break;                                   // Manipulation
-                case 4631: wasteNot = 4; break;                                       // Waste Not
-                case 4639: wasteNot = 8; break;                                       // Waste Not II
+                case 4574: manipulation = 8; break;                                              // Manipulation
+                case 4631: wasteNot = 4; break;                                                  // Waste Not
+                case 4639: wasteNot = 8; break;                                                  // Waste Not II
+                case 19297: veneration = 4; break;                                               // Veneration
+                case 100379: muscleMemory = 5; break;                                            // Muscle Memory
+                case 100475: trainedPerfection = true; break;                                    // Trained Perfection
                 case 100003: durability = Math.Min(durability + 30, state.MaxDurability); break; // Master's Mend
-                case 100467: durability = state.MaxDurability; break;                 // Immaculate Mend
+                case 100467: durability = state.MaxDurability; break;                            // Immaculate Mend
             }
         }
 
-        return true;
+        return new PlanSim(true, progress);
     }
 
-    private static void StepDurability(ref int durability, ref int wasteNot, ref int manipulation, int cost, int maxDurability)
+    private static void Step(
+        ref int durability, ref int wasteNot, ref int manipulation, ref int veneration, ref int muscleMemory,
+        int cost, int maxDurability)
     {
         durability -= cost;
         if (wasteNot > 0)
             wasteNot--;
+        if (veneration > 0)
+            veneration--;
+        if (muscleMemory > 0)
+            muscleMemory--;
         if (manipulation > 0)
         {
             manipulation--;
@@ -159,6 +228,19 @@ public static class AdaptiveEngine
                 durability = Math.Min(durability + 5, maxDurability);
         }
     }
+
+    /// <summary>Progress efficiency (percent) of a synthesis action; 0 for anything else.</summary>
+    private static int SynthesisEfficiency(uint actionId, byte level, int durability) => actionId switch
+    {
+        100001 => level < 31 ? 100 : 120,                          // Basic Synthesis
+        100203 => level < 82 ? 150 : 180,                          // Careful Synthesis
+        100403 => (level < 86 ? 300 : 360) / (durability < 20 ? 2 : 1), // Groundwork
+        100315 => 400,                                             // Intensive Synthesis
+        100323 => level < 94 ? 100 : 150,                          // Delicate Synthesis
+        100427 => 180,                                             // Prudent Synthesis
+        100379 => 300,                                             // Muscle Memory (first step)
+        _ => 0,
+    };
 
     private static AdaptiveDecision? FollowPlan(IReadOnlyList<uint> remainingPlan) =>
         remainingPlan.Count > 0 ? new AdaptiveDecision(remainingPlan[0], 1, null) : null;

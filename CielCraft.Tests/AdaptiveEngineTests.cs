@@ -173,10 +173,16 @@ public class AdaptiveEngineTests
     [Fact]
     public void FollowsPlanOnPoorWhenDurabilityCannotAbsorbAnExtraStep()
     {
-        // 30 durability: Preparatory (20) + Byregot (10) leaves nothing for Careful Synthesis.
+        // 35 durability with one Waste Not step left: the plan fits as is (10 + 20, Careful at 5)
+        // but an Observe first would spend the Waste Not step and leave the second touch at -5.
+        var snapshot = Snapshot(progress: 0, quality: 500, durability: 35, cp: 300, condition: CraftCondition.Poor) with
+        {
+            Buffs = [new CraftBuff(CraftBuffIds.WasteNot, 0, 1)],
+        };
+
         var decision = AdaptiveEngine.Decide(
-            Snapshot(progress: 0, quality: 500, durability: 30, cp: 300, condition: CraftCondition.Poor),
-            [PreparatoryTouch, ByregotsBlessing, CarefulSynthesis],
+            snapshot,
+            [PreparatoryTouch, PreparatoryTouch, CarefulSynthesis],
             BaseProgress, Level);
 
         Assert.NotNull(decision);
@@ -248,4 +254,50 @@ public class AdaptiveEngineTests
 
     private const uint Manipulation = 4574;
     private const uint DelicateSynthesis = 100323;
+
+    [Fact]
+    public void RequestsResolveWhenQualityIsMetButThePlanCannotFinish()
+    {
+        // The failed nugget: quality capped, 15 durability, Groundwork planned (20 cost -> halved),
+        // 1870 progress still needed. Groundwork would yield ~996 and end the craft at 0 durability.
+        var snapshot = Snapshot(progress: 830, maxProgress: 2700, quality: 10200, maxQuality: 10200, durability: 15, cp: 205) with
+        {
+            Buffs = [new CraftBuff(CraftBuffIds.Veneration, 0, 1)],
+        };
+
+        var decision = AdaptiveEngine.Decide(snapshot, [Groundwork], baseProgress: 369, Level, targetQuality: 10200);
+
+        Assert.NotNull(decision);
+        Assert.True(decision.RequestsResolve);
+        Assert.Contains("progress", decision.DeviationReason);
+    }
+
+    [Fact]
+    public void RequestsResolveWhenDurabilityCannotCarryThePlan()
+    {
+        // 10 durability, no buffs, two 10-cost touches then a synthesis: the synthesis
+        // would be attempted at 0 durability.
+        var decision = AdaptiveEngine.Decide(
+            Snapshot(progress: 0, quality: 500, durability: 10, cp: 300),
+            [ByregotsBlessing, ByregotsBlessing, CarefulSynthesis],
+            BaseProgress, Level);
+
+        Assert.NotNull(decision);
+        Assert.True(decision.RequestsResolve);
+    }
+
+    [Fact]
+    public void FollowsAHealthyPlanWithBuffsItAppliesItself()
+    {
+        // Fresh craft, 40 durability: Waste Not II and Manipulation inside the plan keep it feasible.
+        var decision = AdaptiveEngine.Decide(
+            Snapshot(progress: 0, quality: 0, durability: 40, cp: 649),
+            [WasteNot2, PreparatoryTouch, Manipulation, PreparatoryTouch, PreparatoryTouch, Veneration, DelicateSynthesis, GreatStrides, ByregotsBlessing, Groundwork],
+            baseProgress: 369, Level);
+
+        Assert.NotNull(decision);
+        Assert.Equal(WasteNot2, decision.ActionId);
+    }
+
+    private const uint WasteNot2 = 4639;
 }

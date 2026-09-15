@@ -40,6 +40,7 @@ public sealed class CraftAutomator : IDisposable
     private int baseProgress;
     private byte crafterLevel;
     private int pendingConsume;
+    private int expectedStep; // craft step the rotation position corresponds to; 0 = unknown
     private uint[] remainingCache = [];
     private DateTime? exhaustedAt;
 
@@ -95,6 +96,7 @@ public sealed class CraftAutomator : IDisposable
         crafterLevel = (byte)(gameBridge.GetPlayerState()?.Level ?? 0);
         pendingConsume = 1;
         exhaustedAt = null;
+        expectedStep = craftMonitor.Current?.Step ?? 0;
         RebuildRemaining();
 
         Transition(
@@ -118,6 +120,17 @@ public sealed class CraftAutomator : IDisposable
         if (!gameBridge.IsCrafting)
         {
             Transition(AutomationState.Failed, "Cannot resume: no craft is active.");
+            return false;
+        }
+
+        // A step taken by hand while paused (test B2) shifts every buff window;
+        // continuing the old plan walked straight into a failed synthesis.
+        // Refuse, so the owner re-solves from the live state instead.
+        if (craftMonitor.Current is { } live && expectedStep > 0 && live.Step != expectedStep)
+        {
+            Transition(
+                AutomationState.Failed,
+                $"Cannot resume: the craft moved from step {expectedStep} to {live.Step} while paused; the plan no longer applies.");
             return false;
         }
 
@@ -166,6 +179,7 @@ public sealed class CraftAutomator : IDisposable
             case ActionOutcome.StepAdvanced:
                 nextIndex += pendingConsume;
                 pendingConsume = 1;
+                expectedStep = craftMonitor.Current?.Step ?? expectedStep + 1;
                 RebuildRemaining();
 
                 if (nextIndex < rotation.Count)
@@ -280,6 +294,14 @@ public sealed class CraftAutomator : IDisposable
         var decision = NextDecision();
         if (decision == null)
             return;
+
+        // The engine judged the remaining plan unable to finish the craft;
+        // pausing hands the batch its one mid-craft re-solve from the live state.
+        if (decision.RequestsResolve)
+        {
+            Pause(decision.DeviationReason ?? "the remaining plan can no longer finish the craft");
+            return;
+        }
 
         var resolved = CraftActionResolver.ResolveForJob(decision.ActionId, classJobId);
         if (resolved == null)

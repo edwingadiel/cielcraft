@@ -220,7 +220,12 @@ public sealed class BatchCrafter : IDisposable
 
             // No resumable automation. Mid-craft the only sound continuation
             // is a rotation solved from the live state; a fresh craft (or a
-            // pause taken during Solving) just needs the solve (re)run.
+            // pause taken during Solving) just needs the solve (re)run. An
+            // automator that refused to resume (the craft moved while paused)
+            // also invalidates any earlier mid-craft solution.
+            if (automator.State == AutomationState.Failed)
+                midSolution = null;
+
             var craft = craftMonitor.Current;
             if (solution == null || (craft is { Step: > 1 } && midSolution == null))
             {
