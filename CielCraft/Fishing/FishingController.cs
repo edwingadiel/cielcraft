@@ -269,6 +269,21 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         Transition(FishingRunState.Paused, $"Paused: {reason}.");
     }
 
+    /// <summary>
+    /// Put a rod left out by an earlier run away (a pause, then a reload,
+    /// 2026-09-15): while the character stands in the fishing stance every
+    /// teleport and gearset command is "unable to execute". True when the
+    /// rod is away; false while Quit is still being asked for.
+    /// </summary>
+    public bool PutRodAway()
+    {
+        if (!bridge.IsFishing)
+            return true;
+
+        retry.Try(() => bridge.ExecuteCraftAction(catalog.Id(FishAction.Quit)));
+        return false;
+    }
+
     public void Resume()
     {
         if (State != FishingRunState.Paused || plan == null)
@@ -358,6 +373,13 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
 
         if (bridge.IsCrafting)
             return;
+
+        // A rod still out from an earlier run blocks the gearset and teleport.
+        if (!PutRodAway())
+        {
+            StatusText = "Putting the rod away first.";
+            return;
+        }
 
         // A shop window left up (the bait purchase just before, 2026-09-15)
         // makes every gearset command "unable to execute while occupied".

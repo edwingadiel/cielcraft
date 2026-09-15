@@ -194,6 +194,13 @@ public sealed class FishingRun : ISourceRun
         // then is refused ("while occupied", 2026-09-15).
         if (!controllerStarted && (baitRun != null || (baitOffer != null && bridge.GetItemCount(plan.BaitItemId) == 0)))
         {
+            // The vendor trip teleports; a rod left out refuses that.
+            if (baitRun == null && !controller.PutRodAway())
+            {
+                StatusText = "Putting the rod away before the bait run.";
+                return;
+            }
+
             TickBaitRun();
             return;
         }
