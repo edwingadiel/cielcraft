@@ -176,6 +176,14 @@ against inventory, pause with a reason.
   separately (Well Fed / Medicated), and never eats or drinks mid-node or
   mid-craft. Pre-flight warns when a chosen consumable is not in the bag.
 
+- [ ] 7.12 Production breakdown (M) — Preview today is a flat list. Show the
+  resolved graph as a tree: target → sub-crafts → raw materials, each node
+  with crafts × yield, the job, and per-ingredient need / owned / missing;
+  roll-ups per gathering zone and job (how many nodes, which teleports), CP
+  and time estimates from recent solves, and which HQ materials will be
+  consumed where. Same view live during a run with progress ticks per node,
+  and as text in the report and via a "/cielcraft plan" command.
+
 Cross-cutting for 2.0: the planner grows a "source" per missing material
 (gather / fish / buy / hunt / stored-in-retainer), chosen by preference and
 availability; the runner gets one phase per source. That is the point where
