@@ -221,6 +221,7 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
         baselineCount = bridge.GetItemCount(itemId);
         casts = 0;
         waterProbe = 0;
+        rodAwayTries = 0;
         castsWithoutTarget = 0;
         caughtAtLastCheck = 0;
         autoHookEngaged = false;
@@ -277,12 +278,23 @@ public sealed class FishingController : AutomationMachine<FishingRunState>
     /// </summary>
     public bool PutRodAway()
     {
-        if (!bridge.IsFishing)
+        // The stance itself only raises Gathering (Fishing is the line in the
+        // water, 2026-09-15), so both count; a bounded number of Quits, in
+        // case Gathering is something else the character stands in.
+        if (!(bridge.IsFishing || bridge.IsGathering) || rodAwayTries >= RodAwayTries)
             return true;
 
-        retry.Try(() => bridge.ExecuteCraftAction(catalog.Id(FishAction.Quit)));
+        if (retry.Try(() => bridge.ExecuteCraftAction(catalog.Id(FishAction.Quit))))
+        {
+            rodAwayTries++;
+            Log.Information($"[Fishing] A rod is still out; putting it away ({rodAwayTries}/{RodAwayTries}).");
+        }
+
         return false;
     }
+
+    private const int RodAwayTries = 4;
+    private int rodAwayTries;
 
     public void Resume()
     {
