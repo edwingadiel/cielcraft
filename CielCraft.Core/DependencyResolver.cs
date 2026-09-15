@@ -97,6 +97,19 @@ public static class DependencyResolver
         CharacterCapabilities? capabilities = null)
     {
         var state = new State(recipes, ownedOf, capabilities);
+
+        // Owned stock of a target item is reserved: ordering it means the user
+        // wants to keep it, so another target's intermediate must not eat it
+        // (a Restock "to 5" with 3 owned would otherwise end below 5 when a
+        // sibling order consumes those 3). Planned yield surplus still feeds
+        // later branches, and the reservation makes the plan independent of
+        // the order the targets are listed in.
+        foreach (var target in targets)
+        {
+            if (!target.MaterialsOnly)
+                state.Reserve(target.ItemId);
+        }
+
         foreach (var target in targets)
         {
             if (target.MaterialsOnly)
@@ -106,10 +119,15 @@ public static class DependencyResolver
         }
 
         // A target's mode belongs to its own step; a step that is both a
-        // target and someone's intermediate keeps the target's mode.
+        // target and someone's intermediate keeps the target's mode. Two
+        // orders for the same item share one step; the first non-Any mode
+        // wins so an HQ order is not silently downgraded by an Any sibling.
+        var modeSet = new HashSet<uint>();
         foreach (var target in targets)
         {
-            if (!target.MaterialsOnly && state.Crafts.TryGetValue(target.ItemId, out var step))
+            if (target.MaterialsOnly || !state.Crafts.TryGetValue(target.ItemId, out var step))
+                continue;
+            if (target.Mode != ProductionMode.Any && modeSet.Add(target.ItemId))
                 state.Crafts[target.ItemId] = step with { Mode = target.Mode };
         }
 
@@ -127,6 +145,10 @@ public static class DependencyResolver
 
         private readonly Dictionary<uint, int> stock = new();
         private readonly HashSet<uint> expanding = [];
+        private readonly HashSet<uint> reserved = [];
+
+        /// <summary>Keep the owned count of a target item out of the shared stock.</summary>
+        public void Reserve(uint itemId) => reserved.Add(itemId);
 
         /// <summary>Materials-only target: what its crafts would consume, without the crafts themselves.</summary>
         public void ExpandIngredientsOnly(uint itemId, int needed)
@@ -198,7 +220,7 @@ public static class DependencyResolver
         {
             if (!stock.TryGetValue(itemId, out var value))
             {
-                value = Math.Max(0, ownedOf(itemId));
+                value = reserved.Contains(itemId) ? 0 : Math.Max(0, ownedOf(itemId));
                 stock[itemId] = value;
             }
 
