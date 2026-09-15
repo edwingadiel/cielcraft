@@ -784,7 +784,7 @@ public sealed class DalamudGameBridge : IGameBridge
 
     public float GetMedicatedRemainingSeconds() => GetStatusRemainingSeconds(49);
 
-    private static float GetStatusRemainingSeconds(uint statusId)
+    public float GetStatusRemainingSeconds(uint statusId)
     {
         var player = Plugin.ObjectTable.LocalPlayer;
         if (player == null)
@@ -995,6 +995,131 @@ public sealed class DalamudGameBridge : IGameBridge
         var data = default(FFXIVClientStructs.FFXIV.Component.GUI.AtkEventData);
         addon->ReceiveEvent(evt->State.EventType, (int)evt->Param, evt, &data);
         return true;
+    }
+
+    // ------------------------------------------------ rotation engine (7.14)
+
+    private sealed record PointBonus(GatheringBonusKind Kind, uint ConditionId, int ConditionValue, string Text);
+
+    private sealed record PointInfo(IReadOnlyList<PointBonus> Bonuses, bool IsTimed);
+
+    private readonly Dictionary<uint, PointInfo> pointCache = new();
+    private static Dictionary<uint, GatherStatus>? statusByIdCache;
+
+    public GatheringNodeFacts GetGatheringNodeFacts(ulong nodeObjectId, int slotIndex)
+    {
+        // A gathering point object's data id is its GatheringPoint row, which
+        // carries the point's bonus conditions and (via the transient sheet)
+        // its pop windows.
+        var pointId = Plugin.ObjectTable.SearchById(nodeObjectId)?.BaseId ?? 0;
+        var point = pointId != 0 ? GetPointInfo(pointId) : null;
+
+        var bonuses = new List<GatheringBonusCondition>();
+        if (point != null)
+        {
+            foreach (var bonus in point.Bonuses)
+                bonuses.Add(new GatheringBonusCondition(bonus.Kind, bonus.Text, IsConditionMet(bonus.ConditionId, bonus.ConditionValue)));
+        }
+
+        var statuses = new HashSet<GatherStatus>();
+        var player = Plugin.ObjectTable.LocalPlayer;
+        if (player != null)
+        {
+            var byId = StatusById();
+            foreach (var status in player.StatusList)
+            {
+                if (byId.TryGetValue(status.StatusId, out var known))
+                    statuses.Add(known);
+            }
+        }
+
+        var slotTexts = slotIndex >= 0 ? GatheringStateReader.ReadSlotTexts(slotIndex) : [];
+        var boon = slotIndex >= 0 ? GatheringStateReader.ReadBoonChance(slotIndex) : -1;
+        return new GatheringNodeFacts(boon, bonuses, statuses, point?.IsTimed ?? false, pointId) { SlotTexts = slotTexts };
+    }
+
+    private PointInfo GetPointInfo(uint pointId)
+    {
+        if (pointCache.TryGetValue(pointId, out var cached))
+            return cached;
+
+        var bonuses = new List<PointBonus>();
+        var timed = false;
+        if (Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.GatheringPoint>().TryGetRow(pointId, out var point))
+        {
+            foreach (var bonusRef in point.GatheringPointBonus)
+            {
+                if (bonusRef.RowId == 0 || !bonusRef.IsValid)
+                    continue;
+
+                var bonus = bonusRef.Value;
+                var conditionText = bonus.Condition.IsValid ? bonus.Condition.Value.Text.ExtractText().Trim() : "";
+                var bonusText = bonus.BonusType.IsValid ? bonus.BonusType.Value.Text.ExtractText().Trim() : "";
+                bonuses.Add(new PointBonus(
+                    KindOf(bonus.BonusType.RowId),
+                    bonus.Condition.RowId,
+                    (int)bonus.ConditionValue,
+                    $"{conditionText} {bonus.ConditionValue} → {bonusText} {bonus.BonusValue}"));
+            }
+        }
+
+        if (Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.GatheringPointTransient>().TryGetRow(pointId, out var transient))
+        {
+            timed = transient.GatheringRarePopTimeTable.RowId != 0
+                    || (transient.EphemeralStartTime < 2400 && transient.EphemeralEndTime < 2400
+                        && transient.EphemeralStartTime != transient.EphemeralEndTime);
+        }
+
+        var info = new PointInfo(bonuses, timed);
+        pointCache[pointId] = info;
+        return info;
+    }
+
+    // GatheringPointBonusType rows (2026-09-15): 1–9 gathering rate, 14–17
+    // yield, 18–19 attempts/integrity, 22–23 Gatherer's Boon chance, 24–33
+    // collectability effects.
+    private static GatheringBonusKind KindOf(uint bonusTypeId) => bonusTypeId switch
+    {
+        22 or 23 => GatheringBonusKind.Boon,
+        >= 14 and <= 17 => GatheringBonusKind.Yield,
+        18 or 19 => GatheringBonusKind.Attempts,
+        >= 1 and <= 9 => GatheringBonusKind.GatheringRate,
+        >= 24 and <= 33 => GatheringBonusKind.Collectability,
+        _ => GatheringBonusKind.Other,
+    };
+
+    // GatheringCondition rows: 14 Gathering ≥, 15 Perception ≥, 16 Gathering <,
+    // 19 Max GP ≥ (BaseParam 72 = Gathering, 73 = Perception). The chain
+    // condition (1) depends on the swings of this node and counts as unmet.
+    private static bool IsConditionMet(uint conditionId, int value) => conditionId switch
+    {
+        14 => GetAttribute(72) >= value,
+        15 => GetAttribute(73) >= value,
+        16 => GetAttribute(72) < value,
+        19 => (Plugin.ObjectTable.LocalPlayer?.MaxGp ?? 0) >= value,
+        _ => false,
+    };
+
+    private static Dictionary<uint, GatherStatus> StatusById()
+    {
+        if (statusByIdCache != null)
+            return statusByIdCache;
+
+        var map = new Dictionary<uint, GatherStatus>();
+        foreach (var status in System.Enum.GetValues<GatherStatus>())
+        {
+            foreach (var id in GatheringActions.StatusIds(status))
+                map.TryAdd(id, status);
+        }
+
+        return statusByIdCache = map;
+    }
+
+    public unsafe bool IsItemOnCooldown(uint itemId)
+    {
+        var actionManager = FFXIVClientStructs.FFXIV.Client.Game.ActionManager.Instance();
+        return actionManager != null
+               && actionManager->IsRecastTimerActive(FFXIVClientStructs.FFXIV.Client.Game.ActionType.Item, itemId);
     }
 
     private static unsafe FFXIVClientStructs.FFXIV.Client.UI.AddonGathering* GetGatheringAddon()

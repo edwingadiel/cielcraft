@@ -30,11 +30,18 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
     private readonly Core.INavigationProvider navigation;
     private readonly AutomationSettings configuration;
     private readonly Game.MaintenanceService maintenance;
+    private readonly Func<CharacterCapabilities> capabilities;
+    private readonly IReadOnlyList<CordialInfo> cordials;
     private readonly HashSet<ulong> blacklistedNodes = [];
 
     private static readonly TimeSpan NoNodeTimeout = TimeSpan.FromSeconds(45);
     private static readonly TimeSpan NavmeshTimeout = TimeSpan.FromMinutes(5);
     private static readonly TimeSpan StartRetryInterval = TimeSpan.FromSeconds(2);
+    // Cordial maths (roadmap 7.14): GP regenerates 5 per 3-second tick plus one
+    // per unlocked GP-regen trait; a walk to the next node is about 20 s.
+    private const int BaseGpRegenPerTick = 5;
+    private const int GpTickSeconds = 3;
+    private const int EstimatedWalkSeconds = 20;
 
     private uint itemId;
     private int targetQuantity;
@@ -42,6 +49,7 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
     private int consecutiveFailures;
     private bool controllerActive;
     private CollectableTier? collectableTier;
+    private NodeKind nodeKind;
     private int collectablesTaken;   // summed over finished node runs (7.1)
     private DateTime noNodeSince = DateTime.MaxValue;
     private DateTime navmeshWaitSince = DateTime.MaxValue;
@@ -69,22 +77,31 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
         AutomationSettings configuration,
         Game.MaintenanceService maintenance,
         ILog log,
-        IClock clock)
+        IClock clock,
+        Func<CharacterCapabilities>? capabilities = null,
+        GatheringActionCatalog? catalog = null)
         : base(log, clock, "[Gather]", GatheringLoopState.Idle, "Idle.")
     {
         this.maintenance = maintenance;
+        this.capabilities = capabilities ?? (() => CharacterCapabilities.Unknown);
+        cordials = (catalog ?? controller.Catalog).Cordials;
         this.gameBridge = gameBridge;
         this.controller = controller;
         this.navigation = navigation;
         this.configuration = configuration;
     }
 
-    /// <summary>Starts the loop; a tier means the item is gathered as a collectable at that tier's collectability (7.1).</summary>
+    /// <summary>
+    /// Starts the loop; a tier means the item is gathered as a collectable at
+    /// that tier's collectability (7.1); kind picks the rotation table and
+    /// the GP a node wants for the cordial decision (7.14).
+    /// </summary>
     public bool Start(
         uint gatherItemId,
         int quantity,
         System.Numerics.Vector3? nodeAreaCenter = null,
-        CollectableTier? tier = null)
+        CollectableTier? tier = null,
+        NodeKind kind = NodeKind.Normal)
     {
         if (State is GatheringLoopState.Running or GatheringLoopState.Paused)
             return false;
@@ -102,6 +119,7 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
         consecutiveFailures = 0;
         controllerActive = false;
         collectableTier = tier;
+        nodeKind = kind;
         collectablesTaken = 0;
         noNodeSince = DateTime.MaxValue;
         navmeshWaitSince = DateTime.MaxValue;
@@ -285,7 +303,7 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
 
         navmeshWaitSince = DateTime.MaxValue;
 
-        if (controller.Start(itemId, blacklistedNodes, targetQuantity - Gathered, areaCenter, collectableTier))
+        if (controller.Start(itemId, blacklistedNodes, targetQuantity - Gathered, areaCenter, collectableTier, nodeKind))
         {
             controllerActive = true;
             noNodeSince = DateTime.MaxValue;
@@ -314,31 +332,78 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
         }
     }
 
-    /// <summary>Drinks a cordial between nodes when a full one fits into the GP pool (roadmap 2.2).</summary>
+    /// <summary>
+    /// Drinks a cordial between nodes (roadmap 2.2 / 7.14) when the GP the
+    /// next node wants (<see cref="GatheringRotationCost"/>) is not covered by
+    /// the current GP plus the regen of the walk there: the strongest cordial
+    /// held whose GP fits into the pool, HQ before NQ, never while its recast
+    /// runs. Never at a node — the caller checks the controller's state.
+    /// </summary>
     private void TryCordial()
     {
         if (!configuration.UseCordials || Clock.UtcNow - lastCordialAt < TimeSpan.FromSeconds(5))
             return;
 
         var player = gameBridge.GetPlayerState();
-        if (player == null || player.MaxGp == 0 || player.CurrentGp > player.MaxGp - 350)
+        if (player == null || player.MaxGp == 0)
             return;
 
-        foreach (var cordial in Core.GatheringActions.Cordials)
+        var wanted = GatheringRotationCost.GpPerNode(
+            nodeKind, collectableTier != null, (int)player.MaxGp, configuration, GatheringActions.IsCrystal(itemId));
+        var regenDuringWalk = GpRegenPerTick(player.ClassJobId) * (EstimatedWalkSeconds / GpTickSeconds);
+        if (player.CurrentGp + regenDuringWalk >= wanted)
+            return;
+
+        foreach (var cordial in cordials)
         {
+            var total = gameBridge.GetItemCount(cordial.ItemId);
+            if (total == 0)
+                continue;
+
+            if (gameBridge.IsItemOnCooldown(cordial.ItemId))
+                continue;
+
             // HQ consumables are addressed as item id + 1,000,000; the count
-            // covers both qualities, so try the HQ form first.
-            if (gameBridge.GetItemCount(cordial) > 0
-                && (gameBridge.UseItem(cordial + 1_000_000) || gameBridge.UseItem(cordial)))
+            // covers both qualities, so try the HQ form first when it fits.
+            var hqCount = cordial.CanBeHq ? gameBridge.GetHqItemCount(cordial.ItemId) : 0;
+            var fitsHq = hqCount > 0 && player.CurrentGp + cordial.Gp(true) <= player.MaxGp;
+            var fitsNq = total - hqCount > 0 && player.CurrentGp + cordial.Gp(false) <= player.MaxGp;
+            if (fitsHq && gameBridge.UseItem(cordial.ItemId + 1_000_000))
             {
-                lastCordialAt = Clock.UtcNow;
-                Log.Information($"[Gather] Drinking cordial (item {cordial}); GP {player.CurrentGp}/{player.MaxGp}.");
+                LogCordial(cordial, true, player, wanted);
+                return;
+            }
+
+            if (fitsNq && gameBridge.UseItem(cordial.ItemId))
+            {
+                LogCordial(cordial, false, player, wanted);
                 return;
             }
         }
 
-        // None usable (cooldown or none held): back off before checking again.
+        // None usable (cooldown, none held, or none fits): back off before checking again.
         lastCordialAt = Clock.UtcNow;
+    }
+
+    private void LogCordial(CordialInfo cordial, bool hq, PlayerSnapshot player, int wanted)
+    {
+        lastCordialAt = Clock.UtcNow;
+        Log.Information(
+            $"[Gather] Drinking {cordial.Name}{(hq ? " HQ" : "")} (+{cordial.Gp(hq)} GP, recast {cordial.CooldownSeconds}s); " +
+            $"GP {player.CurrentGp}/{player.MaxGp}, the next node wants {wanted}.");
+    }
+
+    /// <summary>GP per 3-second tick: the base regen plus one per unlocked GP-regen trait of the job (7.16).</summary>
+    private int GpRegenPerTick(uint jobId)
+    {
+        var traits = 0;
+        foreach (var trait in capabilities().GpRegenTraits)
+        {
+            if (trait.JobId == jobId && trait.Unlocked)
+                traits++;
+        }
+
+        return BaseGpRegenPerTick + traits;
     }
 
     private string ProgressText() => $"Gathered {Gathered}/{targetQuantity} of item {itemId}{TierText()}.";
@@ -352,7 +417,7 @@ public sealed class GatheringLoop : AutomationMachine<GatheringLoopState>
     public override IEnumerable<string> Describe()
     {
         yield return $"State {State} — {StatusText}";
-        yield return $"Item {itemId} ×{targetQuantity}: gathered {Gathered} (baseline {baselineCount}; tier {collectableTier?.ToString() ?? "-"}, collectables taken {collectablesTaken}); consecutive failures {consecutiveFailures}; controllerActive {controllerActive}; blacklisted nodes {blacklistedNodes.Count}";
+        yield return $"Item {itemId} ×{targetQuantity}: gathered {Gathered} (baseline {baselineCount}; kind {nodeKind}; tier {collectableTier?.ToString() ?? "-"}, collectables taken {collectablesTaken}); consecutive failures {consecutiveFailures}; controllerActive {controllerActive}; blacklisted nodes {blacklistedNodes.Count}";
         yield return $"noNodeSince {(noNodeSince == DateTime.MaxValue ? "-" : noNodeSince.ToString("HH:mm:ss") + "Z")}; navmeshWaitSince {(navmeshWaitSince == DateTime.MaxValue ? "-" : navmeshWaitSince.ToString("HH:mm:ss") + "Z")}; last start attempt {lastStartAttempt:HH:mm:ss}Z; area center {areaCenter?.ToString() ?? "-"}; last cordial {lastCordialAt:HH:mm:ss}Z";
     }
 }

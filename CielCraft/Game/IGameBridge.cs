@@ -193,4 +193,19 @@ public interface IGameBridge : ITravelBridge
 
     /// <summary>Every ingredient of the selected recipe has NQ+HQ assigned up to its required amount.</summary>
     bool AreIngredientsAssigned();
+
+    /// <summary>
+    /// Facts about the open node for the rotation engine (roadmap 7.14): the
+    /// chosen slot's Gatherer's Boon chance (-1 when the window does not show
+    /// it), the point's bonus conditions and whether the character meets
+    /// them, timed-ness, and the gatherer statuses on the player.
+    /// <see cref="GatheringNodeFacts.Unknown"/> when the node cannot be read.
+    /// </summary>
+    GatheringNodeFacts GetGatheringNodeFacts(ulong nodeObjectId, int slotIndex);
+
+    /// <summary>Seconds left on a status of the local player; 0 when absent.</summary>
+    float GetStatusRemainingSeconds(uint statusId);
+
+    /// <summary>The item's recast timer is running (cordials share one).</summary>
+    bool IsItemOnCooldown(uint itemId);
 }

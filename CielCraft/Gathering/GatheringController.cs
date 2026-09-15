@@ -22,15 +22,22 @@ public enum GatheringState
 /// Automates one gathering node (spec §65): navigate to the nearest targetable
 /// node, interact, pick the requested item slot, gather on observed integrity
 /// transitions until the node is exhausted, then verify the inventory gain.
-/// Dalamud-free (roadmap 5.1): the plugin ticks it from the framework driver.
+/// GP spending and the collectable appraisal loop are decided by the node
+/// class's rotation table (roadmap 7.14), one action per decision, each
+/// confirmed by an observed change. Dalamud-free apart from the catalogue
+/// (roadmap 5.1): the plugin ticks it from the framework driver.
 /// </summary>
 public sealed class GatheringController : AutomationMachine<GatheringState>
 {
     private static readonly TimeSpan NavigateTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan InteractTimeout = TimeSpan.FromSeconds(20); // dismount + landing + interact
     private static readonly TimeSpan SwingTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan BuffTimeout = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan SlotPopulateTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(2);
+    // The table is consulted a few times a second at most: node facts are
+    // re-read for every decision (statuses, boon chance after a Gift).
+    private static readonly TimeSpan DecisionInterval = TimeSpan.FromMilliseconds(250);
     // The game refuses to open a node from ~2.8y (observed in Western Thanalan);
     // walk right up to it. The travel driver walks the last stretch on foot.
     internal const float InteractRange = 2.0f;
@@ -39,11 +46,17 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
     private readonly INavigationProvider navigation;
     private readonly AutomationSettings configuration;
     private readonly Func<CharacterCapabilities> capabilities;
+    private readonly GatheringActionCatalog catalog;
+    private readonly GatheringRotationSet rotations;
     private readonly Throttle retry;
+    private readonly Throttle decisionGate;
     private readonly TravelDriver travel;
+    private readonly HashSet<GatherAction> used = [];
+    private readonly HashSet<GatherAction> unusable = [];
 
     private uint requestedItemId;
     private GatheringNodeSnapshot? node;
+    private NodeKind nodeKind;
     private uint chosenItemId;
     private int chosenSlot = -1;
     private int baselineCount;
@@ -55,9 +68,12 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
     private int neededCount = int.MaxValue;
     private int gainedAtSwing = -1;
     private int gainedCached;
-    private bool yieldBuffUsed;
     private bool buffsBroken;
-    private (uint ActionId, uint GpBefore, int IntegrityBefore, DateTime At)? pendingBuff;
+    private GatheringNodeFacts facts = GatheringNodeFacts.Unknown;
+    private bool factsLogged;
+    private bool fallbackLogged;
+    private string lastDecision = "-";
+    private (GatherAction Action, uint ActionId, uint GpBefore, int IntegrityBefore, DateTime At)? pendingBuff;
     private (int Collectability, int Integrity, DateTime At)? pendingCollectAction;
     private int collectablesTaken;
     private CollectableTier? collectableTier;
@@ -68,14 +84,18 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
         AutomationSettings configuration,
         ILog log,
         IClock clock,
-        Func<CharacterCapabilities>? capabilities = null)
+        Func<CharacterCapabilities>? capabilities = null,
+        GatheringActionCatalog? catalog = null)
         : base(log, clock, "[Gather]", GatheringState.Idle, "Idle.")
     {
         this.gameBridge = gameBridge;
         this.navigation = navigation;
         this.configuration = configuration;
         this.capabilities = capabilities ?? (() => CharacterCapabilities.Unknown);
+        this.catalog = catalog ?? new GatheringActionCatalog(log);
+        rotations = new GatheringRotationSet(configuration, log);
         retry = new Throttle(clock, RetryInterval);
+        decisionGate = new Throttle(clock, DecisionInterval);
         travel = new TravelDriver(navigation, gameBridge, clock, log, "[Gather]");
     }
 
@@ -85,19 +105,25 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
     /// <summary>Collectables taken from the node of this run (roadmap 7.1); the loop sums them across nodes.</summary>
     public int CollectablesTaken => collectablesTaken;
 
+    /// <summary>The action catalogue in use (resolved from the Action sheet); the loop shares its cordial list.</summary>
+    public GatheringActionCatalog Catalog => catalog;
+
     /// <summary>
     /// Gathers the nearest node. itemId 0 = first gatherable slot; needed caps
     /// GP spending decisions; preferNear ranks candidate nodes by distance
     /// from that point (the recorded node area) instead of from the player.
     /// A tier makes that tier's collectability the appraisal goal (7.1);
-    /// without one the highest defined threshold is.
+    /// without one the highest defined threshold is. kind picks the rotation
+    /// table (7.14); a point the game data marks as timed counts as
+    /// unspoiled even when the caller says Normal.
     /// </summary>
     public bool Start(
         uint itemId,
         IReadOnlyCollection<ulong>? excludedNodes = null,
         int needed = int.MaxValue,
         System.Numerics.Vector3? preferNear = null,
-        CollectableTier? tier = null)
+        CollectableTier? tier = null,
+        NodeKind kind = NodeKind.Normal)
     {
         if (State is GatheringState.MovingToNode or GatheringState.Interacting
             or GatheringState.GatheringNode or GatheringState.CollectableNode)
@@ -132,15 +158,21 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
 
         LastNodeId = node.ObjectId;
         requestedItemId = itemId;
+        nodeKind = kind;
         neededCount = needed;
         gainedAtSwing = -1;
         gainedCached = 0;
         collectablesTaken = 0;
         collectableTier = tier;
         pendingCollectAction = null;
-        yieldBuffUsed = false;
         buffsBroken = false;
         pendingBuff = null;
+        used.Clear();
+        unusable.Clear();
+        facts = GatheringNodeFacts.Unknown;
+        factsLogged = false;
+        fallbackLogged = false;
+        lastDecision = "-";
         chosenItemId = 0;
         chosenSlot = -1;
         baselineCount = 0;
@@ -172,11 +204,13 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
         {
             // Keep an in-flight swing's observer intact (its integrity drop is
             // still the completion signal) but restart its deadline, which the
-            // pause froze. Collectable appraisals likewise.
+            // pause froze. Collectable appraisals and buffs likewise.
             if (awaitingSwing)
                 swingStartedAt = Clock.UtcNow;
             if (pendingCollectAction is { } pending)
                 pendingCollectAction = pending with { At = Clock.UtcNow };
+            if (pendingBuff is { } buff)
+                pendingBuff = buff with { At = Clock.UtcNow };
 
             EnterPhase(GatheringState.GatheringNode, "Resuming at the open node.");
         }
@@ -230,11 +264,12 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
     }
 
     /// <summary>
-    /// Collectable node rotation (roadmap 4.3): Meticulous until the goal
-    /// threshold, Collect when reached — or on the last attempt at any
-    /// threshold that still counts. The goal is the ordered tier (7.1) or,
-    /// without one, the highest defined threshold. Observed transitions:
-    /// collectability change for appraisals, integrity drop for Collect.
+    /// Collectable node (roadmap 4.3 / 7.14): the Collectable table decides
+    /// each step — by default Scrutiny then Meticulous, Collect at the goal
+    /// or on the last attempt at the minimum that counts. The goal is the
+    /// ordered tier (7.1) or, without one, the highest defined threshold.
+    /// Observed transitions: collectability change for appraisals, integrity
+    /// drop for Collect, GP drop for the GP buffs.
     /// </summary>
     private void TickCollectable()
     {
@@ -274,6 +309,10 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
             return;
         }
 
+        var playerGp = gameBridge.GetPlayerState()?.CurrentGp ?? 0;
+        if (ResolvePendingBuff(playerGp, snap.IntegrityRemaining))
+            return;
+
         if (gameBridge.IsGatheringActionInProgress)
             return;
 
@@ -302,19 +341,69 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
         var minimum = collectableTier != null ? goal
             : snap.LowThreshold > 0 ? snap.LowThreshold : goal;
 
-        var shouldCollect = snap.Collectability >= goal
-                            || (snap.IntegrityRemaining <= 1 && snap.Collectability >= minimum);
+        if (!decisionGate.IsReady)
+            return;
 
-        var actionId = shouldCollect
-            ? GatheringActions.Collect(jobId)
-            : GatheringActions.Meticulous(jobId);
+        decisionGate.Touch();
+        RefreshFacts();
+        var maxGp = gameBridge.GetPlayerState()?.MaxGp ?? 0;
+        var context = new GatheringRotationContext
+        {
+            Class = NodeClass.Collectable,
+            Gp = SpendableGp(playerGp),
+            MaxGp = (int)maxGp,
+            Integrity = snap.IntegrityRemaining,
+            IntegrityMax = snap.IntegrityTotal,
+            Collectability = snap.Collectability,
+            CollectabilityMax = snap.CollectabilityMax,
+            CollectabilityGoal = goal,
+            CollectabilityMinimum = minimum,
+            BoonChance = facts.BoonChance,
+            Bonuses = facts.Bonuses,
+            Statuses = facts.Statuses,
+            Used = used,
+            Unusable = unusable,
+            GpCost = catalog.GpCost,
+        };
+
+        var table = rotations.For(NodeClass.Collectable);
+        var chosen = table.Next(context, out var rule);
+        if (chosen == null)
+        {
+            if (!fallbackLogged)
+            {
+                fallbackLogged = true;
+                Log.Information("[Gather] The collectable table chose nothing; appraising with Meticulous.");
+            }
+
+            chosen = GatherAction.Meticulous;
+        }
+
+        var action = chosen.Value;
+        if (!GatheringActions.ConsumesAttempt(action))
+        {
+            TryUseBuff(action, rule, jobId, playerGp, snap.IntegrityRemaining);
+            return;
+        }
 
         retry.Try(() =>
         {
-            if (gameBridge.IsCraftActionReady(actionId) && gameBridge.ExecuteCraftAction(actionId))
-                pendingCollectAction = (snap.Collectability, snap.IntegrityRemaining, Clock.UtcNow);
-            else if (!shouldCollect)
+            foreach (var actionId in catalog.ActionIds(action, jobId))
+            {
+                if (gameBridge.IsCraftActionReady(actionId) && gameBridge.ExecuteCraftAction(actionId))
+                {
+                    used.Add(action);
+                    lastDecision = Describe(action, rule);
+                    pendingCollectAction = (snap.Collectability, snap.IntegrityRemaining, Clock.UtcNow);
+                    return;
+                }
+            }
+
+            unusable.Add(action);
+            if (action == GatherAction.Meticulous)
                 Pause("the appraisal action is not usable (GP or level)");
+            else
+                Log.Information($"[Gather] {GatheringActions.DisplayName(action)} is not usable here; skipping it for this node.");
         });
     }
 
@@ -430,7 +519,7 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
                 return;
         }
 
-        if (TickBuffs(gathering))
+        if (TickRotation(gathering))
             return;
 
         if (awaitingSwing)
@@ -469,41 +558,30 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
     }
 
     /// <summary>
-    /// GP spending (spec §37): a yield buff once per node and integrity
-    /// restores while they pay for themselves. Usability (GP, level, unlock)
-    /// is the game's own action status; effects are confirmed by observing GP
+    /// GP spending at an item node (spec §37, roadmap 7.14): the node class's
+    /// table picks one action per decision; usability (GP, level, unlock) is
+    /// the game's own action status; effects are confirmed by observing GP
     /// or integrity change. Returns true while a buff is in flight.
     /// </summary>
-    private bool TickBuffs(GatheringSnapshot gathering)
+    private bool TickRotation(GatheringSnapshot gathering)
     {
-        if (!configuration.UseGatheringBuffs || buffsBroken || awaitingSwing)
+        if (awaitingSwing)
             return false;
 
-        if (pendingBuff is { } pending)
-        {
-            if (gathering.CurrentGp < pending.GpBefore || gathering.IntegrityRemaining > pending.IntegrityBefore)
-            {
-                pendingBuff = null;
-                return false;
-            }
+        if (ResolvePendingBuff(gathering.CurrentGp, gathering.IntegrityRemaining))
+            return true;
 
-            if (Clock.UtcNow - pending.At > TimeSpan.FromSeconds(5))
-            {
-                // The action did not land; stop spending GP this node.
-                Log.Warning($"[Gather] Buff action {pending.ActionId} did not resolve; skipping buffs.");
-                buffsBroken = true;
-                pendingBuff = null;
-            }
-
-            return pendingBuff != null;
-        }
-
-        if (gameBridge.IsGatheringActionInProgress)
+        if (buffsBroken || gameBridge.IsGatheringActionInProgress)
             return false;
 
         var jobId = gameBridge.GetPlayerState()?.ClassJobId ?? 0;
         if (jobId is not (GatheringActions.MinerJobId or GatheringActions.BotanistJobId))
             return false;
+
+        if (!decisionGate.IsReady)
+            return false;
+
+        decisionGate.Touch();
 
         if (gainedAtSwing != gatherSwings)
         {
@@ -515,37 +593,116 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
         var remaining = neededCount == int.MaxValue ? int.MaxValue : Math.Max(0, neededCount - gained);
         var yieldPerSwing = gatherSwings > 0 ? Math.Max(1, gained / gatherSwings) : 1;
 
-        // Yield buff: worth it when this node alone cannot cover the need.
-        if (!yieldBuffUsed && remaining > gathering.IntegrityRemaining * yieldPerSwing)
+        RefreshFacts();
+        var nodeClass = ItemNodeClass();
+        var context = new GatheringRotationContext
         {
-            foreach (var actionId in new[] { GatheringActions.YieldII(jobId), GatheringActions.YieldI(jobId) })
-            {
-                if (gameBridge.IsCraftActionReady(actionId) && gameBridge.ExecuteCraftAction(actionId))
-                {
-                    yieldBuffUsed = true;
-                    pendingBuff = (actionId, gathering.CurrentGp, gathering.IntegrityRemaining, Clock.UtcNow);
-                    Log.Information($"[Gather] Using yield buff (action {actionId}).");
-                    return true;
-                }
-            }
+            Class = nodeClass,
+            Gp = SpendableGp(gathering.CurrentGp),
+            MaxGp = (int)gathering.MaxGp,
+            Integrity = gathering.IntegrityRemaining,
+            IntegrityMax = gathering.IntegrityTotal,
+            Remaining = remaining,
+            YieldPerSwing = yieldPerSwing,
+            BoonChance = facts.BoonChance,
+            Bonuses = facts.Bonuses,
+            Statuses = facts.Statuses,
+            Used = used,
+            Unusable = unusable,
+            GpCost = catalog.GpCost,
+        };
 
-            yieldBuffUsed = true; // not usable (GP/level); do not retry every tick
+        var action = rotations.For(nodeClass).Next(context, out var rule);
+        return action != null && TryUseBuff(action.Value, rule, jobId, gathering.CurrentGp, gathering.IntegrityRemaining);
+    }
+
+    /// <summary>
+    /// The buff in flight resolved (GP dropped, or integrity rose for a
+    /// restore) or timed out; a timeout stops all GP spending on this node —
+    /// the action did not land and firing more would just burn GP.
+    /// Returns true while one is still pending.
+    /// </summary>
+    private bool ResolvePendingBuff(uint currentGp, int integrity)
+    {
+        if (pendingBuff is not { } pending)
+            return false;
+
+        if (currentGp < pending.GpBefore || integrity > pending.IntegrityBefore)
+        {
+            pendingBuff = null;
+            return false;
         }
 
-        // Integrity restore: an extra swing is worth 300 GP while we still need more.
-        if (gathering.IntegrityRemaining < gathering.IntegrityTotal
-            && remaining > gathering.IntegrityRemaining * yieldPerSwing)
+        if (Clock.UtcNow - pending.At > BuffTimeout)
         {
-            var actionId = GatheringActions.RestoreIntegrity(jobId);
+            Log.Warning($"[Gather] {GatheringActions.DisplayName(pending.Action)} (action {pending.ActionId}) did not resolve; skipping buffs for this node.");
+            buffsBroken = true;
+            pendingBuff = null;
+            return false;
+        }
+
+        return true;
+    }
+
+    /// <summary>
+    /// Fires a buff-type action (anything that does not consume an attempt),
+    /// trying the catalogue's ids in order (an upgraded action first). An
+    /// action the game refuses is marked unusable for this node so the table
+    /// falls through to its next rule at the next decision.
+    /// </summary>
+    private bool TryUseBuff(GatherAction action, GatheringRotationRule? rule, uint jobId, uint gpBefore, int integrityBefore)
+    {
+        foreach (var actionId in catalog.ActionIds(action, jobId))
+        {
             if (gameBridge.IsCraftActionReady(actionId) && gameBridge.ExecuteCraftAction(actionId))
             {
-                pendingBuff = (actionId, gathering.CurrentGp, gathering.IntegrityRemaining, Clock.UtcNow);
-                Log.Information($"[Gather] Restoring integrity (action {actionId}).");
+                used.Add(action);
+                lastDecision = Describe(action, rule);
+                pendingBuff = (action, actionId, gpBefore, integrityBefore, Clock.UtcNow);
+                Log.Information($"[Gather] {lastDecision} — action {actionId}, GP {gpBefore}.");
                 return true;
             }
         }
 
+        unusable.Add(action);
+        Log.Information($"[Gather] {GatheringActions.DisplayName(action)} is not usable here (level, unlock or GP); skipping it for this node.");
         return false;
+    }
+
+    private static string Describe(GatherAction action, GatheringRotationRule? rule) =>
+        rule == null
+            ? GatheringActions.DisplayName(action)
+            : $"{GatheringActions.DisplayName(action)} (rule {rule.Line}: {rule.Text})";
+
+    /// <summary>GP the table may spend: none when buffs are off or a buff failed to land on this node.</summary>
+    private int SpendableGp(uint currentGp) =>
+        configuration.UseGatheringBuffs && !buffsBroken ? (int)currentGp : 0;
+
+    /// <summary>
+    /// Re-reads the node facts (bonus conditions, boon chance, statuses) for
+    /// a decision; the first read of a node is logged with the row texts so
+    /// the boon reading can be checked against the window in game.
+    /// </summary>
+    private void RefreshFacts()
+    {
+        if (node == null)
+            return;
+
+        facts = gameBridge.GetGatheringNodeFacts(node.ObjectId, chosenSlot);
+        if (!factsLogged)
+        {
+            factsLogged = true;
+            Log.Information(
+                $"[Gather] Node facts: {facts.Describe()}; class {ItemNodeClass()}; " +
+                $"row texts [{string.Join(" | ", facts.SlotTexts)}].");
+        }
+    }
+
+    /// <summary>The table an item (non-collectable) node uses: a timed point is unspoiled whatever the caller said.</summary>
+    private NodeClass ItemNodeClass()
+    {
+        var kind = facts.IsTimed && nodeKind == NodeKind.Normal ? NodeKind.Unspoiled : nodeKind;
+        return GatheringRotationTable.ClassFor(kind, collectable: false, GatheringActions.IsCrystal(chosenItemId));
     }
 
     private bool ChooseSlot(GatheringSnapshot gathering)
@@ -641,11 +798,12 @@ public sealed class GatheringController : AutomationMachine<GatheringState>
     {
         foreach (var line in base.Describe())
             yield return line;
-        yield return $"Requested item {requestedItemId}; chosen item {chosenItemId} slot {chosenSlot}; needed {(neededCount == int.MaxValue ? "unlimited" : neededCount.ToString())}; last node {LastNodeId}";
+        yield return $"Requested item {requestedItemId}; chosen item {chosenItemId} slot {chosenSlot}; needed {(neededCount == int.MaxValue ? "unlimited" : neededCount.ToString())}; last node {LastNodeId}; kind {nodeKind}";
         yield return node == null
             ? "Node: none"
             : $"Node: {node.Name} #{node.ObjectId} at {node.Position.X:F1}, {node.Position.Y:F1}, {node.Position.Z:F1} ({node.Distance:F1}y at selection)";
-        yield return $"Swings {gatherSwings}; awaitingSwing {awaitingSwing} (since {swingStartedAt:HH:mm:ss}Z); lastIntegrity {lastIntegrity}; baseline count {baselineCount}; gained {gainedCached} (at swing {gainedAtSwing}); yieldBuffUsed {yieldBuffUsed}; buffsBroken {buffsBroken}; pendingBuff {(pendingBuff is { } pending ? $"{pending.ActionId} (GP {pending.GpBefore}, integrity {pending.IntegrityBefore}, at {pending.At:HH:mm:ss}Z)" : "-")}";
+        yield return $"Swings {gatherSwings}; awaitingSwing {awaitingSwing} (since {swingStartedAt:HH:mm:ss}Z); lastIntegrity {lastIntegrity}; baseline count {baselineCount}; gained {gainedCached} (at swing {gainedAtSwing}); buffsBroken {buffsBroken}; pendingBuff {(pendingBuff is { } pending ? $"{pending.Action} #{pending.ActionId} (GP {pending.GpBefore}, integrity {pending.IntegrityBefore}, at {pending.At:HH:mm:ss}Z)" : "-")}";
+        yield return $"Rotation: last decision {lastDecision}; used [{string.Join(", ", used)}]; unusable [{string.Join(", ", unusable)}]; facts {facts.Describe()}";
         yield return $"Phase since {phaseStartedAt:HH:mm:ss}Z; last attempt {retry.LastAttempt:HH:mm:ss}Z; collectables taken {collectablesTaken}; tier {collectableTier?.ToString() ?? "-"}";
         foreach (var line in travel.Describe())
             yield return line;
