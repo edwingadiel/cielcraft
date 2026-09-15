@@ -102,6 +102,9 @@ public static class GatheringActions
     public const uint MinerJobId = 16;
     public const uint BotanistJobId = 17;
 
+    /// <summary>Fisher (roadmap 7.4). Fishing has its own action vocabulary; only the job id is shared.</summary>
+    public const uint FisherJobId = 18;
+
     /// <summary>
     /// Cordials strongest first: Hi-Cordial (NQ only), Cordial, Watered
     /// Cordial. GP values from the ItemAction sheet (Data / DataHQ), recasts

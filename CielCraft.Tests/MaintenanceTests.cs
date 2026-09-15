@@ -189,6 +189,13 @@ public class MaintenanceTests
         public bool FillHqIngredients() => throw Unexpected();
         public bool FillIngredients(bool preferHq) => throw Unexpected();
         public bool AreIngredientsAssigned() => throw Unexpected();
+
+        // ---- Fishing (7.4) ----
+
+        public FishingSnapshot? GetFishingState() => throw Unexpected();
+        public bool IsFishing => throw Unexpected();
+        public bool SelectBait(uint baitItemId) => throw Unexpected();
+        public float GetMainHandConditionPercent() => throw Unexpected();
     }
 
     private const uint Gloves = 1001;

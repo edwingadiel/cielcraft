@@ -110,6 +110,27 @@ public class AutomationSettings
 
     /// <summary>Let the AutoHook plugin handle bite timing over IPC when it is installed (roadmap 7.4).</summary>
     public bool FishingPreferAutoHook { get; set; } = true;
+
+    // ---- P4 (fishing, roadmap 7.4) additions ----
+
+    /// <summary>
+    /// Bait per fish the user set by hand, keyed by the fish's item id
+    /// (roadmap 7.4). The game sheets carry no bait-per-fish data at all, so
+    /// CielCraft ships a small bundled table; an entry here overrides it — the
+    /// place to correct a wrong pairing or add a fish the table does not know.
+    /// </summary>
+    public System.Collections.Generic.Dictionary<uint, FishingBaitChoice> FishingBait { get; set; } = new();
+}
+
+/// <summary>
+/// How to catch one fish (roadmap 7.4): the bait to apply, and the fish it has
+/// to be mooched from when it does not bite on bait directly (0 = cast for it).
+/// </summary>
+public sealed class FishingBaitChoice
+{
+    public uint BaitItemId { get; set; }
+
+    public uint MoochFromItemId { get; set; }
 }
 
 /// <summary>Which turn-ins the collectables planner prefers when several earn the scrips an order needs (roadmap 7.17).</summary>
