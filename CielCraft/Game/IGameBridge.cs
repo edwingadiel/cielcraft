@@ -231,6 +231,32 @@ public interface IGameBridge : ITravelBridge
 
     /// <summary>The item's recast timer is running (cordials share one).</summary>
     bool IsItemOnCooldown(uint itemId);
+
+    // ---- NPC (7.3) ----
+
+    /// <summary>An aetheryte of that territory is in the teleport list, so a trip there is possible.</summary>
+    bool CanTeleportTo(uint territoryId);
+
+    /// <summary>
+    /// The nearest loaded event NPC (or event object — summoning bells and the
+    /// like) with that data id, and where it stands; null when none is in the
+    /// object table. The sheets say where an NPC belongs, the object table says
+    /// where it actually is.
+    /// </summary>
+    (ulong ObjectId, System.Numerics.Vector3 Position)? FindNpcObject(uint dataId);
+
+    /// <summary>Option labels of the open SelectString / SelectIconString, in the order the menu lists them; empty when neither is open.</summary>
+    IReadOnlyList<string> ReadDialogOptions();
+
+    /// <summary>
+    /// Picks the option of the open SelectString / SelectIconString whose label
+    /// contains the text (case-insensitive). False when no menu is open or no
+    /// option matches.
+    /// </summary>
+    bool SelectDialogOption(string textContains);
+
+    /// <summary>Advances the open Talk box one step. False when none is open.</summary>
+    bool AdvanceTalk();
 }
 
 /// <summary>One equipped piece's spiritbond (roadmap 7.2): the equipment slot, the item and 0..10000.</summary>

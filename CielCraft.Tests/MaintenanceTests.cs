@@ -189,6 +189,14 @@ public class MaintenanceTests
         public bool FillHqIngredients() => throw Unexpected();
         public bool FillIngredients(bool preferHq) => throw Unexpected();
         public bool AreIngredientsAssigned() => throw Unexpected();
+
+        // ---- NPC (7.3): mender repair has its own fake in NpcInteractorTests ----
+
+        public bool CanTeleportTo(uint territoryId) => throw Unexpected();
+        public (ulong ObjectId, System.Numerics.Vector3 Position)? FindNpcObject(uint dataId) => throw Unexpected();
+        public IReadOnlyList<string> ReadDialogOptions() => throw Unexpected();
+        public bool SelectDialogOption(string textContains) => throw Unexpected();
+        public bool AdvanceTalk() => throw Unexpected();
     }
 
     private const uint Gloves = 1001;

@@ -31,6 +31,9 @@ public sealed class MaintenanceService
     private enum Phase
     {
         Idle,
+        // Mender repair (roadmap 7.3a): the trip to the NPC, driven by the
+        // interactor; the repair phases below then work its Repair window.
+        GoingToMender,
         OpeningRepair,
         RepairingAll,
         Confirming,
@@ -58,6 +61,8 @@ public sealed class MaintenanceService
     private readonly IClock clock;
     private readonly Throttle attempts;
     private readonly Func<uint, string> itemName;
+    private readonly INpcInteractor? npc;
+    private readonly IMenderLocator? npcs;
 
     private Phase phase = Phase.Idle;
     private DateTime phaseStartedAt;
@@ -88,15 +93,32 @@ public sealed class MaintenanceService
     /// <summary>Set when maintenance is required but impossible; callers should pause with this reason.</summary>
     public string? BlockedReason { get; private set; }
 
+    /// <summary>
+    /// The service is moving the character itself (the mender trip, roadmap
+    /// 7.3a). Callers whose interference rule reads "the character moved while
+    /// it should stand still" as the user taking over must skip that check
+    /// while this is true.
+    /// </summary>
+    public bool IsMovingCharacter => phase == Phase.GoingToMender;
+
     /// <param name="itemName">Item names for log lines and the blocked reason; defaults to "item N".</param>
+    /// <param name="npc">
+    /// The NPC interactor for mender repair (roadmap 7.3a); null keeps the
+    /// pre-7.3a behaviour (no Dark Matter simply blocks). The service ticks it
+    /// itself while it owns the trip.
+    /// </param>
+    /// <param name="npcs">Where the menders are; null keeps the pre-7.3a behaviour.</param>
     public MaintenanceService(
-        IGameBridge gameBridge, AutomationSettings configuration, ILog log, IClock clock, Func<uint, string>? itemName = null)
+        IGameBridge gameBridge, AutomationSettings configuration, ILog log, IClock clock, Func<uint, string>? itemName = null,
+        INpcInteractor? npc = null, IMenderLocator? npcs = null)
     {
         this.gameBridge = gameBridge;
         this.configuration = configuration;
         this.log = log;
         this.clock = clock;
         this.itemName = itemName ?? (id => $"item {id}");
+        this.npc = npc;
+        this.npcs = npcs;
         attempts = new Throttle(clock, RetryInterval);
     }
 
@@ -174,6 +196,9 @@ public sealed class MaintenanceService
                     return StartExtraction();
                 return StartDueConsumable();
 
+            case Phase.GoingToMender:
+                return TickMenderTrip();
+
             case Phase.OpeningRepair:
                 if (gameBridge.IsAddonVisible("Repair"))
                 {
@@ -234,6 +259,7 @@ public sealed class MaintenanceService
                 if (!gameBridge.IsAddonVisible("Repair"))
                 {
                     phase = Phase.Idle;
+                    FinishMenderTrip();
                     // Repair, then materia, then consumables — all before the phase starts.
                     return NeedsExtraction ? StartExtraction() : StartDueConsumable();
                 }
@@ -398,7 +424,12 @@ public sealed class MaintenanceService
 
         if (!hasDarkMatter)
         {
-            BlockedReason = "equipment needs repair but there is no Dark Matter in the inventory";
+            // Roadmap 7.3a: a mender repairs for gil when the bag has no Dark
+            // Matter; only when none can be reached does the run block.
+            if (StartMenderTrip())
+                return true;
+
+            BlockedReason = NoDarkMatter + (menderNote.Length == 0 ? "" : $" ({menderNote})");
             return false;
         }
 
@@ -406,6 +437,154 @@ public sealed class MaintenanceService
             $"[Maintenance] Gear at {gameBridge.GetLowestEquipmentConditionPercent():F0}%; self-repairing.");
         EnterPhase(Phase.OpeningRepair, "Opening the repair window...");
         return true;
+    }
+
+    private const string NoDarkMatter = "equipment needs repair but there is no Dark Matter in the inventory";
+
+    /// <summary>The mender script (roadmap 7.3a): pick "Repair Gear" from the NPC's menu, then take over its Repair window.</summary>
+    private static readonly DialogStep[] MenderScript =
+    [
+        new SelectOption("Repair"),
+        new WaitForAddon("Repair"),
+    ];
+
+    /// <summary>Why the mender was not used, appended to the blocked reason; empty when it was.</summary>
+    private string menderNote = "";
+
+    /// <summary>The repair phases are working a mender's window, not the self-repair one.</summary>
+    private bool atMender;
+
+    private string menderLabel = "";
+
+    /// <summary>When the last mender trip gave up; the next one waits out <see cref="MenderRetryAfter"/>.</summary>
+    private DateTime menderFailedAt = DateTime.MinValue;
+
+    /// <summary>
+    /// A trip that failed (no path, a dialog that never answered, the user
+    /// taking over) is not started again on the very next maintenance pass:
+    /// the run would spend its time teleporting instead of stopping.
+    /// </summary>
+    private static readonly TimeSpan MenderRetryAfter = TimeSpan.FromMinutes(5);
+
+    /// <summary>
+    /// Sends the character to the nearest mender (roadmap 7.3a). False — with
+    /// <see cref="menderNote"/> set — when the setting is off, no mender is
+    /// reachable, the interactor is busy or the last trip failed recently; the
+    /// caller then blocks as before.
+    /// </summary>
+    private bool StartMenderTrip()
+    {
+        // Not wired (pre-7.3a, or a caller that does not own travel): today's
+        // blocked reason, word for word.
+        if (npc == null || npcs == null)
+        {
+            menderNote = "";
+            return false;
+        }
+
+        if (!configuration.MenderRepair)
+        {
+            menderNote = "mender repair is off";
+            return false;
+        }
+
+        // Keep the note of the failure that started the cooldown.
+        if (menderFailedAt != DateTime.MinValue && clock.UtcNow - menderFailedAt < MenderRetryAfter)
+            return false;
+
+        menderNote = "";
+
+        var position = gameBridge.PlayerPosition;
+        if (position == null)
+        {
+            menderNote = "the character's position is unknown";
+            return false;
+        }
+
+        var mender = npcs.NearestMender(gameBridge.CurrentTerritoryId, position.Value);
+        if (mender == null)
+        {
+            menderNote = "no mender is reachable from here";
+            return false;
+        }
+
+        menderLabel = $"{mender.Name} in {npcs.TerritoryName(mender.TerritoryId)}";
+        if (!npc.Start(mender, MenderScript, $"repairs at {menderLabel}"))
+        {
+            menderNote = "the NPC interactor is busy";
+            return false;
+        }
+
+        // The crafting log blocks movement and the general actions; it is
+        // closed before the character leaves, as for the repair window itself.
+        gameBridge.CloseRecipeNote();
+        atMender = true;
+        log.Information(
+            $"[Maintenance] Gear at {gameBridge.GetLowestEquipmentConditionPercent():F0}% and no Dark Matter in the bag; going to {menderLabel} to repair.");
+        EnterPhase(Phase.GoingToMender, $"Going to {menderLabel} to repair...");
+        return true;
+    }
+
+    /// <summary>Drives the trip; the repair phases take over once the mender's window is up.</summary>
+    private bool TickMenderTrip()
+    {
+        if (npc == null)
+        {
+            phase = Phase.Idle;
+            return false;
+        }
+
+        npc.Tick();
+        switch (npc.State)
+        {
+            case NpcInteractionState.Completed:
+                log.Information($"[Maintenance] At {menderLabel}; repairing all equipment.");
+                EnterPhase(Phase.RepairingAll, $"Repairing all equipment at {menderLabel}...");
+                return true;
+
+            case NpcInteractionState.Failed:
+                return AbandonMenderTrip($"the mender trip failed: {npc.FailureReason}");
+
+            case NpcInteractionState.Paused:
+                return AbandonMenderTrip("the mender trip was interrupted");
+
+            case NpcInteractionState.Idle:
+                return AbandonMenderTrip("the mender trip stopped");
+
+            default:
+                StatusText = npc.StatusText;
+                return true;
+        }
+    }
+
+    /// <summary>The trip is off: the run blocks with today's reason plus what went wrong.</summary>
+    private bool AbandonMenderTrip(string reason)
+    {
+        npc?.Stop();
+        atMender = false;
+        phase = Phase.Idle;
+        menderFailedAt = clock.UtcNow;
+        menderNote = reason;
+        log.Warning($"[Maintenance] {Capitalize(reason)}.");
+        BlockedReason = $"{NoDarkMatter} ({reason})";
+        return false;
+    }
+
+    /// <summary>
+    /// Leaves the mender once its Repair window is closed. The character stays
+    /// where the mender stands: returning to where the run was is the caller's
+    /// business (the production runner teleports to its crafting spot before
+    /// the next step anyway).
+    /// </summary>
+    private void FinishMenderTrip()
+    {
+        if (!atMender)
+            return;
+
+        atMender = false;
+        menderFailedAt = DateTime.MinValue;
+        npc?.Stop();
+        log.Information($"[Maintenance] Repaired at {menderLabel}; the character is still there.");
     }
 
     /// <summary>Starts extracting from the first piece at 100% spiritbond; false when the bag cannot take the materia.</summary>
@@ -499,6 +678,14 @@ public sealed class MaintenanceService
             gameBridge.CloseMaterialize();
         else
             CloseRepairUi();
+
+        // The mender trip owns travel and a dialog; both end here (roadmap 7.3a).
+        if (atMender)
+        {
+            atMender = false;
+            npc?.Stop();
+        }
+
         phase = Phase.Idle;
         StatusText = "";
     }
@@ -519,6 +706,13 @@ public sealed class MaintenanceService
         // Never leave repair UI open behind a timeout — it blocks gearset
         // swaps and crafting-log interaction downstream.
         CloseRepairUi();
+        if (atMender)
+        {
+            // A mender's window that did not answer leaves the dialog too.
+            atMender = false;
+            npc?.Stop();
+        }
+
         BlockedReason = reason;
         phase = Phase.Idle;
         return true;
@@ -532,6 +726,7 @@ public sealed class MaintenanceService
     {
         yield return $"Phase {phase} since {phaseStartedAt:HH:mm:ss}Z; last attempt {attempts.LastAttempt:HH:mm:ss}Z; last idle check {lastIdleCheckAt:HH:mm:ss}Z; status: {StatusText}; blocked: {BlockedReason ?? "-"}; failed items [{string.Join(", ", failedItems)}]";
         yield return $"Gear condition {gameBridge.GetLowestEquipmentConditionPercent():F0}% (auto-repair {configuration.AutoRepair}, threshold {configuration.RepairThresholdPercent}%)";
+        yield return $"Mender repair {configuration.MenderRepair} (interactor {(npc == null ? "none" : npc.State.ToString())}, locator {(npcs == null ? "none" : "wired")}); at mender {atMender} ({(menderLabel.Length == 0 ? "-" : menderLabel)}); note: {(menderNote.Length == 0 ? "-" : menderNote)}";
         yield return $"Materia extracted this session {MateriaExtracted} (auto-extract {configuration.AutoExtractMateria}, disabled {extractionDisabled}); spiritbond-ready slots [{string.Join(", ", gameBridge.GetSpiritbondReadySlots())}]; pending slot {pendingSpiritbondSlot} (item {pendingSpiritbondItemId}, ready before {readySlotsBefore})";
         yield return $"Activity {Activity}: food {DescribeChoice(Slot.Food)}, Well Fed {gameBridge.GetFoodBuffRemainingSeconds():F0}s; potion {DescribeChoice(Slot.Potion)}, Medicated {gameBridge.GetMedicatedRemainingSeconds():F0}s";
         yield return $"Crafting set: {DescribeSet(configuration.CraftingConsumables)}; gathering set: {DescribeSet(configuration.GatheringConsumables)}; legacy food {configuration.FoodItemId} (HQ {configuration.FoodIsHq})";
