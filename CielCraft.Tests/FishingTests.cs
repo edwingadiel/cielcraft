@@ -391,6 +391,25 @@ public class FishingTests
         Assert.Contains(database.Describe(), l => l.Contains("0 fish at known holes"));
     }
 
+    private sealed class BrokenSheets : IFishingSheetReader
+    {
+        public IEnumerable<FishingSpotRow> ReadSpots() => throw new InvalidOperationException("sheet missing");
+        public IEnumerable<FishRow> ReadFish() => [];
+        public IEnumerable<SpearfishRow> ReadSpearfish() => [];
+        public IEnumerable<BaitRow> ReadBaits() => [];
+    }
+
+    [Fact]
+    public void SheetsThatCannotBeReadLeaveTheRestOfThePluginWorking()
+    {
+        var database = new FishingDatabase(new BrokenSheets());
+
+        Assert.False(database.IsFish(BlackEel));
+        Assert.Null(database.FindSpot(BlackEel));
+        Assert.Null(database.RefusalReason(BlackEel));
+        Assert.Contains(database.Describe(), l => l.Contains("THE SHEETS COULD NOT BE READ: sheet missing"));
+    }
+
     // -------------------------------------------------------------- controller
 
     [Fact]

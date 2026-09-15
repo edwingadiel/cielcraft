@@ -300,6 +300,28 @@ public sealed class FishingDatabase
         if (fishToSpots != null)
             return;
 
+        // A sheet the game data cannot hand over must not take the planner with
+        // it: the index stays empty, no fish is offered, and the report says so
+        // (crafting and gathering stay usable, spec §31's rule for optional data).
+        try
+        {
+            BuildIndex();
+        }
+        catch (Exception e)
+        {
+            IndexError = e.Message;
+            fish = new Dictionary<uint, FishRow>();
+            spearfish = new Dictionary<uint, SpearfishRow>();
+            baits = new Dictionary<uint, BaitRow>();
+            fishToSpots = new Dictionary<uint, List<FishingSpotRow>>();
+        }
+    }
+
+    /// <summary>Why the fishing sheets could not be read; empty when they were.</summary>
+    public string IndexError { get; private set; } = "";
+
+    private void BuildIndex()
+    {
         var spots = new Dictionary<uint, List<FishingSpotRow>>();
         foreach (var spot in reader.ReadSpots())
         {
@@ -344,7 +366,8 @@ public sealed class FishingDatabase
         EnsureIndex();
         yield return $"Fishing database: {fishToSpots!.Count} fish at known holes, {fish!.Count} fish rows, " +
                      $"{spearfish!.Count} spearfishing catches (refused), {baits!.Count} baits, " +
-                     $"{FishingBaitTable.Count} bundled bait pairings";
+                     $"{FishingBaitTable.Count} bundled bait pairings" +
+                     (IndexError.Length > 0 ? $"; THE SHEETS COULD NOT BE READ: {IndexError}" : "");
         yield return $"Fisher level {FisherLevel()}";
     }
 }
