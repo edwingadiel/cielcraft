@@ -174,7 +174,7 @@ internal sealed class OrdersPanel
     /// <summary>Craftable names from the recipe sheet, or gatherable names from the node data (7.1), per the search kind.</summary>
     private IReadOnlyList<(uint ItemId, string Name)> Search(string query) =>
         searchKind == OrderKind.Gather
-            ? plugin.GatheringDatabase.SearchGatherable(query)
+            ? plugin.GatheringDatabase.SearchGatherable(query).Concat(plugin.FishingDatabase.SearchFish(query)).Take(12).ToList() // nodes, then rod-caught fish (7.4)
             : Provider.SearchCraftable(query).Select(r => (r.ItemId, r.Name)).ToList();
 
     /// <summary>Appends an order to the highlighted group, else the last one, creating the first group when the book is empty.</summary>

@@ -176,6 +176,31 @@ public sealed class FishingDatabase
         return fishToSpots!.ContainsKey(itemId);
     }
 
+    /// <summary>Rod-caught fish whose name contains the query (case-insensitive), for the orders search (7.4): names that start with it first, then shorter names.</summary>
+    public IReadOnlyList<(uint ItemId, string Name)> SearchFish(string query, int maxResults = 10)
+    {
+        var needle = query.Trim();
+        if (needle.Length < 2)
+            return [];
+
+        EnsureIndex();
+        var results = new List<(uint ItemId, string Name)>();
+        foreach (var row in fish!.Values)
+        {
+            if (fishToSpots!.ContainsKey(row.ItemId) && row.Name.Contains(needle, StringComparison.OrdinalIgnoreCase))
+                results.Add((row.ItemId, row.Name));
+        }
+
+        results.Sort((a, b) =>
+        {
+            var aStarts = a.Name.StartsWith(needle, StringComparison.OrdinalIgnoreCase);
+            var bStarts = b.Name.StartsWith(needle, StringComparison.OrdinalIgnoreCase);
+            return aStarts != bStarts ? (aStarts ? -1 : 1) : a.Name.Length.CompareTo(b.Name.Length);
+        });
+
+        return results.Count > maxResults ? results.GetRange(0, maxResults) : results;
+    }
+
     /// <summary>The item is a spearfishing catch; spear fishing is not automated (see <see cref="RefusalReason"/>).</summary>
     public bool IsSpearfish(uint itemId)
     {
