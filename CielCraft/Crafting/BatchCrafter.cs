@@ -114,17 +114,20 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
         if (quantity < 1)
             return false;
 
-        // Step 1 counts as fresh even with HQ materials (initial quality > 0).
-        var freshCraft = gameBridge.IsCrafting && craftMonitor.Current is { Step: <= 1 };
-        if (!freshCraft && !gameBridge.IsReadyToStartCraft)
+        // A craft already in progress is adopted as craft #1: on step 1 it is
+        // solved like a fresh craft, later it is solved from the live state
+        // (the way a paused batch resumes), so a run interrupted by a plugin
+        // reload can be picked up without quitting the synthesis.
+        var attached = gameBridge.IsCrafting && craftMonitor.Current != null;
+        if (!attached && !gameBridge.IsReadyToStartCraft)
         {
-            Transition(BatchState.Idle, "Cannot start: open the crafting log on a recipe (or be on step 1 of a craft).");
+            Transition(BatchState.Idle, "Cannot start: open the crafting log on a recipe, or be in a craft.");
             return false;
         }
 
         // Inventory awareness (spec §60): refuse quantities the materials
         // cannot cover instead of failing mid-batch.
-        if (!freshCraft)
+        if (!attached)
         {
             var requirements = gameBridge.GetRecipeRequirements(gameBridge.SelectedRecipeId);
             var craftable = InventoryMath.CraftableCount(requirements);
@@ -158,7 +161,7 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
         solveTargetQuality = 0;
         midSolution = null;
         midSolveTried = false;
-        midSolve = false;
+        midSolve = attached && craftMonitor.Current is { Step: > 1 };
         synthesisFired = false;
         automatorStarted = false;
         wasCrafting = gameBridge.IsCrafting;
@@ -635,7 +638,8 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
         {
             CaptureCraftResult();
 
-            if (!automatorStarted && solution != null && automator.State != AutomationState.Running)
+            // A batch attached mid-craft has only the live-state solution.
+            if (!automatorStarted && (solution != null || midSolution != null) && automator.State != AutomationState.Running)
             {
                 // Let the synthesis start animation play before the first action (pacing).
                 if (Clock.UtcNow - craftStartedAt < Core.Pacing.AfterCraftStart)
@@ -660,6 +664,9 @@ public sealed class BatchCrafter : AutomationMachine<BatchState>
                 }
 
                 var active = midSolution ?? solution;
+                if (active == null)
+                    return;
+
                 if (automator.Start(active.ActionIds, player.ClassJobId, active.BaseProgress, solveTargetQuality))
                 {
                     automatorStarted = true;

@@ -300,4 +300,19 @@ public class AdaptiveEngineTests
     }
 
     private const uint WasteNot2 = 4639;
+    [Fact]
+    public void GroundworkKeepsFullEfficiencyUnderWasteNotAtTenDurability()
+    {
+        // 900 remaining at 10 durability with Waste Not II up: Groundwork costs
+        // 10, so it is not halved (900) and the plan still fits.
+        var state = Snapshot(progress: 2100, quality: 10000, durability: 10) with
+        {
+            Buffs = [new CraftBuff(CraftBuffIds.WasteNot2, 0, 2)],
+        };
+        var decision = AdaptiveEngine.Decide(state, [Groundwork], BaseProgress, Level);
+
+        Assert.NotNull(decision);
+        Assert.Equal(Groundwork, decision.ActionId);
+        Assert.False(decision.RequestsResolve);
+    }
 }

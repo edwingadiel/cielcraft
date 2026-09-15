@@ -277,7 +277,7 @@ public sealed class DalamudGameBridge : IGameBridge
             : $"addon name '{(addon->SelectedRecipeName != null ? Dalamud.Utility.Utf8StringExtensions.ExtractText(addon->SelectedRecipeName->NodeText) : "-")}', " +
               $"synthesize button {(addon->SynthesizeButton == null ? "null" : addon->SynthesizeButton->IsEnabled ? "enabled" : "disabled")}, " +
               $"ingredients assigned {AreIngredientsAssigned()}";
-        return $"{agentPart}; {notePart}; {addonPart}";
+        return $"{agentPart}; {notePart}; {addonPart}; {DescribeIngredientAssignment()}";
     }
 
     public unsafe bool StartSynthesis()
@@ -767,8 +767,11 @@ public sealed class DalamudGameBridge : IGameBridge
 
     public unsafe bool AreIngredientsAssigned()
     {
-        // The selected entry lists each ingredient's required amount; the
-        // NQ/HQ assignment arrays on RecipeNote hold what the log has selected.
+        // The selected entry lists each ingredient's required amount and the
+        // NQ/HQ counts the log has selected for it. RecipeNote's
+        // CraftIngredient*Amounts arrays describe the *active* craft instead:
+        // they kept the previous craft's selection and made a freshly opened
+        // recipe look unassigned forever (Cobalt Tungsten Ingot, 2026-09-15).
         var recipeNote = FFXIVClientStructs.FFXIV.Client.Game.UI.RecipeNote.Instance();
         if (recipeNote == null || !recipeNote->IsRecipeListReady || recipeNote->RecipeList == null)
             return true; // cannot tell; do not block
@@ -777,20 +780,39 @@ public sealed class DalamudGameBridge : IGameBridge
         if (selected == null)
             return true;
 
-        var nq = recipeNote->CraftIngredientNQAmounts;
-        var hq = recipeNote->CraftIngredientHQAmounts;
         var ingredients = selected->Ingredients;
-        for (var i = 0; i < ingredients.Length && i < nq.Length && i < hq.Length; i++)
+        for (var i = 0; i < ingredients.Length; i++)
         {
             var ingredient = ingredients[i];
             if (ingredient.ItemId == 0 || ingredient.Amount == 0)
                 continue;
 
-            if (nq[i] + hq[i] < ingredient.Amount)
+            if (ingredient.NQCount + ingredient.HQCount < ingredient.Amount)
                 return false;
         }
 
         return true;
+    }
+
+    /// <summary>Per-slot required / NQ / HQ selection of the selected recipe, for reports about "did not become ready".</summary>
+    private unsafe string DescribeIngredientAssignment()
+    {
+        var recipeNote = FFXIVClientStructs.FFXIV.Client.Game.UI.RecipeNote.Instance();
+        if (recipeNote == null || !recipeNote->IsRecipeListReady || recipeNote->RecipeList == null
+            || recipeNote->RecipeList->SelectedRecipe == null)
+            return "ingredient slots: n/a";
+
+        var selected = recipeNote->RecipeList->SelectedRecipe;
+        var parts = new List<string>();
+        for (var i = 0; i < selected->Ingredients.Length; i++)
+        {
+            var ingredient = selected->Ingredients[i];
+            if (ingredient.ItemId == 0)
+                continue;
+            parts.Add($"[{i}] item {ingredient.ItemId} need {ingredient.Amount} nq {ingredient.NQCount} hq {ingredient.HQCount} owned {GetItemCount(ingredient.ItemId)}/{GetHqItemCount(ingredient.ItemId)}hq");
+        }
+
+        return $"selected entry recipe {selected->RecipeId}; ingredient slots: {string.Join(", ", parts)}";
     }
 
     /// <summary>Replays a button's own click event into its addon (same null-guarding as the checkbox variant).</summary>

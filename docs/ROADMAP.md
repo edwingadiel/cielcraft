@@ -204,13 +204,20 @@ against inventory, pause with a reason.
 
 ### Borrowed from Lisbeth (reviewed 2026-09-15)
 
-- [ ] 7.13 Orders model (M) — replace the single target + queue with orders:
-  per-order amount mode (Absolute / **Restock** = top the bag up to N),
-  production mode (Any / Force HQ / Collectable / Quick Synth), "materials
-  only" (skip the final craft), side orders, and order *groups* that run in
-  sequence while orders inside a group are planned together (shared
-  sub-crafts, one gather trip per material). Import/export as JSON and
-  import from a Teamcraft list. Perpetual mode: restart the orders when done.
+- [x] 7.13 Orders model (M) — done 2026-09-15 (design: docs/design/orders.md).
+  Order book of groups run in sequence; orders in a group are planned as one
+  graph (`DependencyResolver.Resolve(targets)`: shared sub-crafts merged,
+  stock consumed once, owned stock of an ordered item reserved, materials-only
+  expands ingredients without the final craft). Amount modes Absolute /
+  Restock (amount − owned, "already stocked" skips), production modes Any /
+  Force HQ (100 % solve, HQ fill, counts HQ gain only) / Quick synth (falls
+  back when refused) / Collectable (refused until 7.23). `OrderRunner`
+  replaces the queue: Run orders / Hold / Stop, held on failure or pause,
+  perpetual restart with a cycle count; `/cielcraft run` and `hold`. Saved
+  production keeps one entry per target. JSON export/import and Teamcraft
+  "copy as text" import via the clipboard. The old queue migrates into a
+  "Queue" group on load. Side orders were folded into groups (an extra order
+  in the same group is planned together with the rest).
 - [ ] 7.14 Gathering rotation engine (M) — today buffs are hard-coded (one
   yield buff, Solid Reason when it pays). Replace with conditional rotation
   tables per node class (normal / unspoiled yield / crystal / collectable):
@@ -313,7 +320,7 @@ known base.
    solver service.
 
 ### M1 — Daily use (≈ 4 weeks) — the things asked for while testing
-5. 7.13 Orders model (M): amount modes (Restock), production modes, groups,
+5. (done) 7.13 Orders model (M): amount modes (Restock), production modes, groups,
    materials-only, JSON + Teamcraft import. Replaces target + queue.
 6. 7.21 Window layout (S): sidebar; orders/status/settings pages. Do with 5
    so the UI is built once around orders.

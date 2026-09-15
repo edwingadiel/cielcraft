@@ -280,6 +280,21 @@ public sealed class CraftAutomator : AutomationMachine<AutomationState>, IDispos
             return;
         }
 
+        // A step advance with nothing pending means a request that timed out
+        // landed late (the game executed it after the executor gave up): count
+        // it as the plan action it was, or the stale plan gets judged against a
+        // state one action ahead of it.
+        if (expectedStep > 0 && craftMonitor.Current is { } advanced && advanced.Step > expectedStep
+            && nextIndex < rotation.Count)
+        {
+            Log.Information(
+                $"[Craft] Step {expectedStep} -> {advanced.Step} without a pending request; " +
+                $"assuming {RaphaelActionNames.NameOf(rotation[nextIndex])} landed late.");
+            nextIndex++;
+            expectedStep = advanced.Step;
+            RebuildRemaining();
+        }
+
         var decision = NextDecision();
         if (decision == null)
             return;

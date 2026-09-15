@@ -216,7 +216,7 @@ public class MainWindow : Window, IDisposable
 
         ImGui.SameLine();
         var canBatch = raphael && (gameBridge.IsReadyToStartCraft
-                                   || (gameBridge.IsCrafting && plugin.CraftMonitor.Current is { Step: <= 1 }));
+                                   || (gameBridge.IsCrafting && plugin.CraftMonitor.Current != null));
         using (Dalamud.Interface.Utility.Raii.ImRaii.Disabled(!canBatch))
         {
             if (UiTheme.TintedButton($"Batch ×{Quantity}", UiTheme.Accent))

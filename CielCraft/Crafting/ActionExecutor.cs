@@ -19,7 +19,10 @@ public enum ExecutorState
 /// </summary>
 public sealed class ActionExecutor : AutomationMachine<ExecutorState>
 {
-    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(6);
+    // Actions normally resolve in ~3 s, but the first action of a craft has
+    // landed ~12 s after the request (Reflect, 2026-09-15); a short timeout
+    // there paused the run and then double-counted the late step.
+    private static readonly TimeSpan Timeout = TimeSpan.FromSeconds(12);
 
     private readonly IGameBridge gameBridge;
     private readonly CraftStateMonitor craftMonitor;

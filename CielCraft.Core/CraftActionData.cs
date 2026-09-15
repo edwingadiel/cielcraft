@@ -121,12 +121,16 @@ public static class CraftActionData
         /// Progress gain for the next action: base × action efficiency ×
         /// active progress buffs (Veneration +50%, Muscle Memory +100%),
         /// floored as the game does. Groundwork is halved below its
-        /// durability cost.
+        /// durability cost as actually charged (halved under Waste Not, free
+        /// under Trained Perfection).
         /// </summary>
-        public int ProgressGain(int baseProgress, byte level, int currentDurability, bool veneration = false, bool muscleMemory = false)
+        public int ProgressGain(
+            int baseProgress, byte level, int currentDurability,
+            bool veneration = false, bool muscleMemory = false, bool wasteNot = false, bool trainedPerfection = false)
         {
             var modifier = ProgressModifier(level);
-            if (ActionId == 100403 && currentDurability < DurabilityCost)
+            var effectiveCost = trainedPerfection ? 0 : wasteNot ? DurabilityCost / 2 : DurabilityCost;
+            if (ActionId == 100403 && currentDurability < effectiveCost)
                 modifier /= 2;
 
             var buffModifier = 10 + (muscleMemory ? 10 : 0) + (veneration ? 5 : 0);

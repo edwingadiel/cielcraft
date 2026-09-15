@@ -124,7 +124,9 @@ public static class AdaptiveEngine
             level,
             state.Durability,
             veneration: state.HasBuff(CraftBuffIds.Veneration),
-            muscleMemory: state.HasBuff(CraftBuffIds.MuscleMemory));
+            muscleMemory: state.HasBuff(CraftBuffIds.MuscleMemory),
+            wasteNot: state.HasBuff(CraftBuffIds.WasteNot) || state.HasBuff(CraftBuffIds.WasteNot2),
+            trainedPerfection: state.HasBuff(CraftBuffIds.TrainedPerfection));
 
     /// <summary>
     /// CP for the rest of the plan plus Observe, and the plan still fitting
@@ -183,7 +185,7 @@ public static class AdaptiveEngine
                 cost /= 2;
             }
 
-            var efficiency = SynthesisEfficiency(action, level, durability);
+            var efficiency = SynthesisEfficiency(action, level, durability, cost);
             if (efficiency > 0)
             {
                 var buffModifier = 10 + (muscleMemory > 0 ? 10 : 0) + (veneration > 0 ? 5 : 0);
@@ -229,12 +231,17 @@ public static class AdaptiveEngine
         }
     }
 
-    /// <summary>Progress efficiency (percent) of a synthesis action; 0 for anything else.</summary>
-    private static int SynthesisEfficiency(uint actionId, byte level, int durability) => actionId switch
+    /// <summary>
+    /// Progress efficiency (percent) of a synthesis action; 0 for anything
+    /// else. Groundwork halves when durability is below what the action will
+    /// actually cost — under Waste Not that is 10, so 10 durability still
+    /// gets the full hit (the Cobalt Tungsten Ingot finisher, 2026-09-15).
+    /// </summary>
+    private static int SynthesisEfficiency(uint actionId, byte level, int durability, int effectiveCost) => actionId switch
     {
         100001 => level < 31 ? 100 : 120,                          // Basic Synthesis
         100203 => level < 82 ? 150 : 180,                          // Careful Synthesis
-        100403 => (level < 86 ? 300 : 360) / (durability < 20 ? 2 : 1), // Groundwork
+        100403 => (level < 86 ? 300 : 360) / (durability < effectiveCost ? 2 : 1), // Groundwork
         100315 => 400,                                             // Intensive Synthesis
         100323 => level < 94 ? 100 : 150,                          // Delicate Synthesis
         100427 => 180,                                             // Prudent Synthesis
