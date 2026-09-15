@@ -47,12 +47,19 @@ public abstract class AutomationMachine<TState> where TState : struct, Enum
 
     protected abstract void OnTick();
 
-    /// <summary>Change state and status, logging the status line.</summary>
+    /// <summary>Change state and status, logging the status line, then <see cref="OnTransitioned"/>.</summary>
     protected void Transition(TState state, string statusText)
     {
+        var previous = State;
         State = state;
         StatusText = statusText;
         Log.Information($"{LogPrefix} {statusText}");
+        OnTransitioned(previous, state);
+    }
+
+    /// <summary>Side effects of a logged transition (persist progress, notify the user); no-op by default.</summary>
+    protected virtual void OnTransitioned(TState previous, TState current)
+    {
     }
 
     /// <summary>Change state and status without a log line (high-frequency progress text).</summary>

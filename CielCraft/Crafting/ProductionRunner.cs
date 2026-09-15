@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.Linq;
 using CielCraft.Core;
 using CielCraft.Game;
-using Dalamud.Plugin.Services;
 
 namespace CielCraft.Crafting;
 
@@ -28,8 +27,9 @@ public enum ProductionState
 /// recipe in the crafting log, run a verified batch, then move on. Missing
 /// raw materials are gathered first (spec §67), teleporting to the material's
 /// node territory and traveling to the node area when needed (spec §68).
+/// Dalamud-free (roadmap 5.1): the plugin ticks it from the framework driver.
 /// </summary>
-public sealed class ProductionRunner : IDisposable
+public sealed class ProductionRunner : AutomationMachine<ProductionState>
 {
     private static readonly TimeSpan PrepareTimeout = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan TeleportTimeout = TimeSpan.FromSeconds(90);
@@ -45,13 +45,15 @@ public sealed class ProductionRunner : IDisposable
     private readonly INavigationProvider navigation;
     private readonly Configuration configuration;
     private readonly CapabilityReader capabilities;
+    private readonly IUserNotifier notifier;
+    private readonly Throttle retry;
+    private readonly TravelDriver travel;
 
     private ProductionPlan? plan;
     private int stepIndex;
     private readonly List<GatherTask> gatherQueue = [];
     private int gatherIndex;
     private DateTime phaseStartedAt;
-    private DateTime lastAttemptAt;
     private bool gearsetRequested;
     private bool sawLoadingScreen;
     private System.Numerics.Vector3? areaDestination;
@@ -66,14 +68,9 @@ public sealed class ProductionRunner : IDisposable
     private DateTime productionStartedAt;
     private int replanCount;
     private System.Numerics.Vector3? interferenceAnchor;
-    private int mountAttempts;
-    private bool flyBlocked;
-    private bool flyAttempted;
 
     private sealed record GatherTask(uint ItemId, int Amount, uint JobId, uint TerritoryId, System.Numerics.Vector2 AreaPosition, IReadOnlyList<EtWindow> Windows);
 
-    public ProductionState State { get; private set; } = ProductionState.Idle;
-    public string StatusText { get; private set; } = "Idle.";
     public int CompletedSteps => stepIndex;
     public int TotalSteps => plan?.CraftSteps.Count ?? 0;
 
@@ -85,8 +82,15 @@ public sealed class ProductionRunner : IDisposable
         GatheringDatabase gatheringDatabase,
         INavigationProvider navigation,
         Configuration configuration,
-        CapabilityReader capabilities)
+        CapabilityReader capabilities,
+        ILog log,
+        IClock clock,
+        IUserNotifier notifier)
+        : base(log, clock, "[Production]", ProductionState.Idle, "Idle.")
     {
+        this.notifier = notifier;
+        retry = new Throttle(clock, RetryInterval);
+        travel = new TravelDriver(navigation, gameBridge, clock, log, "[Production]");
         this.configuration = configuration;
         this.capabilities = capabilities;
         this.gameBridge = gameBridge;
@@ -95,13 +99,6 @@ public sealed class ProductionRunner : IDisposable
         this.gatheringLoop = gatheringLoop;
         this.gatheringDatabase = gatheringDatabase;
         this.navigation = navigation;
-
-        Plugin.Framework.Update += OnUpdate;
-    }
-
-    public void Dispose()
-    {
-        Plugin.Framework.Update -= OnUpdate;
     }
 
     public bool Start(ProductionPlan productionPlan)
@@ -153,7 +150,7 @@ public sealed class ProductionRunner : IDisposable
         stepIndex = 0;
         initialTargetCount = gameBridge.GetItemCount(productionPlan.TargetItemId);
         initialHqCount = HqCountOfTarget();
-        productionStartedAt = DateTime.UtcNow;
+        productionStartedAt = Clock.UtcNow;
         replanCount = 0;
         SaveProgress(active: true);
         EnterPreparing();
@@ -173,7 +170,10 @@ public sealed class ProductionRunner : IDisposable
             gatheringLoop.Pause("production paused");
 
         if (State is ProductionState.MovingToArea)
+        {
+            travel.Stop();
             navigation.Stop();
+        }
 
         if (State is ProductionState.PreparingStep or ProductionState.RunningBatch
             or ProductionState.PreparingGather or ProductionState.RunningGather
@@ -213,24 +213,13 @@ public sealed class ProductionRunner : IDisposable
     {
         batchCrafter.Stop();
         gatheringLoop.Stop();
+        travel.Stop();
         navigation.Stop();
         if (State is not (ProductionState.Idle or ProductionState.Completed or ProductionState.Failed))
             Transition(ProductionState.Idle, $"Stopped by user at step {stepIndex + 1}/{TotalSteps}.");
     }
 
-    private void OnUpdate(IFramework framework)
-    {
-        try
-        {
-            Tick(framework);
-        }
-        catch (Exception e)
-        {
-            Plugin.Log.TickError(nameof(ProductionRunner), e);
-        }
-    }
-
-    private void Tick(IFramework framework)
+    protected override void OnTick()
     {
         // Manual movement during phases where the character should be still
         // means the user has taken over (spec §49): step aside politely.
@@ -286,7 +275,7 @@ public sealed class ProductionRunner : IDisposable
     {
         var task = gatherQueue[gatherIndex];
 
-        if (DateTime.UtcNow - phaseStartedAt > PrepareTimeout)
+        if (Clock.UtcNow - phaseStartedAt > PrepareTimeout)
         {
             Fail($"could not prepare gathering for {recipeProvider.GetItemName(task.ItemId)}" +
                  (gearsetRequested ? " — is there a MIN/BTN gearset?" : ""));
@@ -301,7 +290,7 @@ public sealed class ProductionRunner : IDisposable
         // gathering condition has cleared.
         if (gameBridge.GetGatheringState() != null || gameBridge.IsGathering)
         {
-            Throttled(gameBridge.CloseGatheringWindow);
+            retry.Try(gameBridge.CloseGatheringWindow);
             return;
         }
 
@@ -310,7 +299,7 @@ public sealed class ProductionRunner : IDisposable
 
         // Timed node not up yet: hold until shortly before the window opens
         // (travel starts ~2 real minutes early so we arrive as it pops).
-        var untilOpen = EorzeaClock.RealTimeUntilOpen(task.Windows, EorzeaClock.MinuteOfDay(DateTimeOffset.UtcNow));
+        var untilOpen = EorzeaClock.RealTimeUntilOpen(task.Windows, EorzeaClock.MinuteOfDay(new DateTimeOffset(Clock.UtcNow)));
         if (untilOpen > TimeSpan.FromMinutes(2))
         {
             EnterPhase(ProductionState.WaitingForWindow, GatherText("Waiting for the ET window for"));
@@ -320,7 +309,7 @@ public sealed class ProductionRunner : IDisposable
         // Wrong zone: teleport there first (spec §68).
         if (task.TerritoryId != 0 && gameBridge.CurrentTerritoryId != task.TerritoryId)
         {
-            Throttled(() =>
+            retry.Try(() =>
             {
                 sawLoadingScreen = false;
                 if (gameBridge.TeleportToTerritory(task.TerritoryId))
@@ -349,7 +338,7 @@ public sealed class ProductionRunner : IDisposable
 
         if (gatheringLoop.Start(task.ItemId, task.Amount, AreaCenterFor(task)))
         {
-            Plugin.Log.Information(
+            Log.Information(
                 $"[Production] Gather task {gatherIndex + 1}/{gatherQueue.Count}: " +
                 $"{recipeProvider.GetItemName(task.ItemId)} ×{task.Amount}.");
             Transition(ProductionState.RunningGather, GatherText("Gathering"));
@@ -359,7 +348,7 @@ public sealed class ProductionRunner : IDisposable
     private void TickWaitingForWindow()
     {
         var task = gatherQueue[gatherIndex];
-        var untilOpen = EorzeaClock.RealTimeUntilOpen(task.Windows, EorzeaClock.MinuteOfDay(DateTimeOffset.UtcNow));
+        var untilOpen = EorzeaClock.RealTimeUntilOpen(task.Windows, EorzeaClock.MinuteOfDay(new DateTimeOffset(Clock.UtcNow)));
 
         if (untilOpen <= TimeSpan.FromMinutes(2))
         {
@@ -375,7 +364,7 @@ public sealed class ProductionRunner : IDisposable
     {
         var targetTerritory = returnTeleport ? returnTerritoryId : gatherQueue[gatherIndex].TerritoryId;
 
-        if (DateTime.UtcNow - phaseStartedAt > TeleportTimeout)
+        if (Clock.UtcNow - phaseStartedAt > TeleportTimeout)
         {
             Fail("teleport did not complete (cast interrupted or loading took too long)");
             return;
@@ -394,8 +383,8 @@ public sealed class ProductionRunner : IDisposable
         {
             // Let the zone settle before the next server-visible action (pacing).
             if (zoneArrivedAt == DateTime.MinValue)
-                zoneArrivedAt = DateTime.UtcNow;
-            if (DateTime.UtcNow - zoneArrivedAt < Core.Pacing.AfterZoneChange)
+                zoneArrivedAt = Clock.UtcNow;
+            if (Clock.UtcNow - zoneArrivedAt < Core.Pacing.AfterZoneChange)
                 return;
 
             EnterPreparing();
@@ -435,7 +424,7 @@ public sealed class ProductionRunner : IDisposable
     {
         var task = gatherQueue[gatherIndex];
 
-        if (DateTime.UtcNow - phaseStartedAt > AreaTimeout)
+        if (Clock.UtcNow - phaseStartedAt > AreaTimeout)
         {
             Fail("could not reach the node area in time");
             return;
@@ -468,40 +457,22 @@ public sealed class ProductionRunner : IDisposable
                 Fail($"could not project the node area ({task.AreaPosition.X:F0}, {task.AreaPosition.Y:F0}) onto the navmesh");
                 return;
             }
+
+            // Loose arrival: the leg ends anywhere within the arrival range,
+            // and nodes then appear as they spawn into the object table.
+            // Flight needs the zone's aether currents (7.16).
+            travel.Start(
+                areaDestination.Value,
+                NodeAreaArrivalRange,
+                capabilities.Current.CanFlyIn(gameBridge.CurrentTerritoryId),
+                preciseArrival: false,
+                AreaTimeout,
+                "the node area");
         }
 
-        var distance = System.Numerics.Vector3.Distance(player.Position, areaDestination.Value);
-        if (distance <= NodeAreaArrivalRange)
-            return; // nodes should appear as they spawn into the object table
-
-        if (navigation.IsMoving)
-        {
-            flyAttempted = false;
-            return;
-        }
-
-        Throttled(() =>
-        {
-            // Mount for long legs (roadmap 1.1); give up after a few refusals
-            // (indoors, combat) and just walk.
-            if (!gameBridge.IsMounted && mountAttempts < 3 && distance > 80f)
-            {
-                mountAttempts++;
-                gameBridge.TryMount();
-                return;
-            }
-
-            // A fly request that never starts moving means no flying here.
-            if (flyAttempted)
-                flyBlocked = true;
-
-            // Flight needs the zone's aether currents (7.16); the blocked
-            // fallback stays for zones the snapshot gets wrong.
-            var fly = gameBridge.IsMounted && !flyBlocked
-                && capabilities.Current.CanFlyIn(gameBridge.CurrentTerritoryId);
-            flyAttempted = fly;
-            navigation.MoveCloseTo(areaDestination.Value, 10f, fly);
-        });
+        travel.Tick();
+        if (travel.State == TravelState.Failed)
+            Fail(travel.FailureReason);
     }
 
     private void TickRunningGather()
@@ -512,12 +483,12 @@ public sealed class ProductionRunner : IDisposable
                 // Settle after leaving the node before teleporting or moving on (pacing).
                 if (gatherDoneAt == DateTime.MinValue)
                 {
-                    gatherDoneAt = DateTime.UtcNow;
+                    gatherDoneAt = Clock.UtcNow;
                     StatusText = GatherText("Gathered; settling after");
                     break;
                 }
 
-                if (DateTime.UtcNow - gatherDoneAt < Core.Pacing.AfterGatherComplete)
+                if (Clock.UtcNow - gatherDoneAt < Core.Pacing.AfterGatherComplete)
                     break;
 
                 gatherDoneAt = DateTime.MinValue;
@@ -559,11 +530,11 @@ public sealed class ProductionRunner : IDisposable
         // selected-recipe id can outlive the window, so test the addon itself.
         if (gameBridge.IsPreparingToCraft || gameBridge.IsAddonVisible("RecipeNote"))
         {
-            Throttled(gameBridge.CloseRecipeNote);
+            retry.Try(gameBridge.CloseRecipeNote);
             return false;
         }
 
-        Throttled(() =>
+        retry.Try(() =>
         {
             gearsetRequested = true;
             if (!gameBridge.EquipGearsetForJob(jobId))
@@ -603,23 +574,18 @@ public sealed class ProductionRunner : IDisposable
         foreach (var jobId in jobs.Distinct())
         {
             if (jobId != 0 && !gameBridge.HasGearsetForJob(jobId))
-                return JobName(jobId);
+                return recipeProvider.GetJobAbbreviation(jobId);
         }
 
         return null;
     }
 
-    private static string JobName(uint jobId) =>
-        Plugin.DataManager.GetExcelSheet<Lumina.Excel.Sheets.ClassJob>().TryGetRow(jobId, out var row)
-            ? row.Abbreviation.ExtractText()
-            : $"job {jobId}";
-
     /// <summary>Object-table scans are costly; cache "is a node visible?" for a second.</summary>
     private bool NodeNearby()
     {
-        if (DateTime.UtcNow - lastNodeProbeAt > TimeSpan.FromSeconds(1))
+        if (Clock.UtcNow - lastNodeProbeAt > TimeSpan.FromSeconds(1))
         {
-            lastNodeProbeAt = DateTime.UtcNow;
+            lastNodeProbeAt = Clock.UtcNow;
             lastNodeProbe = gameBridge.FindNearestGatheringNode() != null;
         }
 
@@ -686,7 +652,7 @@ public sealed class ProductionRunner : IDisposable
             return;
         }
 
-        if (DateTime.UtcNow - phaseStartedAt > PrepareTimeout)
+        if (Clock.UtcNow - phaseStartedAt > PrepareTimeout)
         {
             Fail($"could not prepare step {stepIndex + 1} ({recipeProvider.GetItemName(step.ItemId)}) in time" +
                  (gearsetRequested ? " — is there a gearset for the job?" : ""));
@@ -700,8 +666,8 @@ public sealed class ProductionRunner : IDisposable
         // crafting-log commands are refused until the character has left it.
         if (gameBridge.GetGatheringState() != null || gameBridge.IsGathering)
         {
-            Throttled(gameBridge.CloseGatheringWindow);
-            phaseStartedAt = DateTime.UtcNow; // the prepare budget starts once we are free
+            retry.Try(gameBridge.CloseGatheringWindow);
+            phaseStartedAt = Clock.UtcNow; // the prepare budget starts once we are free
             return;
         }
 
@@ -709,13 +675,13 @@ public sealed class ProductionRunner : IDisposable
             return;
 
         // A job change just happened: let it settle before touching the log (pacing).
-        if (gearsetRequested && DateTime.UtcNow - lastAttemptAt < Core.Pacing.AfterJobChange)
+        if (gearsetRequested && Clock.UtcNow - retry.LastAttempt < Core.Pacing.AfterJobChange)
             return;
 
         // Right job: get the crafting log onto this step's recipe.
         if (gameBridge.SelectedRecipeId != step.RecipeId || !gameBridge.IsReadyToStartCraft)
         {
-            Throttled(() => gameBridge.OpenRecipe(step.RecipeId));
+            retry.Try(() => gameBridge.OpenRecipe(step.RecipeId));
             return;
         }
 
@@ -736,7 +702,7 @@ public sealed class ProductionRunner : IDisposable
 
         if (batchCrafter.Start(step.Crafts, quick))
         {
-            Plugin.Log.Information(
+            Log.Information(
                 $"[Production] Step {stepIndex + 1}/{TotalSteps}: " +
                 $"{recipeProvider.GetItemName(step.ItemId)} ×{step.TotalProduced} ({step.Crafts} crafts" +
                 (quick ? ", quick synthesis" : "") + ").");
@@ -826,7 +792,7 @@ public sealed class ProductionRunner : IDisposable
 
         // Timed materials go last, soonest window first, so untimed work
         // fills the waiting time (spec §38).
-        var etNow = EorzeaClock.MinuteOfDay(DateTimeOffset.UtcNow);
+        var etNow = EorzeaClock.MinuteOfDay(new DateTimeOffset(Clock.UtcNow));
         gatherQueue.Sort((a, b) =>
             EorzeaClock.RealTimeUntilOpen(a.Windows, etNow)
                 .CompareTo(EorzeaClock.RealTimeUntilOpen(b.Windows, etNow)));
@@ -854,7 +820,7 @@ public sealed class ProductionRunner : IDisposable
             return;
         }
 
-        Plugin.Log.Information($"[Production] Replanning ({reason}): {remaining} of the target still needed.");
+        Log.Information($"[Production] Replanning ({reason}): {remaining} of the target still needed.");
         var newPlan = DependencyResolver.Resolve(
             plan.TargetItemId, remaining, recipeProvider, gameBridge.GetItemCount, capabilities.Current);
 
@@ -883,22 +849,11 @@ public sealed class ProductionRunner : IDisposable
 
     private void EnterPreparing()
     {
-        phaseStartedAt = DateTime.UtcNow;
-        lastAttemptAt = DateTime.MinValue;
+        phaseStartedAt = Clock.UtcNow;
+        retry.Reset();
         gearsetRequested = false;
-        mountAttempts = 0;
-        flyBlocked = false;
-        flyAttempted = false;
+        travel.Stop();
         lastNodeProbeAt = DateTime.MinValue; // never carry a node probe across phases/tasks
-    }
-
-    private void Throttled(Action action)
-    {
-        if (DateTime.UtcNow - lastAttemptAt < RetryInterval)
-            return;
-
-        lastAttemptAt = DateTime.UtcNow;
-        action();
     }
 
     private string StepText(string verb)
@@ -910,28 +865,24 @@ public sealed class ProductionRunner : IDisposable
 
     private void Fail(string reason) => Transition(ProductionState.Failed, $"Failed: {reason}.");
 
-    private void Transition(ProductionState state, string statusText)
+    /// <summary>Persist the run state on terminal transitions and tell the user about milestones (roadmap 6.5).</summary>
+    protected override void OnTransitioned(ProductionState previous, ProductionState current)
     {
-        var previous = State;
-        State = state;
-        StatusText = statusText;
-        Plugin.Log.Information($"[Production] {statusText}");
-
-        if (state is ProductionState.Completed or ProductionState.Failed or ProductionState.Idle)
+        if (current is ProductionState.Completed or ProductionState.Failed or ProductionState.Idle)
             SaveProgress(active: false);
 
-        if (previous != state && configuration.ChatNotifications)
+        if (previous == current || !configuration.ChatNotifications)
+            return;
+
+        switch (current)
         {
-            switch (state)
-            {
-                case ProductionState.Completed when plan != null:
-                    Plugin.ChatGui.Print(BuildSummary(), "CielCraft");
-                    break;
-                case ProductionState.Failed:
-                case ProductionState.Paused:
-                    Plugin.ChatGui.Print(statusText, "CielCraft");
-                    break;
-            }
+            case ProductionState.Completed when plan != null:
+                notifier.Print(BuildSummary());
+                break;
+            case ProductionState.Failed:
+            case ProductionState.Paused:
+                notifier.Print(StatusText);
+                break;
         }
     }
 
@@ -940,7 +891,7 @@ public sealed class ProductionRunner : IDisposable
     {
         var produced = Math.Max(0, gameBridge.GetItemCount(plan!.TargetItemId) - initialTargetCount);
         var hq = Math.Max(0, HqCountOfTarget() - initialHqCount);
-        var elapsed = DateTime.UtcNow - productionStartedAt;
+        var elapsed = Clock.UtcNow - productionStartedAt;
         var name = recipeProvider.GetItemName(plan.TargetItemId);
         return $"Production complete: {produced}× {name}" +
                (hq > 0 ? $" ({hq} HQ)" : "") +
@@ -983,7 +934,7 @@ public sealed class ProductionRunner : IDisposable
 
         var resumedPlan = DependencyResolver.Resolve(
             saved.ItemId, remaining, recipeProvider, gameBridge.GetItemCount, capabilities.Current);
-        Plugin.Log.Information(
+        Log.Information(
             $"[Production] Resuming saved production: {recipeProvider.GetItemName(saved.ItemId)} ×{remaining} remaining.");
         return Start(resumedPlan);
     }
@@ -995,9 +946,10 @@ public sealed class ProductionRunner : IDisposable
     }
 
     /// <summary>Internal state for the diagnostic report.</summary>
-    public IEnumerable<string> Describe()
+    public override IEnumerable<string> Describe()
     {
-        yield return $"State {State} — {StatusText}";
+        foreach (var line in base.Describe())
+            yield return line;
         if (plan != null)
         {
             yield return $"Plan: {recipeProvider.GetItemName(plan.TargetItemId)} (item {plan.TargetItemId}) ×{plan.TargetQuantity}; step {stepIndex + 1}/{plan.CraftSteps.Count}; replans {replanCount}; started {productionStartedAt:HH:mm:ss}Z";
@@ -1021,8 +973,10 @@ public sealed class ProductionRunner : IDisposable
             }
         }
 
-        yield return $"Phase since {phaseStartedAt:HH:mm:ss}Z; last attempt {lastAttemptAt:HH:mm:ss}Z; gearsetRequested {gearsetRequested}; sawLoadingScreen {sawLoadingScreen}; areaDestination {areaDestination?.ToString() ?? "-"}; lastNodeProbe {lastNodeProbe} at {lastNodeProbeAt:HH:mm:ss}Z";
-        yield return $"mountAttempts {mountAttempts}; flyBlocked {flyBlocked}; flyAttempted {flyAttempted}; flight unlocked here {capabilities.Current.CanFlyIn(gameBridge.CurrentTerritoryId)}; interferenceAnchor {interferenceAnchor?.ToString() ?? "-"}";
+        yield return $"Phase since {phaseStartedAt:HH:mm:ss}Z; last attempt {retry.LastAttempt:HH:mm:ss}Z; gearsetRequested {gearsetRequested}; sawLoadingScreen {sawLoadingScreen}; areaDestination {areaDestination?.ToString() ?? "-"}; lastNodeProbe {lastNodeProbe} at {lastNodeProbeAt:HH:mm:ss}Z";
+        foreach (var line in travel.Describe())
+            yield return line;
+        yield return $"flight unlocked here {capabilities.Current.CanFlyIn(gameBridge.CurrentTerritoryId)}; interferenceAnchor {interferenceAnchor?.ToString() ?? "-"}";
         yield return $"Target count initial {initialTargetCount} (HQ {initialHqCount}), now {(plan != null ? gameBridge.GetItemCount(plan.TargetItemId) : 0)}";
         var saved = configuration.SavedProduction;
         yield return $"Saved production: active {saved.Active}; item {saved.ItemId} ×{saved.Quantity}; initial count {saved.InitialCount}";

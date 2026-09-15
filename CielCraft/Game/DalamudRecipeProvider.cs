@@ -104,6 +104,12 @@ public sealed class DalamudRecipeProvider : IRecipeProvider
         return icon;
     }
 
+    /// <summary>Job abbreviation (CRP, MIN, ...) for user-facing messages; "job N" when unknown.</summary>
+    public string GetJobAbbreviation(uint jobId) =>
+        Plugin.DataManager.GetExcelSheet<ClassJob>().TryGetRow(jobId, out var row)
+            ? row.Abbreviation.ExtractText()
+            : $"job {jobId}";
+
     public string GetItemName(uint itemId)
     {
         if (names.TryGetValue(itemId, out var cached))

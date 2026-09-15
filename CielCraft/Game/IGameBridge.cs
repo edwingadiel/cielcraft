@@ -8,7 +8,7 @@ namespace CielCraft.Game;
 /// The only Dalamud-backed implementation is <see cref="DalamudGameBridge"/>;
 /// tests use mocks.
 /// </summary>
-public interface IGameBridge
+public interface IGameBridge : ITravelBridge
 {
     bool IsLoggedIn { get; }
 
@@ -104,13 +104,7 @@ public interface IGameBridge
     /// <summary>Teleports to an attuned aetheryte in the territory. False when none is attuned.</summary>
     bool TeleportToTerritory(uint territoryId);
 
-    /// <summary>True while riding a mount.</summary>
-    bool IsMounted { get; }
-
-    /// <summary>Requests mount roulette. The game rejects it where mounting is not allowed.</summary>
-    void TryMount();
-
-    void TryDismount();
+    // IsMounted / TryMount / TryDismount / PlayerPosition come from ITravelBridge.
 
     /// <summary>Free bag slots in the main inventory.</summary>
     int GetFreeInventorySlots();

@@ -21,6 +21,9 @@ public sealed class DalamudGameBridge : IGameBridge
     public bool IsGathering =>
         Plugin.Condition[ConditionFlag.Gathering] || Plugin.Condition[ConditionFlag.ExecutingGatheringAction];
 
+    /// <summary>ITravelBridge: where the character is; null when not logged in.</summary>
+    public System.Numerics.Vector3? PlayerPosition => GetPlayerState()?.Position;
+
     public PlayerSnapshot? GetPlayerState()
     {
         var player = Plugin.ObjectTable.LocalPlayer;

@@ -80,6 +80,9 @@ public sealed class TravelDriver
 
     public bool IsActive => State == TravelState.Moving;
 
+    /// <summary>Why the last leg failed, for the owner's own failure message; empty otherwise.</summary>
+    public string FailureReason { get; private set; } = "";
+
     /// <summary>
     /// Begin a leg. <paramref name="precise"/> = the target must be reached on
     /// foot within <paramref name="arriveWithin"/> (a node); otherwise the leg
@@ -87,6 +90,7 @@ public sealed class TravelDriver
     /// </summary>
     public void Start(Vector3 target, float arriveWithinRange, bool fly, bool preciseArrival, TimeSpan legTimeout, string description)
     {
+        FailureReason = "";
         destination = target;
         arriveWithin = arriveWithinRange;
         allowFly = fly;
@@ -193,6 +197,7 @@ public sealed class TravelDriver
 
     private void Fail(string reason)
     {
+        FailureReason = reason;
         State = TravelState.Failed;
         StatusText = $"Failed: {reason}.";
         log.Information($"{logPrefix} Travel failed: {reason}.");

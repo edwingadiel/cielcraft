@@ -52,6 +52,9 @@ public sealed class Plugin : IDalamudPlugin
     public MaintenanceService Maintenance { get; init; }
     public ProductionQueue ProductionQueue { get; init; }
     public Social.SocialGuard SocialGuard { get; init; }
+    /// <summary>The one Framework.Update subscription; ticks the layers in order (roadmap 5.1).</summary>
+    public Infrastructure.FrameworkDriver Driver { get; init; }
+    public Infrastructure.ChatNotifier Notifier { get; init; }
 
     public readonly WindowSystem WindowSystem = new("CielCraft");
     private ConfigWindow ConfigWindow { get; init; }
@@ -65,6 +68,8 @@ public sealed class Plugin : IDalamudPlugin
     public Plugin()
     {
         Log = new Diagnostics.DiagnosticLog(PluginLog);
+        Driver = new Infrastructure.FrameworkDriver(Framework);
+        Notifier = new Infrastructure.ChatNotifier(ChatGui);
         // Dalamud loads plugin assemblies from memory, so the native solver can't find itself
         // via Assembly.Location; point it at the on-disk plugin folder instead.
         CielCraft.Raphael.RaphaelSolver.LibraryDirectory = PluginInterface.AssemblyLocation.DirectoryName;
@@ -82,15 +87,19 @@ public sealed class Plugin : IDalamudPlugin
             GameBridge, CraftMonitor, CraftAutomator, SolverService, RecipeProvider, Configuration, Maintenance);
         Navigation = new Navigation.VNavmeshProvider();
         GatheringController = new Gathering.GatheringController(
-            GameBridge, Navigation, Configuration, () => Capabilities.Current);
+            GameBridge, Navigation, Configuration, Log, SystemClock.Instance, () => Capabilities.Current);
         GatheringLoop = new Gathering.GatheringLoop(
             GameBridge, GatheringController, Navigation, Configuration, Maintenance);
         ProductionRunner = new ProductionRunner(
             GameBridge, BatchCrafter, RecipeProvider, GatheringLoop, GatheringDatabase, Navigation, Configuration,
-            Capabilities);
+            Capabilities, Log, SystemClock.Instance, Notifier);
         ProductionQueue = new ProductionQueue(
             GameBridge, ProductionRunner, RecipeProvider, Configuration, () => Capabilities.Current);
         SocialGuard = new Social.SocialGuard(this, GameBridge, Configuration);
+
+        // Tick order matches the order the layers used to subscribe in.
+        Driver.Add(GatheringController.Tick);
+        Driver.Add(ProductionRunner.Tick);
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);
@@ -125,12 +134,11 @@ public sealed class Plugin : IDalamudPlugin
         SocialGuard.Dispose();
         ProductionQueue.Dispose();
         GatheringLoop.Dispose();
-        GatheringController.Dispose();
-        ProductionRunner.Dispose();
         BatchCrafter.Dispose();
         CraftAutomator.Dispose();
         ActionExecutor.Dispose();
         CraftMonitor.Dispose();
+        Driver.Dispose();
 
         ConfigWindow.Dispose();
         MainWindow.Dispose();

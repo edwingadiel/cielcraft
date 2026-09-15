@@ -2,7 +2,6 @@ using System;
 using System.Linq;
 using CielCraft.Core;
 using CielCraft.Game;
-using Dalamud.Plugin.Services;
 using System.Collections.Generic;
 
 namespace CielCraft.Gathering;
@@ -23,8 +22,9 @@ public enum GatheringState
 /// Automates one gathering node (spec §65): navigate to the nearest targetable
 /// node, interact, pick the requested item slot, gather on observed integrity
 /// transitions until the node is exhausted, then verify the inventory gain.
+/// Dalamud-free (roadmap 5.1): the plugin ticks it from the framework driver.
 /// </summary>
-public sealed class GatheringController : IDisposable
+public sealed class GatheringController : AutomationMachine<GatheringState>
 {
     private static readonly TimeSpan NavigateTimeout = TimeSpan.FromSeconds(60);
     private static readonly TimeSpan InteractTimeout = TimeSpan.FromSeconds(20); // dismount + landing + interact
@@ -32,18 +32,15 @@ public sealed class GatheringController : IDisposable
     private static readonly TimeSpan SlotPopulateTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan RetryInterval = TimeSpan.FromSeconds(2);
     // The game refuses to open a node from ~2.8y (observed in Western Thanalan);
-    // walk right up to it. MoveCloseTo aims for InteractRange - 0.5.
+    // walk right up to it. The travel driver walks the last stretch on foot.
     internal const float InteractRange = 2.0f;
-
-    // Flights aim for a landable floor point within this radius of the node;
-    // once the flight leg ends anywhere within DismountRange the character
-    // gets off and walks the rest.
-    private const float LandingRange = 8f;
-    private const float DismountRange = 30f;
 
     private readonly IGameBridge gameBridge;
     private readonly INavigationProvider navigation;
     private readonly Configuration configuration;
+    private readonly Func<CharacterCapabilities> capabilities;
+    private readonly Throttle retry;
+    private readonly TravelDriver travel;
 
     private uint requestedItemId;
     private GatheringNodeSnapshot? node;
@@ -55,39 +52,30 @@ public sealed class GatheringController : IDisposable
     private bool awaitingSwing;
     private DateTime swingStartedAt;
     private DateTime phaseStartedAt;
-    private DateTime lastAttemptAt;
-    private int mountAttempts;
-    private bool flyBlocked;
-    private bool flyAttempted;
     private int neededCount = int.MaxValue;
     private int gainedAtSwing = -1;
     private int gainedCached;
     private bool yieldBuffUsed;
     private bool buffsBroken;
     private (uint ActionId, uint GpBefore, int IntegrityBefore, DateTime At)? pendingBuff;
-
-    public GatheringState State { get; private set; } = GatheringState.Idle;
-    public string StatusText { get; private set; } = "Idle.";
-
-    private readonly Func<CharacterCapabilities> capabilities;
+    private (int Collectability, int Integrity, DateTime At)? pendingCollectAction;
+    private int collectablesTaken;
 
     public GatheringController(
         IGameBridge gameBridge,
         INavigationProvider navigation,
         Configuration configuration,
+        ILog log,
+        IClock clock,
         Func<CharacterCapabilities>? capabilities = null)
+        : base(log, clock, "[Gather]", GatheringState.Idle, "Idle.")
     {
         this.gameBridge = gameBridge;
         this.navigation = navigation;
         this.configuration = configuration;
         this.capabilities = capabilities ?? (() => CharacterCapabilities.Unknown);
-
-        Plugin.Framework.Update += OnUpdate;
-    }
-
-    public void Dispose()
-    {
-        Plugin.Framework.Update -= OnUpdate;
+        retry = new Throttle(clock, RetryInterval);
+        travel = new TravelDriver(navigation, gameBridge, clock, log, "[Gather]");
     }
 
     /// <summary>Object id of the node this run targeted; 0 before the first run.</summary>
@@ -100,7 +88,7 @@ public sealed class GatheringController : IDisposable
     /// </summary>
     public bool Start(
         uint itemId,
-        System.Collections.Generic.IReadOnlyCollection<ulong>? excludedNodes = null,
+        IReadOnlyCollection<ulong>? excludedNodes = null,
         int needed = int.MaxValue,
         System.Numerics.Vector3? preferNear = null)
     {
@@ -152,10 +140,7 @@ public sealed class GatheringController : IDisposable
         gatherSwings = 0;
         awaitingSwing = false;
 
-        mountAttempts = 0;
-        flyBlocked = false;
-        flyAttempted = false;
-        EnterPhase(GatheringState.MovingToNode, $"Moving to {node.Name} ({node.Distance:F0}y away).");
+        StartApproach($"Moving to {node.Name} ({node.Distance:F0}y away).");
         return true;
     }
 
@@ -164,6 +149,7 @@ public sealed class GatheringController : IDisposable
         if (State is GatheringState.MovingToNode or GatheringState.Interacting
             or GatheringState.GatheringNode or GatheringState.CollectableNode)
         {
+            travel.Stop();
             navigation.Stop();
             Transition(GatheringState.Paused, $"Paused: {reason}.");
         }
@@ -180,15 +166,15 @@ public sealed class GatheringController : IDisposable
             // still the completion signal) but restart its deadline, which the
             // pause froze. Collectable appraisals likewise.
             if (awaitingSwing)
-                swingStartedAt = DateTime.UtcNow;
+                swingStartedAt = Clock.UtcNow;
             if (pendingCollectAction is { } pending)
-                pendingCollectAction = pending with { At = DateTime.UtcNow };
+                pendingCollectAction = pending with { At = Clock.UtcNow };
 
             EnterPhase(GatheringState.GatheringNode, "Resuming at the open node.");
         }
         else if (node != null)
         {
-            EnterPhase(GatheringState.MovingToNode, "Resuming approach.");
+            StartApproach("Resuming approach.");
         }
         else
         {
@@ -198,6 +184,7 @@ public sealed class GatheringController : IDisposable
 
     public void Stop()
     {
+        travel.Stop();
         navigation.Stop();
         CloseNodeWindow();
         if (State is not (GatheringState.Idle or GatheringState.Completed or GatheringState.Failed))
@@ -215,19 +202,7 @@ public sealed class GatheringController : IDisposable
             gameBridge.CloseGatheringWindow();
     }
 
-    private void OnUpdate(IFramework framework)
-    {
-        try
-        {
-            Tick(framework);
-        }
-        catch (Exception e)
-        {
-            Plugin.Log.TickError(nameof(GatheringController), e);
-        }
-    }
-
-    private void Tick(IFramework framework)
+    protected override void OnTick()
     {
         switch (State)
         {
@@ -245,9 +220,6 @@ public sealed class GatheringController : IDisposable
                 break;
         }
     }
-
-    private (int Collectability, int Integrity, DateTime At)? pendingCollectAction;
-    private int collectablesTaken;
 
     /// <summary>
     /// Collectable node rotation (roadmap 4.3): Meticulous until the highest
@@ -285,7 +257,7 @@ public sealed class GatheringController : IDisposable
                 StatusText = $"Collectable: {snap.Collectability}/{snap.CollectabilityMax}, " +
                              $"integrity {snap.IntegrityRemaining}/{snap.IntegrityTotal}, taken {collectablesTaken}.";
             }
-            else if (DateTime.UtcNow - pending.At > SwingTimeout)
+            else if (Clock.UtcNow - pending.At > SwingTimeout)
             {
                 Pause("collectable action did not resolve in time");
             }
@@ -297,7 +269,7 @@ public sealed class GatheringController : IDisposable
             return;
 
         var jobId = gameBridge.GetPlayerState()?.ClassJobId ?? 0;
-        if (jobId is not (Core.GatheringActions.MinerJobId or Core.GatheringActions.BotanistJobId))
+        if (jobId is not (GatheringActions.MinerJobId or GatheringActions.BotanistJobId))
         {
             Fail("not on a gathering job at a collectable node");
             return;
@@ -314,38 +286,35 @@ public sealed class GatheringController : IDisposable
                             || (snap.IntegrityRemaining <= 1 && snap.Collectability >= minimum);
 
         var actionId = shouldCollect
-            ? Core.GatheringActions.Collect(jobId)
-            : Core.GatheringActions.Meticulous(jobId);
+            ? GatheringActions.Collect(jobId)
+            : GatheringActions.Meticulous(jobId);
 
-        Throttled(() =>
+        retry.Try(() =>
         {
             if (gameBridge.IsCraftActionReady(actionId) && gameBridge.ExecuteCraftAction(actionId))
-                pendingCollectAction = (snap.Collectability, snap.IntegrityRemaining, DateTime.UtcNow);
+                pendingCollectAction = (snap.Collectability, snap.IntegrityRemaining, Clock.UtcNow);
             else if (!shouldCollect)
                 Pause("the appraisal action is not usable (GP or level)");
         });
     }
 
+    /// <summary>
+    /// Hands the approach to the travel driver: precise arrival (fly to a
+    /// landable spot, dismount, walk up) when flight is unlocked here (7.16),
+    /// mounted or on foot otherwise.
+    /// </summary>
+    private void StartApproach(string statusText)
+    {
+        var fly = capabilities().CanFlyIn(gameBridge.CurrentTerritoryId);
+        travel.Start(node!.Position, InteractRange, fly, preciseArrival: true, NavigateTimeout, node.Name);
+        EnterPhase(GatheringState.MovingToNode, statusText);
+    }
+
     private void TickMoving()
     {
-        var player = gameBridge.GetPlayerState();
-        if (player == null || node == null)
+        if (node == null)
         {
-            Fail("player or node vanished during approach");
-            return;
-        }
-
-        var distance = System.Numerics.Vector3.Distance(player.Position, node.Position);
-        if (distance <= InteractRange)
-        {
-            navigation.Stop();
-            EnterPhase(GatheringState.Interacting, $"Arrived at {node.Name}; interacting.");
-            return;
-        }
-
-        if (DateTime.UtcNow - phaseStartedAt > NavigateTimeout)
-        {
-            Fail($"could not reach the node within {NavigateTimeout.TotalSeconds:F0}s");
+            Fail("node vanished during approach");
             return;
         }
 
@@ -353,56 +322,24 @@ public sealed class GatheringController : IDisposable
         // already be hidden): the character cannot move until it clears.
         if (gameBridge.IsGathering)
         {
-            Throttled(CloseNodeWindow);
+            retry.Try(CloseNodeWindow);
             StatusText = $"Leaving the previous node before moving to {node.Name}...";
             return;
         }
 
-        if (navigation.IsMoving)
+        travel.Tick();
+        switch (travel.State)
         {
-            flyAttempted = false;
-            return;
+            case TravelState.Arrived:
+                EnterPhase(GatheringState.Interacting, $"Arrived at {node.Name}; interacting.");
+                break;
+            case TravelState.Failed:
+                Fail(travel.FailureReason);
+                break;
+            default:
+                StatusText = travel.StatusText;
+                break;
         }
-
-        // A flight cannot settle on the exact node coordinate (the mount hovers
-        // and vnavmesh keeps nudging). Fly to a landable spot nearby, get off,
-        // and walk the last stretch on foot with the tight tolerance. The
-        // flight leg is over (not moving) and we are within walking range.
-        if (gameBridge.IsMounted && distance <= DismountRange)
-        {
-            Throttled(gameBridge.TryDismount);
-            StatusText = $"Landing near {node.Name} ({distance:F0}y away).";
-            return;
-        }
-
-        Throttled(() =>
-        {
-            // Mount for long legs between nodes (roadmap 1.1).
-            if (!gameBridge.IsMounted && mountAttempts < 3 && distance > 80f)
-            {
-                mountAttempts++;
-                gameBridge.TryMount();
-                return;
-            }
-
-            if (flyAttempted)
-                flyBlocked = true;
-
-            // Flight needs the zone's aether currents (roadmap 7.16); the
-            // blocked fallback stays for zones the snapshot gets wrong.
-            var fly = gameBridge.IsMounted && !flyBlocked
-                && capabilities().CanFlyIn(gameBridge.CurrentTerritoryId);
-            flyAttempted = fly;
-            if (fly)
-            {
-                var landing = navigation.FindPointOnFloor(node.Position, LandingRange) ?? node.Position;
-                navigation.MoveCloseTo(landing, 3f, fly: true);
-            }
-            else
-            {
-                navigation.MoveCloseTo(node.Position, InteractRange - 0.5f, fly: false);
-            }
-        });
     }
 
     private void TickInteracting()
@@ -410,7 +347,7 @@ public sealed class GatheringController : IDisposable
         // Gathering requires being dismounted.
         if (gameBridge.IsMounted)
         {
-            Throttled(gameBridge.TryDismount);
+            retry.Try(gameBridge.TryDismount);
             return;
         }
 
@@ -420,17 +357,17 @@ public sealed class GatheringController : IDisposable
             return;
         }
 
-        if (DateTime.UtcNow - phaseStartedAt > InteractTimeout)
+        if (Clock.UtcNow - phaseStartedAt > InteractTimeout)
         {
             Fail("the gathering window did not open");
             return;
         }
 
         // Pause a beat after arriving before touching the node (pacing).
-        if (DateTime.UtcNow - phaseStartedAt < Pacing.BeforeInteract)
+        if (Clock.UtcNow - phaseStartedAt < Pacing.BeforeInteract)
             return;
 
-        Throttled(() =>
+        retry.Try(() =>
         {
             if (node != null && !gameBridge.InteractWithObject(node.ObjectId))
                 Fail("the node despawned before it could be opened");
@@ -458,7 +395,7 @@ public sealed class GatheringController : IDisposable
         // Quick gathering bypasses per-swing control; turn it off first (roadmap 2.3).
         if (gameBridge.IsQuickGatheringEnabled)
         {
-            Throttled(gameBridge.DisableQuickGathering);
+            retry.Try(gameBridge.DisableQuickGathering);
             return;
         }
 
@@ -466,7 +403,7 @@ public sealed class GatheringController : IDisposable
         {
             // Let the window settle before the first click (pacing; the slots
             // also fill in over these frames).
-            if (DateTime.UtcNow - phaseStartedAt < Pacing.AfterNodeOpen)
+            if (Clock.UtcNow - phaseStartedAt < Pacing.AfterNodeOpen)
                 return;
 
             if (!ChooseSlot(gathering))
@@ -485,7 +422,7 @@ public sealed class GatheringController : IDisposable
                 gatherSwings++;
                 StatusText = $"Gathering: {gatherSwings} swings, integrity {gathering.IntegrityRemaining}/{gathering.IntegrityTotal}.";
             }
-            else if (DateTime.UtcNow - swingStartedAt > SwingTimeout)
+            else if (Clock.UtcNow - swingStartedAt > SwingTimeout)
             {
                 Pause("gather attempt did not resolve in time");
             }
@@ -496,7 +433,7 @@ public sealed class GatheringController : IDisposable
         if (gameBridge.IsGatheringActionInProgress)
             return;
 
-        Throttled(() =>
+        retry.Try(() =>
         {
             if (gameBridge.GatherSlot(chosenSlot))
             {
@@ -506,7 +443,7 @@ public sealed class GatheringController : IDisposable
                 // next swing's drop would otherwise never register.
                 lastIntegrity = gathering.IntegrityRemaining;
                 awaitingSwing = true;
-                swingStartedAt = DateTime.UtcNow;
+                swingStartedAt = Clock.UtcNow;
             }
         });
     }
@@ -530,10 +467,10 @@ public sealed class GatheringController : IDisposable
                 return false;
             }
 
-            if (DateTime.UtcNow - pending.At > TimeSpan.FromSeconds(5))
+            if (Clock.UtcNow - pending.At > TimeSpan.FromSeconds(5))
             {
                 // The action did not land; stop spending GP this node.
-                Plugin.Log.Warning($"[Gather] Buff action {pending.ActionId} did not resolve; skipping buffs.");
+                Log.Warning($"[Gather] Buff action {pending.ActionId} did not resolve; skipping buffs.");
                 buffsBroken = true;
                 pendingBuff = null;
             }
@@ -566,8 +503,8 @@ public sealed class GatheringController : IDisposable
                 if (gameBridge.IsCraftActionReady(actionId) && gameBridge.ExecuteCraftAction(actionId))
                 {
                     yieldBuffUsed = true;
-                    pendingBuff = (actionId, gathering.CurrentGp, gathering.IntegrityRemaining, DateTime.UtcNow);
-                    Plugin.Log.Information($"[Gather] Using yield buff (action {actionId}).");
+                    pendingBuff = (actionId, gathering.CurrentGp, gathering.IntegrityRemaining, Clock.UtcNow);
+                    Log.Information($"[Gather] Using yield buff (action {actionId}).");
                     return true;
                 }
             }
@@ -582,8 +519,8 @@ public sealed class GatheringController : IDisposable
             var actionId = GatheringActions.RestoreIntegrity(jobId);
             if (gameBridge.IsCraftActionReady(actionId) && gameBridge.ExecuteCraftAction(actionId))
             {
-                pendingBuff = (actionId, gathering.CurrentGp, gathering.IntegrityRemaining, DateTime.UtcNow);
-                Plugin.Log.Information($"[Gather] Restoring integrity (action {actionId}).");
+                pendingBuff = (actionId, gathering.CurrentGp, gathering.IntegrityRemaining, Clock.UtcNow);
+                Log.Information($"[Gather] Restoring integrity (action {actionId}).");
                 return true;
             }
         }
@@ -623,7 +560,7 @@ public sealed class GatheringController : IDisposable
             // is not clickable yet. Give them a moment before concluding the
             // node is the wrong one.
             var populating = gathering.Items.Count == 0 || requestedPresent || requestedItemId == 0;
-            if (populating && DateTime.UtcNow - phaseStartedAt < SlotPopulateTimeout)
+            if (populating && Clock.UtcNow - phaseStartedAt < SlotPopulateTimeout)
             {
                 StatusText = "Node open; waiting for the item list...";
                 return false;
@@ -640,7 +577,7 @@ public sealed class GatheringController : IDisposable
         chosenItemId = slot.ItemId;
         baselineCount = gameBridge.GetItemCount(chosenItemId);
         lastIntegrity = gathering.IntegrityRemaining;
-        Plugin.Log.Information(
+        Log.Information(
             $"[Gather] Gathering item {chosenItemId} from slot {chosenSlot} " +
             $"(owned {baselineCount}, integrity {gathering.IntegrityRemaining}/{gathering.IntegrityTotal}).");
         return true;
@@ -666,43 +603,31 @@ public sealed class GatheringController : IDisposable
 
     private void EnterPhase(GatheringState state, string statusText)
     {
-        phaseStartedAt = DateTime.UtcNow;
-        lastAttemptAt = DateTime.MinValue;
+        phaseStartedAt = Clock.UtcNow;
+        retry.Reset();
         Transition(state, statusText);
-    }
-
-    private void Throttled(Action action)
-    {
-        if (DateTime.UtcNow - lastAttemptAt < RetryInterval)
-            return;
-
-        lastAttemptAt = DateTime.UtcNow;
-        action();
     }
 
     private void Fail(string reason)
     {
+        travel.Stop();
         navigation.Stop();
         CloseNodeWindow();
         Transition(GatheringState.Failed, $"Failed: {reason}.");
     }
 
-    private void Transition(GatheringState state, string statusText)
-    {
-        State = state;
-        StatusText = statusText;
-        Plugin.Log.Information($"[Gather] {statusText}");
-    }
-
     /// <summary>Internal state for the diagnostic report.</summary>
-    public IEnumerable<string> Describe()
+    public override IEnumerable<string> Describe()
     {
-        yield return $"State {State} — {StatusText}";
+        foreach (var line in base.Describe())
+            yield return line;
         yield return $"Requested item {requestedItemId}; chosen item {chosenItemId} slot {chosenSlot}; needed {(neededCount == int.MaxValue ? "unlimited" : neededCount.ToString())}; last node {LastNodeId}";
         yield return node == null
             ? "Node: none"
             : $"Node: {node.Name} #{node.ObjectId} at {node.Position.X:F1}, {node.Position.Y:F1}, {node.Position.Z:F1} ({node.Distance:F1}y at selection)";
         yield return $"Swings {gatherSwings}; awaitingSwing {awaitingSwing} (since {swingStartedAt:HH:mm:ss}Z); lastIntegrity {lastIntegrity}; baseline count {baselineCount}; gained {gainedCached} (at swing {gainedAtSwing}); yieldBuffUsed {yieldBuffUsed}; buffsBroken {buffsBroken}; pendingBuff {(pendingBuff is { } pending ? $"{pending.ActionId} (GP {pending.GpBefore}, integrity {pending.IntegrityBefore}, at {pending.At:HH:mm:ss}Z)" : "-")}";
-        yield return $"Phase since {phaseStartedAt:HH:mm:ss}Z; last attempt {lastAttemptAt:HH:mm:ss}Z; mountAttempts {mountAttempts}; flyBlocked {flyBlocked}; flyAttempted {flyAttempted}";
+        yield return $"Phase since {phaseStartedAt:HH:mm:ss}Z; last attempt {retry.LastAttempt:HH:mm:ss}Z; collectables taken {collectablesTaken}";
+        foreach (var line in travel.Describe())
+            yield return line;
     }
 }
