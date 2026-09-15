@@ -271,7 +271,10 @@ Values that could not be verified offline and are confirmed at in-game gates:
 crafting-log callbacks (8 = synthesize, 9 = quick synthesis — validated),
 general action ids (9 = mount roulette, 23 = dismount, 6 = repair — all validated 2026-09-15),
 repair-addon callbacks (0 = repair all, -1 = close; SelectYesno 0 = yes — validated 2026-09-15),
-RecipeNote NQ/HQ ingredient amount spans as the HQ-fill mechanism (pending),
+HQ-fill mechanism: writing the RecipeNote amount spans does *not* register a
+selection; the crafting log's own NQ/HQ fill buttons do, and the assignment
+is verified from the selected recipe entry — validated 2026-09-15 (Titanium
+Gold Shield crafted HQ from HQ ingots, initial quality 5100),
 crafting-status step counts: they live in the status *parameter* (stacks), not
 `RemainingTime`, which reads 0 — validated 2026-09-15 via the mid-craft re-solve
 effects line (Inner Quiet 7 / Waste Not 4 / Manipulation 6 matched the icons),
