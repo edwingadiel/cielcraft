@@ -149,5 +149,79 @@ public class ConfigWindow : Window, IDisposable
         }
 
         ImGui.TextDisabled("Completed/paused/failed production is announced in the game chat.");
+
+        DrawSocialSection();
+    }
+
+    /// <summary>Roadmap 7.10: what to do when another player pokes a running character.</summary>
+    private void DrawSocialSection()
+    {
+        UiTheme.SectionHeader("Social");
+
+        var decline = configuration.SocialDeclineTrades;
+        if (ImGui.Checkbox("Decline trade requests during a run", ref decline))
+        {
+            configuration.SocialDeclineTrades = decline;
+            configuration.Save();
+        }
+
+        var blacklist = configuration.SocialBlacklistTraders;
+        if (ImGui.Checkbox("Remember who sent them (plugin blacklist)", ref blacklist))
+        {
+            configuration.SocialBlacklistTraders = blacklist;
+            configuration.Save();
+        }
+
+        ImGui.TextDisabled("The game blacklist cannot be written by plugins; repeat senders\nare declined on sight without another pause.");
+
+        var pauseSeconds = configuration.SocialPauseSeconds;
+        ImGui.SetNextItemWidth(160);
+        if (ImGui.SliderInt("Pause after a trade (s)", ref pauseSeconds, 0, 120))
+        {
+            configuration.SocialPauseSeconds = Math.Clamp(pauseSeconds, 0, 120);
+            configuration.Save();
+        }
+
+        ImGui.TextDisabled("Hesitate before carrying on, like a person would; 0 keeps going.");
+
+        var logTells = configuration.SocialLogTells;
+        if (ImGui.Checkbox("Log tells from strangers", ref logTells))
+        {
+            configuration.SocialLogTells = logTells;
+            configuration.Save();
+        }
+
+        var logInvites = configuration.SocialLogInvites;
+        if (ImGui.Checkbox("Log party and free company invites", ref logInvites))
+        {
+            configuration.SocialLogInvites = logInvites;
+            configuration.Save();
+        }
+
+        ImGui.TextDisabled("Logged only (sender and time); never answered automatically.");
+
+        if (configuration.SocialBlacklist.Count == 0)
+        {
+            ImGui.TextDisabled("Blacklist is empty.");
+            return;
+        }
+
+        ImGui.TextUnformatted($"Blacklist ({configuration.SocialBlacklist.Count})");
+        for (var i = 0; i < configuration.SocialBlacklist.Count; i++)
+        {
+            var entry = configuration.SocialBlacklist[i];
+            ImGui.TextColored(UiTheme.Muted, "•");
+            ImGui.SameLine(0, 6);
+            ImGui.TextUnformatted(entry.World != null ? $"{entry.Name} @ {entry.World}" : entry.Name);
+            if (ImGui.IsItemHovered())
+                ImGui.SetTooltip($"{entry.Reason}\n{entry.AddedAtUtc.ToLocalTime():yyyy-MM-dd HH:mm}");
+            ImGui.SameLine(0, 10);
+            if (ImGui.SmallButton($"×##blacklist{i}"))
+            {
+                configuration.SocialBlacklist.RemoveAt(i);
+                configuration.Save();
+                break;
+            }
+        }
     }
 }

@@ -160,7 +160,7 @@ against inventory, pause with a reason.
   per recipe that replaces the solver when set, with the same adaptive
   recovery on a bad condition.
 
-- [ ] 7.10 Trade-request blacklist (S) — a trade request during automation is
+- [x] 7.10 Trade-request blacklist (S) — a trade request during automation is
   the usual "is that a bot?" poke. On an incoming trade (Trade addon / the
   chat notice) decline it, add the sender to the game blacklist automatically,
   log who and when, and optionally pause the run for a configurable settle
@@ -168,6 +168,15 @@ against inventory, pause with a reason.
   Settings: auto-blacklist on/off, pause-on-trade seconds. Same treatment
   worth considering for party invites and /tells from strangers (log only by
   default).
+  Done as `SocialGuard` + `SocialGuardCore`: detection is the Trade window
+  becoming visible, the name comes from LogMessage row 34 (fallback: the
+  window's own strings), decline is the addon's cancel callback, and the
+  settle pause (default 20 s) auto-resumes only a guard-made pause. The
+  game blacklist is read-only through ClientStructs (InfoProxyBlacklist has
+  no add; AgentBlacklist events are undocumented), so the blacklist is
+  plugin-side in the config; repeat senders are declined without a second
+  pause. Party/FC invites and tells from strangers are logged only. Report
+  gets a "Social" section. In-game checks: test plan H1–H3.
 
 - [ ] 7.11 Per-activity food and potion (S–M) — today one FoodItemId/FoodIsHq
   pair serves everything and there is no medicine support. Split into a

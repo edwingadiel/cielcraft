@@ -27,6 +27,7 @@ public sealed class Plugin : IDalamudPlugin
     [PluginService] internal static IPluginLog PluginLog { get; private set; } = null!;
     [PluginService] internal static IChatGui ChatGui { get; private set; } = null!;
     [PluginService] internal static ITextureProvider TextureProvider { get; private set; } = null!;
+    [PluginService] internal static IPartyList PartyList { get; private set; } = null!;
 
     /// <summary>All plugin logging goes through here so the diagnostic report can include it.</summary>
     internal static Diagnostics.DiagnosticLog Log { get; private set; } = null!;
@@ -48,6 +49,7 @@ public sealed class Plugin : IDalamudPlugin
     public Gathering.GatheringLoop GatheringLoop { get; init; }
     public MaintenanceService Maintenance { get; init; }
     public ProductionQueue ProductionQueue { get; init; }
+    public Social.SocialGuard SocialGuard { get; init; }
 
     public readonly WindowSystem WindowSystem = new("CielCraft");
     private ConfigWindow ConfigWindow { get; init; }
@@ -82,6 +84,7 @@ public sealed class Plugin : IDalamudPlugin
         ProductionRunner = new ProductionRunner(
             GameBridge, BatchCrafter, RecipeProvider, GatheringLoop, GatheringDatabase, Navigation, Configuration);
         ProductionQueue = new ProductionQueue(GameBridge, ProductionRunner, RecipeProvider, Configuration);
+        SocialGuard = new Social.SocialGuard(this, GameBridge, Configuration);
 
         ConfigWindow = new ConfigWindow(this);
         MainWindow = new MainWindow(this);
@@ -109,6 +112,7 @@ public sealed class Plugin : IDalamudPlugin
         ClientState.Login -= OnLogin;
         WindowSystem.RemoveAllWindows();
 
+        SocialGuard.Dispose();
         ProductionQueue.Dispose();
         GatheringLoop.Dispose();
         GatheringController.Dispose();
@@ -153,25 +157,44 @@ public sealed class Plugin : IDalamudPlugin
         }
     }
 
-    /// <summary>Pauses whichever automation layer is driving right now (runner, else batch, else gather loop).</summary>
-    public void PauseTopLayer()
+    /// <summary>
+    /// Pauses whichever automation layer is driving right now (runner, else
+    /// batch, else gather loop); false when nothing was running. The reason
+    /// ends up in the layer's status text, which is how a later
+    /// <see cref="ResumeTopLayer"/> can tell its own pause apart.
+    /// </summary>
+    public bool PauseTopLayer(string reason = "paused by command")
     {
         if (ProductionRunner.State is not (ProductionState.Idle or ProductionState.Completed or ProductionState.Failed or ProductionState.Paused))
-            ProductionRunner.Pause("paused by command");
+            ProductionRunner.Pause(reason);
         else if (BatchCrafter.State is BatchState.Solving or BatchState.StartingCraft or BatchState.Crafting or BatchState.QuickStarting or BatchState.QuickRunning)
-            BatchCrafter.Pause("paused by command");
+            BatchCrafter.Pause(reason);
         else if (GatheringLoop.State == Gathering.GatheringLoopState.Running)
-            GatheringLoop.Pause("paused by command");
+            GatheringLoop.Pause(reason);
+        else
+            return false;
+
+        return true;
     }
 
-    /// <summary>Resumes whichever layer is paused (runner, else batch, else gather loop).</summary>
-    public void ResumeTopLayer()
+    /// <summary>
+    /// Resumes whichever layer is paused (runner, else batch, else gather
+    /// loop). With <paramref name="onlyIfReason"/> set, only a pause whose
+    /// status carries that reason is lifted — the social guard must not
+    /// resume a run the user paused themselves (roadmap 7.10).
+    /// </summary>
+    public void ResumeTopLayer(string? onlyIfReason = null)
     {
-        if (ProductionRunner.State == ProductionState.Paused)
+        if (onlyIfReason == null)
+            SocialGuard.Core.CancelSettle();
+
+        bool Matches(string status) => onlyIfReason == null || status.Contains(onlyIfReason, StringComparison.OrdinalIgnoreCase);
+
+        if (ProductionRunner.State == ProductionState.Paused && Matches(ProductionRunner.StatusText))
             ProductionRunner.Resume();
-        else if (BatchCrafter.State == BatchState.Paused)
+        else if (BatchCrafter.State == BatchState.Paused && Matches(BatchCrafter.StatusText))
             BatchCrafter.Resume();
-        else if (GatheringLoop.State == Gathering.GatheringLoopState.Paused)
+        else if (GatheringLoop.State == Gathering.GatheringLoopState.Paused && Matches(GatheringLoop.StatusText))
             GatheringLoop.Resume();
     }
 
@@ -179,6 +202,7 @@ public sealed class Plugin : IDalamudPlugin
     public void StopEverything()
     {
         Log.Information("[Plugin] Emergency stop requested.");
+        SocialGuard.Core.CancelSettle();
         ProductionQueue.StopQueue();
         Maintenance.Abort();
         ProductionRunner.Stop();
