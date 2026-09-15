@@ -662,11 +662,20 @@ public sealed class HuntRun : AutomationMachine<HuntRunState>, ISourceRun
     private void TickApproaching()
     {
         var target = Current();
-        if (target == null)
+        if (target == null || !target.IsAlive)
         {
             // Killed by someone else, or it despawned.
             skipped.Add(targetId);
             BeginTargeting($"{targetName} is gone; picking another target.");
+            return;
+        }
+
+        // The monster does not wait to be walked to: once it is in range —
+        // because it came to us, or because it wandered — start the fight
+        // instead of finishing the leg to where it used to stand.
+        if (target.Distance <= CombatJobs.AttackRange(jobId))
+        {
+            Engage(target);
             return;
         }
 
